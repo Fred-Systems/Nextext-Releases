@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ChevronLeft, Camera, Plus, MessageSquare, UserPlus, X, Info } from "lucide-react";
+import { ChevronLeft, Camera, Plus, MessageSquare, UserPlus, X, Info, ShieldCheck, ShieldOff } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import {
   getOrCreateDirectChat, addMembersToGroup, updateGroupProfile,
-  isGroupAdmin, getUsersByUids, setGroupNickname,
+  isGroupAdmin, getUsersByUids, setGroupNickname, setGroupAdmin,
 } from "../firebase/chats";
 import { useContacts, sendContactRequest } from "../firebase/contacts";
 import { uploadChatFile } from "../supabase/media";
@@ -124,6 +124,18 @@ export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onO
     } catch { /* silent */ }
   };
 
+  // Promote a member to group admin, or revoke it. The creator can never be
+  // demoted, and no admin can demote themselves.
+  const toggleAdmin = async (member) => {
+    if (!isAdmin || !member?.uid) return;
+    if (member.uid === myUid) return;
+    if (group.createdBy === member.uid) return;
+    const currentlyAdmin = isGroupAdmin(group, member.uid);
+    try {
+      await setGroupAdmin(chatId, member.uid, !currentlyAdmin);
+    } catch { /* silent */ }
+  };
+
   return (
       <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 12px", background: t.surface, flexShrink: 0, borderBottom: `1px solid ${t.border}` }}>
@@ -204,6 +216,18 @@ export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onO
                   <div style={{ fontWeight: 600, color: t.text, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
                   {isGroupAdmin(group, m.uid) && <div style={{ fontSize: 11.5, color: t.primary, fontWeight: 600 }}>Admin</div>}
                 </div>
+                {isAdmin && m.uid !== myUid && group.createdBy !== m.uid && (
+                  <div
+                    onClick={() => toggleAdmin(m)}
+                    title={isGroupAdmin(group, m.uid) ? "Revoke admin" : "Make admin"}
+                    style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 10px", borderRadius: 10, background: isGroupAdmin(group, m.uid) ? t.primaryLight : t.bg, cursor: "pointer" }}
+                  >
+                    {isGroupAdmin(group, m.uid) ? <ShieldOff size={15} color={t.textMuted} /> : <ShieldCheck size={15} color={t.primary} />}
+                    <span style={{ fontWeight: 700, fontSize: 12, color: isGroupAdmin(group, m.uid) ? t.textMuted : t.primary }}>
+                      {isGroupAdmin(group, m.uid) ? "Remove admin" : "Make admin"}
+                    </span>
+                  </div>
+                )}
                 <div onClick={() => startChat(m)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
                   <MessageSquare size={15} color={t.primary} />
                   <span style={{ fontWeight: 700, fontSize: 12.5, color: t.primary }}>Start Chat</span>

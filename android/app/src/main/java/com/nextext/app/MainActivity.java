@@ -21,24 +21,33 @@ public class MainActivity extends BridgeActivity {
     private NextextNativePlugin nextextPlugin;
 
     private static final String NOTIF_CHAT_ID_EXTRA = "nextext_chat_id";
+    private static final String NOTIF_ACTION_EXTRA = "nextext_action";
+    private static final String NOTIF_ACTION_MARK_READ = "mark_read";
 
     // A tapped local notification carries the chatId as an intent extra. Cold
     // starts arrive in onCreate, warm starts (app already in memory) in
     // onNewIntent. Both funnel here: the plugin stores the chatId for the web
     // app to poll (getPendingNotificationTap) and fires a best-effort event.
+    // The "Mark as read" action uses the same extras plus a marker extra and
+    // routes to the mark-read handler instead of opening the chat.
     private void handleNotificationTap(Intent intent) {
         if (intent == null) return;
         String chatId = intent.getStringExtra(NOTIF_CHAT_ID_EXTRA);
         if (chatId == null || chatId.isEmpty()) return;
-        // Consume the extra so a plain icon re-launch can't re-trigger a route.
+        boolean isMarkRead = NOTIF_ACTION_MARK_READ.equals(intent.getStringExtra(NOTIF_ACTION_EXTRA));
+        // Consume the extras so a plain icon re-launch can't re-trigger a route.
         intent.removeExtra(NOTIF_CHAT_ID_EXTRA);
+        intent.removeExtra(NOTIF_ACTION_EXTRA);
         if (nextextPlugin == null && bridge != null) {
             try {
                 PluginHandle handle = bridge.getPlugin("NextextNative");
                 if (handle != null) nextextPlugin = (NextextNativePlugin) handle.getInstance();
             } catch (Exception ignored) { /* plugin may not be loaded yet */ }
         }
-        if (nextextPlugin != null) nextextPlugin.onNotificationTap(chatId);
+        if (nextextPlugin != null) {
+            if (isMarkRead) nextextPlugin.onNotificationMarkRead(chatId);
+            else nextextPlugin.onNotificationTap(chatId);
+        }
     }
 
     @Override

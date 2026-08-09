@@ -21,6 +21,15 @@ service cloud.firestore {
       return isSignedIn() &&
         request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
     }
+    // True when the signed-in user is a group admin: the group's creator or
+    // listed in its groupAdmins array. Used to gate admin-management writes.
+    function isGroupAdmin(chatId) {
+      let data = get(/databases/$(database)/documents/chats/$(chatId)).data;
+      return isSignedIn() && (
+        request.auth.uid == data.createdBy ||
+        (data.groupAdmins != null && request.auth.uid in data.groupAdmins)
+      );
+    }
     function areContacts(uidA, uidB) {
       return exists(/databases/$(database)/documents/users/$(uidA)/contacts/$(uidB)) &&
         get(/databases/$(database)/documents/users/$(uidA)/contacts/$(uidB)).data.status == 'accepted';
@@ -138,7 +147,12 @@ service cloud.firestore {
         // client-reported/client-enforced limits in this app.
         (request.resource.data.type != 'group' || groupsAllowedFor(request.auth.uid));
       allow update: if isSignedIn() && notBanned() &&
-        request.auth.uid in resource.data.participants;
+        request.auth.uid in resource.data.participants &&
+        // Admin-management writes (groupAdmins) require the updater to be the
+        // group creator or an existing group admin — otherwise any member
+        // could self-promote or demote others.
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['groupAdmins']) ||
+         isGroupAdmin(chatId));
       allow delete: if isSignedIn() && notBanned() &&
         request.auth.uid in resource.data.participants;
 

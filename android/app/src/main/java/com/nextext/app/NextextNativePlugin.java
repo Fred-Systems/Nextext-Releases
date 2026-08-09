@@ -163,6 +163,28 @@ public class NextextNativePlugin extends Plugin {
         call.resolve(ret);
     }
 
+    // Same buffering for the "Mark as read" notification action: the chatId is
+    // held until the web app mounts and polls (getPendingMarkRead).
+    private static String pendingMarkReadChatId = null;
+
+    public void onNotificationMarkRead(String chatId) {
+        if (chatId == null || chatId.isEmpty()) return;
+        pendingMarkReadChatId = chatId;
+        try {
+            JSObject data = new JSObject();
+            data.put("chatId", chatId);
+            notifyListeners("localNotificationMarkRead", data);
+        } catch (Exception ignored) { /* event delivery is best-effort */ }
+    }
+
+    @PluginMethod
+    public void getPendingMarkRead(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("chatId", pendingMarkReadChatId == null ? "" : pendingMarkReadChatId);
+        pendingMarkReadChatId = null;
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void showLocalNotification(PluginCall call) {
         // Shows a real Android status-bar notification. HTML5 Notification is a
@@ -180,6 +202,7 @@ public class NextextNativePlugin extends Plugin {
         final String messageText = call.getString("messageText", "");
         final String chatId = call.getString("chatId", "");
         final String tag = call.getString("tag", "nextext");
+        final boolean isPrivate = call.getBoolean("private", false);
         new Thread(() -> {
             try {
                 android.content.Context ctx = getContext();
@@ -226,6 +249,11 @@ public class NextextNativePlugin extends Plugin {
                     .setPriority(android.app.Notification.PRIORITY_HIGH)
                     .setCategory(android.app.Notification.CATEGORY_MESSAGE)
                     .setDefaults(android.app.Notification.DEFAULT_SOUND | android.app.Notification.DEFAULT_VIBRATE | android.app.Notification.DEFAULT_LIGHTS);
+                // Locked chat / app lock: never reveal the body on the lock
+                // screen — Android shows "New message" instead of the content.
+                if (isPrivate && android.os.Build.VERSION.SDK_INT >= 21) {
+                    try { builder.setVisibility(android.app.Notification.VISIBILITY_PRIVATE); } catch (Exception ignored) {}
+                }
                 // Group messages show the sender as a small sub-text under the
                 // group name (title), so the sender is always identifiable.
                 try {
@@ -249,12 +277,27 @@ public class NextextNativePlugin extends Plugin {
                 // tap can route the user straight into the conversation.
                 android.content.Intent launch = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
                 if (launch != null) {
-                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                     if (chatId != null && !chatId.isEmpty()) launch.putExtra("nextext_chat_id", chatId);
                     android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
                         ctx, (chatId == null ? "".hashCode() : chatId.hashCode()), launch,
                         android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
                     builder.setContentIntent(pi);
+                }
+                // "Mark as read" action: same launch intent with a distinct
+                // marker extra so MainActivity routes it to the mark-read
+                // handler instead of opening the chat. SINGLE_TOP delivers it
+                // to the running activity via onNewIntent on a warm start.
+                if (launch != null && chatId != null && !chatId.isEmpty()) {
+                    try {
+                        android.content.Intent markRead = new android.content.Intent(launch);
+                        markRead.putExtra("nextext_action", "mark_read");
+                        markRead.putExtra("nextext_chat_id", chatId);
+                        android.app.PendingIntent mrpi = android.app.PendingIntent.getActivity(
+                            ctx, ("mark_read_" + chatId).hashCode(), markRead,
+                            android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+                        builder.addAction(0, "Mark as read", mrpi);
+                    } catch (Exception ignored) { /* action is best-effort */ }
                 }
                 nm.notify(tag, 0, builder.build());
                 call.resolve();

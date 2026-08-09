@@ -570,6 +570,18 @@ export async function updateGroupProfile(chatId, fields) {
   await updateDoc(doc(db, "chats", chatId), fields);
 }
 
+// Promote (makeAdmin=true) or revoke (makeAdmin=false) a member's group-admin
+// status. Only group admins/creators call this; Firestore rules enforce it.
+export async function setGroupAdmin(chatId, uid, makeAdmin) {
+  if (!chatId || !uid) return;
+  const ref = doc(db, "chats", chatId);
+  if (makeAdmin) {
+    await updateDoc(ref, { groupAdmins: arrayUnion(uid) });
+  } else {
+    await updateDoc(ref, { groupAdmins: arrayRemove(uid) });
+  }
+}
+
 // Append new members to a group's participants array. Skips anyone already
 // present and initialises their unread counter.
 export async function addMembersToGroup(chatId, newUids) {

@@ -317,6 +317,32 @@ export async function analyzeImageWithGroq(userUid, input, question = "Describe 
   }
 }
 
+// ── Groq Voice-Note Transcription (Whisper) ──
+// Transcribes a voice-note audio blob via Groq's OpenAI-compatible audio
+// endpoint. Uses the same admin-configured API key as chat/vison; if the app
+// isn't AI-enabled this throws the standard "not configured" error.
+export async function transcribeVoiceNote(userUid, audioBlob) {
+  const key = await getApiKeyFresh();
+  if (!audioBlob) throw new Error("No audio provided for transcription.");
+  const form = new FormData();
+  form.append("file", audioBlob, "voice.mp4");
+  form.append("model", "whisper-large-v3-turbo");
+  form.append("response_format", "json");
+  const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${key}` },
+    body: form,
+  });
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "Unknown error");
+    throw new Error(`Groq transcription error (${response.status}): ${errText}`);
+  }
+  const data = await response.json();
+  const text = (data?.text || "").trim();
+  if (!text) throw new Error("Transcription returned no text.");
+  return text;
+}
+
 // ── Smart Group AI Proactivity Filter ──
 // Triggers Groq when the message contains "hey nextext" or "hey nextrai"
 // (case-insensitive) or ends with a question mark. Keyword-based

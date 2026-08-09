@@ -25,7 +25,7 @@ import { getSystemInsets } from "../utils/systemInsets";
 
 const NextextNative = registerPlugin("NextextNative");
 import { useStatuses } from "../firebase/status";
-import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID } from "../firebase/ai";
+import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote } from "../firebase/ai";
 import { useContacts } from "../firebase/contacts";
 
 
@@ -625,10 +625,24 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [recordingTapMode, setRecordingTapMode] = useState(false);
   const [recordingSlideCancel, setRecordingSlideCancel] = useState(false);
   const [recLevel, setRecLevel] = useState(0);
+  const [micMenuOpen, setMicMenuOpen] = useState(false);
+  // Recording gesture preference: "hold" (press & hold, release to send) or
+  // "tap" (tap starts the bar-mode recording with controls). Stored per user.
+  const [micMode, setMicMode] = useState(() => {
+    try { return localStorage.getItem("nextext_mic_mode") || "hold"; } catch { return "hold"; }
+  });
+  const changeMicMode = (mode) => {
+    setMicMode(mode);
+    try { localStorage.setItem("nextext_mic_mode", mode); } catch {}
+  };
+  const micLongPressTimerRef = useRef(null);
   const [theyRecordingVoice, setTheyRecordingVoice] = useState(false);
   const [voiceAutoPlayId, setVoiceAutoPlayId] = useState(null);
   const [voiceAutoPlayNonce, setVoiceAutoPlayNonce] = useState(0);
   const [nowPlayingId, setNowPlayingId] = useState(null);
+  const [voiceTranscripts, setVoiceTranscripts] = useState({});
+  const [transcribingId, setTranscribingId] = useState(null);
+  const [transcriptErrors, setTranscriptErrors] = useState({});
   const [showCamera, setShowCamera] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [navInset, setNavInset] = useState(0);
@@ -1423,6 +1437,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
   const resetRecordingUi = () => {
     voiceSessionTokenRef.current++;
+    setMicMenuOpen(false);
     setRecording(false);
     setRecordingHold(false);
     setRecordingTapMode(false);
@@ -1585,6 +1600,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setRecordingHold(true);
     setRecordingSlideCancel(false);
 
+    // Long-press the mic (in either gesture mode) opens the recording-mode
+    // menu instead; the recording gesture started below is cancelled on release.
+    micLongPressTimerRef.current = setTimeout(() => {
+      micLongPressTimerRef.current = null;
+      setMicMenuOpen(true);
+      recordHoldCancelRef.current = true;
+    }, 450);
+
     const onPointerMove = (ev) => {
       const start = recordHoldStartRef.current;
       if (!start || !recordingHoldRef.current) return;
@@ -1634,6 +1657,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   const micPointerUp = () => {
+    if (micLongPressTimerRef.current) {
+      clearTimeout(micLongPressTimerRef.current);
+      micLongPressTimerRef.current = null;
+    }
     const start = recordHoldStartRef.current;
     const wasHolding = recordingHoldRef.current;
     const heldMs = start ? Date.now() - start.t : 0;
@@ -1647,6 +1674,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       cancelVoiceRecording();
       return;
     }
+    if (micMode === "tap") {
+      // Tap mode: a tap on the mic keeps recording in bar mode with
+      // pause/restart/cancel and an explicit Send button.
+      setRecordingTapMode(true);
+      return;
+    }
     if (heldMs >= 350) {
       // Long hold -> release to send.
       stopVoiceRecording(true);
@@ -1657,6 +1690,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   const handleBack = () => {
+    setMicMenuOpen(false);
     if (recordingRef.current) {
       clearInterval(recordTimerRef.current);
       stopVoiceHeartbeat();
@@ -1818,6 +1852,29 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setNowPlayingId(msgId);
   };
 
+  // Transcribes a voice note via Groq Whisper (in-memory; nothing written to
+  // the message doc, so it works regardless of Firestore write rules).
+  const transcribeVoice = async (m) => {
+    if (transcribingId || !m?.id) return;
+    if (voiceTranscripts[m.id]) return;
+    if (!m.mediaURL) {
+      setTranscriptErrors((e) => ({ ...e, [m.id]: "This note's audio has expired." }));
+      return;
+    }
+    setTranscribingId(m.id);
+    setTranscriptErrors((e) => { const n = { ...e }; delete n[m.id]; return n; });
+    try {
+      const res = await fetch(m.mediaURL);
+      const blob = await res.blob();
+      const text = await transcribeVoiceNote(myUid, blob);
+      setVoiceTranscripts((prev) => ({ ...prev, [m.id]: text }));
+    } catch (err) {
+      setTranscriptErrors((prev) => ({ ...prev, [m.id]: err?.message || "Transcription failed. Check your connection and try again." }));
+    } finally {
+      setTranscribingId(null);
+    }
+  };
+
   const renderBubble = (m) => {
     const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays);
     if (m.deletedForEveryone) return <div style={{ fontSize: 13, fontStyle: "italic", opacity: 0.6 }}>This message was deleted</div>;
@@ -1912,6 +1969,18 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
         <VoicePlayer url={m.mediaURL} duration={m.mediaDurationSeconds} mine={m.senderId === myUid} t={t} msgId={m.id} onEnded={handleVoiceEnded} autoPlayToken={voiceAutoPlayNonce} isAutoPlayTarget={m.id === voiceAutoPlayId} nowPlayingId={nowPlayingId} onPlayStart={handleVoicePlayStart} />
+        {voiceTranscripts[m.id] ? (
+          <div style={{ marginTop: 6, fontSize: 12.5 * chatTextScale, color: mine ? "rgba(255,255,255,0.85)" : t.textMuted, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontStyle: "italic", maxWidth: 230 }}>"{voiceTranscripts[m.id]}"</div>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); transcribeVoice(m); }}
+            disabled={transcribingId === m.id}
+            style={{ marginTop: 5, padding: "5px 10px", borderRadius: 8, border: `1px solid ${mine ? "rgba(255,255,255,0.35)" : t.border}`, background: "transparent", color: mine ? "rgba(255,255,255,0.9)" : t.primary, fontSize: 12, fontWeight: 600, cursor: transcribingId === m.id ? "default" : "pointer" }}
+          >
+            {transcribingId === m.id ? "Transcribing…" : "Transcribe"}
+          </button>
+        )}
+        {transcriptErrors[m.id] && <div style={{ fontSize: 11, color: "#FF3B30", marginTop: 3, maxWidth: 230, lineHeight: 1.3 }}>{transcriptErrors[m.id]}</div>}
         {expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
@@ -2338,7 +2407,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 onPointerUp={micPointerUp}
                 onPointerCancel={() => cancelVoiceRecording()}
                 onContextMenu={(e) => e.preventDefault()}
-                title="Hold to record, release to send. Tap to record with controls. Swipe left while holding to cancel."
+                title={micMode === "tap" ? "Tap to record. Long-press for voice note settings." : "Hold to record, release to send. Tap to record with controls. Long-press for voice note settings."}
                 style={{ width: Math.max(36, Math.round(42 * composerHeight)), height: Math.max(36, Math.round(42 * composerHeight)), borderRadius: "50%", background: t.primary, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, touchAction: "none", WebkitTapHighlightColor: "transparent" }}>
                 <Mic size={Math.max(16, Math.round(18 * composerHeight))} color={t.bubbleMeText} />
               </button>
@@ -2346,6 +2415,35 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </>
         )}
       </div>
+
+      {micMenuOpen && (
+        <div onClick={() => setMicMenuOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 70, display: "flex", alignItems: "flex-end" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: t.surface, width: "100%", borderRadius: "18px 18px 0 0", padding: "16px 20px 24px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Voice note recording</span>
+              <X size={20} color={t.textMuted} onClick={() => setMicMenuOpen(false)} style={{ cursor: "pointer" }} />
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 12 }}>
+              Long-press the mic button to open this menu.
+            </div>
+            {[["hold", "Press & hold to record", "Hold the mic and release to send. Swipe left while holding to cancel."], ["tap", "Tap to record", "Tap the mic once — recording starts with pause, restart, cancel and a Send button."]].map(([mode, label, desc]) => (
+              <div
+                key={mode}
+                onClick={() => { changeMicMode(mode); setMicMenuOpen(false); }}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${micMode === mode ? t.primary : t.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  {micMode === mode && <div style={{ width: 10, height: 10, borderRadius: "50%", background: t.primary }} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14, color: t.text }}>{label}</div>
+                  <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>{desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {activeMsg && (() => {
         const sentMs = activeMsg.sentAt?.toMillis?.() || Date.now();

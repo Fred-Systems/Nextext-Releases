@@ -5,14 +5,14 @@ import { useAuth } from "./firebase/useAuth";
 import { usePresenceHeartbeat } from "./firebase/presence";
 import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
 import { useContacts } from "./firebase/contacts";
-import { useChats, purgeExpiredChatMedia } from "./firebase/chats";
+import { useChats, purgeExpiredChatMedia, markChatRead } from "./firebase/chats";
 import { setGlobalWallpaper, fileToWallpaperDataUrl } from "./theme/wallpaper";
 import { ChevronLeft, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff } from "lucide-react";
 import { FONTS } from "./theme/ThemeContext";
 import Avatar from "./components/Avatar";
 import AvatarColorPicker from "./components/AvatarColorPicker";
 import { uploadChatFile } from "./supabase/media";
-import { doc, updateDoc, onSnapshot, collection, query, where, orderBy } from "firebase/firestore";
+import { doc, getDoc, updateDoc, onSnapshot, collection, query, where, orderBy } from "firebase/firestore";
 import { db } from "./firebase/config";
 import AuthScreen from "./screens/AuthScreen";
 import CompleteProfileScreen from "./screens/CompleteProfileScreen";
@@ -29,7 +29,7 @@ import { useSystemConfigHook, requestAIAccess, setAIPersonality, PERSONALITIES }
 import AppLockScreen from "./screens/AppLockScreen";
 import StatusScreen from "./screens/StatusScreen";
 import GroupInfoScreen from "./screens/GroupInfoScreen";
-import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap } from "./firebase/notifications";
+import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead } from "./firebase/notifications";
 import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
 import UpdatePrompt from "./components/UpdatePrompt";
@@ -1109,7 +1109,7 @@ const TOUR_STEPS = [
   { target: "chats", tab: "chats", emoji: "💬", title: "Chats", body: "This is your chat list. Tap a conversation to open it, or the + button to start a new chat. Long-press any chat for extra actions. Try tapping the Chats tab at the bottom." },
   { target: "status", tab: "status", emoji: "📸", title: "Status & Media", body: "Post photo/video statuses your contacts can see for 24 hours. In any chat, the paperclip lets you share images, videos, voice notes, and files." },
   { target: "groups", tab: "groups", emoji: "👥", title: "Groups", body: "Create groups with your friends, broadcast lists, and organized conversations. The Groups tab filters your group chats." },
-  { target: "settings", tab: "settings", emoji: "🔒", title: "Privacy & Settings", body: "Everything lives here: themes, privacy controls, permissions, chat locks, parental controls, and the Admin Dashboard. Swipe or tap the tabs below to move around." },
+  { target: "settings", tab: "settings", emoji: "🔒", title: "Privacy & Settings", body: "Everything lives here: themes, privacy controls, permissions, chat locks, and parental controls. Swipe or tap the tabs below to move around." },
   { target: null, tab: null, emoji: "🤖", title: "NexText AI", body: "NexText AI is request-only — not everyone has it by default. If you want the assistant (8 personalities, image analysis, chat summaries), ask for access in Settings → NexText AI." },
 ];
 
@@ -1271,6 +1271,10 @@ function AppShell({ appLocked, setAppLocked }) {
   // its dependency array, and deps are evaluated during render (a const
   // declared later in the same scope would be in the temporal dead zone).
   const myUid = auth.user?.uid;
+  // Ref mirror of myUid so mount-only effects (notification tap/mark-read
+  // handlers) can read the CURRENT uid without a stale closure.
+  const myUidRef = useRef(myUid);
+  useEffect(() => { myUidRef.current = myUid; }, [myUid]);
 
   const restoreAppState = () => {
     try {
@@ -1375,10 +1379,17 @@ function AppShell({ appLocked, setAppLocked }) {
     // A tapped notification on a cold start fires before any JS listener
     // exists; the native side holds the chatId until we poll for it here.
     pollPendingNotificationTap();
+    // "Mark as read" action on a notification: zero the chat's unread badge
+    // without opening the conversation. Same cold-start polling applies.
+    setNotificationMarkReadHandler((chatId) => {
+      if (myUidRef.current && chatId) markChatRead(chatId, myUidRef.current).catch(() => {});
+    });
+    pollPendingMarkRead();
     // Retry once the splash is out of the way in case the bridge wasn't
     // ready for the first read.
     const retry = setTimeout(() => pollPendingNotificationTap(), 2500);
-    return () => { setNotificationTapHandler(null); clearTimeout(retry); };
+    const retryMarkRead = setTimeout(() => pollPendingMarkRead(), 2500);
+    return () => { setNotificationTapHandler(null); setNotificationMarkReadHandler(null); clearTimeout(retry); clearTimeout(retryMarkRead); };
   }, []);
 
   useEffect(() => {
@@ -1479,17 +1490,40 @@ function AppShell({ appLocked, setAppLocked }) {
     const uid = auth.user.uid;
     const since = Date.now();
     const unsubs = [];
+    // Cache of sender display names so a one-off Firestore lookup isn't
+    // repeated per message. Keyed by sender uid.
+    const nameCache = {};
+    const resolveSenderName = async (senderId) => {
+      if (nameCache[senderId]) return nameCache[senderId];
+      const known = (contacts || []).find((c) => c.uid === senderId);
+      if (known?.profile?.displayName || known?.profile?.username) {
+        nameCache[senderId] = known.profile.displayName || known.profile.username;
+        return nameCache[senderId];
+      }
+      try {
+        const snap = await getDoc(doc(db, "users", senderId));
+        const data = snap.exists() ? snap.data() : null;
+        nameCache[senderId] = data?.displayName || data?.username || "Unknown";
+      } catch {
+        nameCache[senderId] = "Unknown";
+      }
+      return nameCache[senderId];
+    };
     // Watch the user's chats collection, attach a message listener to each.
     const chatsQuery = query(collection(db, "chats"), where("participants", "array-contains", uid));
+    // Live chat-doc map so message listeners always read the current lock
+    // state even if a chat gets locked/group-renamed after they attached.
+    const chatDataMap = {};
     const unsubChats = onSnapshot(chatsQuery, (snap) => {
       snap.docChanges().forEach((change) => {
         const chatId = change.doc.id;
         if (change.type !== "added" && change.type !== "modified") return;
+        chatDataMap[chatId] = change.doc.data() || {};
         // Attach a message listener to this chat if we haven't already.
         if (unsubs.find((u) => u.chatId === chatId)) return;
         const msgQ = query(collection(db, "chats", chatId, "messages"), orderBy("sentAt", "desc"));
         const unsubMsg = onSnapshot(msgQ, (msgSnap) => {
-          msgSnap.docChanges().forEach((mc) => {
+          msgSnap.docChanges().forEach(async (mc) => {
             if (mc.type !== "added") return;
             const m = mc.doc.data();
             if (!m.sentAt?.toMillis) return;
@@ -1505,20 +1539,35 @@ function AppShell({ appLocked, setAppLocked }) {
             if (m.isScheduled && m.scheduledFor?.toMillis && m.scheduledFor.toMillis() > Date.now()) return;
             // Don't notify if the user is currently inside THIS chat.
             if (activeChat?.chatId === chatId && document.visibilityState === "visible") return;
-            const senderName = (contacts || []).find((c) => c.uid === m.senderId)?.profile?.displayName || "Unknown";
-            const isGroup = !!change.doc.data()?.groupName;
-            const chatName = isGroup ? change.doc.data()?.groupName : senderName;
+            const senderName = await resolveSenderName(m.senderId);
+            const chatData = chatDataMap[chatId] || {};
+            const isGroup = !!chatData.groupName;
+            // Privacy: a chat locked by this user, or the whole-app lock, hides
+            // sender + content from the notification — just a generic alert.
+            const privateNotif = !!chatData.lockedBy?.[uid] || appLockEnabled;
+            const chatName = isGroup ? chatData.groupName : senderName;
             const body = m.type === "text" ? (m.text || "") : m.type === "image" ? "📷 Photo" : m.type === "video" ? "🎥 Video" : m.type === "voice" ? "🎤 Voice note" : m.type === "file" ? "📎 File" : m.type === "location" ? "📍 Location" : "New message";
             // Native notifications use senderName/groupName/messageText to
             // build a proper title (sender for DMs, group name for groups with
             // the sender as sub-text) and a chatId so tapping the notification
             // opens the conversation.
-            showLocalNotification(chatName, body.length > 60 ? body.slice(0, 60) + "…" : body, chatId, {
-              chatId,
-              senderName,
-              groupName: isGroup ? chatName : "",
-              messageText: body,
-            });
+            if (privateNotif) {
+              showLocalNotification("New message", "You have a new message", chatId, {
+                chatId,
+                senderName: "",
+                groupName: "",
+                messageText: "",
+                private: true,
+              });
+            } else {
+              showLocalNotification(chatName, body.length > 60 ? body.slice(0, 60) + "…" : body, chatId, {
+                chatId,
+                senderName,
+                groupName: isGroup ? chatName : "",
+                messageText: body,
+                private: false,
+              });
+            }
           });
         });
         unsubs.push({ chatId, unsub: unsubMsg });
@@ -1527,7 +1576,7 @@ function AppShell({ appLocked, setAppLocked }) {
     unsubs.push({ chatId: "__chats__", unsub: unsubChats });
     return () => { unsubs.forEach((u) => { try { u.unsub(); } catch {} }); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, appLockEnabled, userRestrictions]);
 
 
   useEffect(() => {

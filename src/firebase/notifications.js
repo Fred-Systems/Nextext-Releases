@@ -14,6 +14,11 @@ const VAPID_KEY = "BDPG3EWg1tJKh1nN_yOnWgK3BYJjQ-fpYTk1NQrGqU0EHTRZWMWhOUNyANHv5
 let notificationTapHandler = null;
 let pendingTapChatId = null;
 
+// Same buffering for the "Mark as read" notification action: the native side
+// holds the chatId until the web app is mounted and polls for it.
+let markReadHandler = null;
+let pendingMarkReadChatId = null;
+
 // App registers a handler once; any chatId captured before that (cold start)
 // is delivered immediately.
 export function setNotificationTapHandler(handler) {
@@ -21,6 +26,18 @@ export function setNotificationTapHandler(handler) {
   if (pendingTapChatId) {
     const chatId = pendingTapChatId;
     pendingTapChatId = null;
+    handler?.(chatId);
+  }
+}
+
+// Registers the handler that fires when the user taps the notification's
+// "Mark as read" action. Buffered chatIds from a cold start are delivered
+// immediately (the user still wants the chat marked read).
+export function setNotificationMarkReadHandler(handler) {
+  markReadHandler = handler;
+  if (pendingMarkReadChatId) {
+    const chatId = pendingMarkReadChatId;
+    pendingMarkReadChatId = null;
     handler?.(chatId);
   }
 }
@@ -33,6 +50,13 @@ function routeNotificationTap(chatId) {
   else pendingTapChatId = chatId;
 }
 
+// Feeds a "Mark as read" chatId into its handler (buffered on cold start).
+function routeMarkRead(chatId) {
+  if (!chatId) return;
+  if (markReadHandler) markReadHandler(chatId);
+  else pendingMarkReadChatId = chatId;
+}
+
 // Polls the native side for a chatId left behind by a notification tap that
 // fired before the web app had any listeners (cold start). Calling this twice
 // is harmless — the native side clears its stored value on read.
@@ -42,6 +66,19 @@ export async function pollPendingNotificationTap() {
     const res = await NextextNative.getPendingNotificationTap();
     const chatId = res?.chatId;
     if (chatId) routeNotificationTap(chatId);
+    return chatId || null;
+  } catch {
+    return null;
+  }
+}
+
+// Same as pollPendingNotificationTap but for the "Mark as read" action.
+export async function pollPendingMarkRead() {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const res = await NextextNative.getPendingMarkRead();
+    const chatId = res?.chatId;
+    if (chatId) routeMarkRead(chatId);
     return chatId || null;
   } catch {
     return null;
@@ -73,6 +110,8 @@ export function showLocalNotification(title, body, tag = "nextext-msg", info = {
         senderName: info.senderName || "",
         groupName: info.groupName || "",
         messageText: info.messageText || "",
+        // Locked chat / app lock: hide the message body on the lock screen.
+        private: info.private === true,
       }).catch(() => {});
     } catch (e) {
       console.warn("[notifications] native notification error:", e);
@@ -127,6 +166,11 @@ export async function initNotifications(myUid) {
       // chat. Fired on the main thread when the app is alive; cold-start taps
       // are covered by pollPendingNotificationTap.
       NextextNative.addListener("localNotificationTap", ({ chatId }) => routeNotificationTap(chatId)).catch(() => {});
+
+      // The "Mark as read" action on a local notification → zero the unread
+      // badge without opening the chat. Cold-start actions are picked up by
+      // pollPendingMarkRead in App.jsx.
+      NextextNative.addListener("localNotificationMarkRead", ({ chatId }) => routeMarkRead(chatId)).catch(() => {});
 
       PushNotifications.addListener("registration", ({ value }) => {
         if (value) {
