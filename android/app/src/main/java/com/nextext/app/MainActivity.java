@@ -1,6 +1,7 @@
 package com.nextext.app;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.Handler;
@@ -10,12 +11,42 @@ import androidx.core.splashscreen.SplashScreen;
 import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
+import com.getcapacitor.PluginHandle;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends BridgeActivity {
     private boolean keepSplash = true;
     private NextextWebChromeClient chromeClient;
+    private NextextNativePlugin nextextPlugin;
+
+    private static final String NOTIF_CHAT_ID_EXTRA = "nextext_chat_id";
+
+    // A tapped local notification carries the chatId as an intent extra. Cold
+    // starts arrive in onCreate, warm starts (app already in memory) in
+    // onNewIntent. Both funnel here: the plugin stores the chatId for the web
+    // app to poll (getPendingNotificationTap) and fires a best-effort event.
+    private void handleNotificationTap(Intent intent) {
+        if (intent == null) return;
+        String chatId = intent.getStringExtra(NOTIF_CHAT_ID_EXTRA);
+        if (chatId == null || chatId.isEmpty()) return;
+        // Consume the extra so a plain icon re-launch can't re-trigger a route.
+        intent.removeExtra(NOTIF_CHAT_ID_EXTRA);
+        if (nextextPlugin == null && bridge != null) {
+            try {
+                PluginHandle handle = bridge.getPlugin("NextextNative");
+                if (handle != null) nextextPlugin = (NextextNativePlugin) handle.getInstance();
+            } catch (Exception ignored) { /* plugin may not be loaded yet */ }
+        }
+        if (nextextPlugin != null) nextextPlugin.onNotificationTap(chatId);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotificationTap(intent);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -49,6 +80,9 @@ public class MainActivity extends BridgeActivity {
 
         // Dismiss splash once the Capacitor bridge is fully initialized
         new Handler(Looper.getMainLooper()).postDelayed(() -> keepSplash = false, 1500);
+
+        // Cold start from a tapped notification → route into that chat.
+        handleNotificationTap(getIntent());
     }
 
     @Override

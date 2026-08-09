@@ -25,6 +25,29 @@ export function setNotificationTapHandler(handler) {
   }
 }
 
+// Feeds a tapped-notification chatId into the routing mechanism. The handler
+// may not be mounted yet (cold start), in which case it's buffered.
+function routeNotificationTap(chatId) {
+  if (!chatId) return;
+  if (notificationTapHandler) notificationTapHandler(chatId);
+  else pendingTapChatId = chatId;
+}
+
+// Polls the native side for a chatId left behind by a notification tap that
+// fired before the web app had any listeners (cold start). Calling this twice
+// is harmless — the native side clears its stored value on read.
+export async function pollPendingNotificationTap() {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const res = await NextextNative.getPendingNotificationTap();
+    const chatId = res?.chatId;
+    if (chatId) routeNotificationTap(chatId);
+    return chatId || null;
+  } catch {
+    return null;
+  }
+}
+
 export function triggerNotificationVibration() {
   try {
     if ("vibrate" in navigator) {
@@ -33,17 +56,23 @@ export function triggerNotificationVibration() {
   } catch {}
 }
 
-export function showLocalNotification(title, body, tag = "nextext-msg") {
+export function showLocalNotification(title, body, tag = "nextext-msg", info = {}) {
   triggerNotificationVibration();
   if (Capacitor.isNativePlatform()) {
     // HTML5 Notification is a silent no-op inside the Capacitor WebView on
     // modern Android, so route through the native bridge which posts a real
-    // status-bar notification on the nextext-messages channel.
+    // status-bar notification on the nextext-messages channel. The title/body
+    // the caller passes are used as fallbacks; the native side prefers the
+    // structured senderName/groupName/messageText fields it also receives.
     try {
       NextextNative.showLocalNotification({
         title: title || "NexText",
         body: body || "You have a new message.",
         tag,
+        chatId: info.chatId || "",
+        senderName: info.senderName || "",
+        groupName: info.groupName || "",
+        messageText: info.messageText || "",
       }).catch(() => {});
     } catch (e) {
       console.warn("[notifications] native notification error:", e);
@@ -93,6 +122,12 @@ export async function initNotifications(myUid) {
       }
       if (perm.receive !== "granted") return null;
 
+      // Tap on a locally-posted notification (the client-side message watcher
+      // in App.jsx uses NextextNative.showLocalNotification) → route into the
+      // chat. Fired on the main thread when the app is alive; cold-start taps
+      // are covered by pollPendingNotificationTap.
+      NextextNative.addListener("localNotificationTap", ({ chatId }) => routeNotificationTap(chatId)).catch(() => {});
+
       PushNotifications.addListener("registration", ({ value }) => {
         if (value) {
           updateDoc(doc(db, "users", myUid), { fcmTokens: arrayUnion(value) }).catch(() => {});
@@ -111,7 +146,7 @@ export async function initNotifications(myUid) {
           if (notificationTapHandler) notificationTapHandler(chatId);
           else pendingTapChatId = chatId;
         }
-        showLocalNotification(title, body, tag);
+        showLocalNotification(title, body, tag, { chatId });
       }).catch(() => {});
 
       // Tap on a background/terminated notification → route into that chat.

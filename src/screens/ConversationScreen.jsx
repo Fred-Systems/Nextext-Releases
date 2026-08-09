@@ -19,7 +19,7 @@ import { db } from "../firebase/config";
 import { registerPlugin } from "@capacitor/core";
 import Avatar, { getLocalPhotoOverride } from "../components/Avatar";
 import { extractFirstUrl, fetchLinkPreview, isLinkPreviewEnabled } from "../utils/linkPreview";
-import { playVoiceEndChime } from "../utils/pingSounds";
+import { playVoicePing, playVoiceEndChime } from "../utils/pingSounds";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { getSystemInsets } from "../utils/systemInsets";
 
@@ -1031,10 +1031,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (!file || !chatId) { setGalleryActive(false); return; }
     setGalleryActive(false);
     closeAttach();
+    const isImage = file.type.startsWith("image/");
+    const blocked = parentalBlockedType(isImage ? "image" : "video");
+    if (blocked) { setSendError(blocked); return; }
     // Open a caption preview instead of sending instantly — the user can add
     // a caption, then Send, or Cancel. (File attachment from the paperclip
     // still sends instantly, this only changes gallery photo/video.)
-    const isImage = file.type.startsWith("image/");
     let previewUrl = null;
     try { previewUrl = URL.createObjectURL(file); } catch { /* preview optional */ }
     setCaptionText("");
@@ -1050,6 +1052,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const sendPendingMedia = async () => {
     const pm = pendingMedia;
     if (!pm?.file || !chatId || captionBusy) return;
+    const blocked = parentalBlockedType(pm.isImage ? "image" : "video");
+    if (blocked) { cancelPendingMedia(); setSendError(blocked); return; }
     setCaptionBusy(true);
     setSendError("");
     try {
@@ -1327,6 +1331,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
   const startVoiceRecording = async () => {
     setSendError("");
+    const blocked = parentalBlockedType("voice");
+    if (blocked) { setSendError(blocked); return; }
     const token = ++voiceSessionTokenRef.current;
     try {
       // Native-first: the Android WebView media path (getUserMedia + web
@@ -1474,6 +1480,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     recordingNativeRef.current = false;
     resetRecordingUi();
     if (!send) return;
+    // Parental controls may have been enabled while the note was being
+    // recorded — drop it rather than uploading + failing the Firestore write.
+    const blocked = parentalBlockedType("voice");
+    if (blocked) { setSendError(blocked); return; }
     if (elapsedMs < 500) {
       setSendError("Hold the mic a little longer — the recording was too short to save.");
       return;
@@ -1559,6 +1569,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const micPointerDown = (e) => {
     e.preventDefault();
     if (recordingRef.current) return;
+    // Parental controls: don't even start the gesture when voice is blocked.
+    const blocked = parentalBlockedType("voice");
+    if (blocked) { setSendError(blocked); return; }
     // Haptic confirmation that the hold-to-record gesture started.
     if (isNativePlatform() && typeof NextextNative.vibrate === "function") {
       try { NextextNative.vibrate({ ms: 40 }).catch(() => {}); } catch {}
@@ -1665,6 +1678,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const openCamera = async () => {
     closeAttach();
     setCameraError("");
+    const blocked = parentalBlockedType("image");
+    if (blocked) { setSendError(blocked); return; }
     try {
       const stream = await getMicrophoneStream({ video: { facingMode: cameraFacing } });
       cameraStreamRef.current = stream;
@@ -1739,6 +1754,23 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     m.type === "voice" && !m.deletedForEveryone &&
     restrictions?.blockVoiceNotes === true && m.senderId !== myUid;
 
+  // Client-side mirror of the firestore.rules `mediaAllowed` check. The rules
+  // already block these sends server-side, but without a client gate the user
+  // records/uploads the media and only hits the confusing Firestore "permission
+  // denied" at the very end (leaving an orphaned blob in storage). Gating here
+  // prevents the send and explains WHY. Returns an error message or null.
+  const parentalBlockedType = (type) => {
+    const r = restrictions;
+    if (!r) return null;
+    if (type === "voice" && (r.blockMedia === true || r.blockVoiceNotes === true))
+      return "Voice notes are blocked by parental controls.";
+    if (type === "image" && (r.blockMedia === true || r.blockIncomingPhotos === true))
+      return "Photos are blocked by parental controls.";
+    if (type === "video" && (r.blockMedia === true || r.blockIncomingVideos === true))
+      return "Videos are blocked by parental controls.";
+    return null;
+  };
+
   const visibleMessages = (searchQuery.trim()
     ? messages.filter((m) => m.text?.toLowerCase().includes(searchQuery.toLowerCase()))
     : messages
@@ -1751,22 +1783,24 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   // When a voice note finishes, auto-advance to the next note — but only if
-  // it's the IMMEDIATELY following message (2+ messages apart = stop). The
-  // end-of-burst chime plays once when a run of 3+ consecutive notes ends
-  // (WhatsApp-style), instead of pinging after every single note.
+  // it's the IMMEDIATELY following message (2+ messages apart = stop). A
+  // regular chime plays after EVERY note (restored: v1.1.25 had silenced
+  // single notes by only pinging on 3+ runs), and a distinct end-of-burst
+  // chime plays once when a run of 2+ consecutive notes finishes.
   const handleVoiceEnded = (msgId) => {
     const idx = visibleMessages.findIndex((m) => m.id === msgId);
     if (idx === -1) return;
     voiceChainRef.current += 1;
     voiceChainLastIdxRef.current = idx;
+    playVoicePing();
     const next = visibleMessages[idx + 1];
     if (next && next.type === "voice" && !next.deletedForEveryone && next.mediaURL) {
       setVoiceAutoPlayId(next.id);
       setVoiceAutoPlayNonce((n) => n + 1);
       return;
     }
-    // Run over — chime if it was a real burst, then reset the chain.
-    if (voiceChainRef.current >= 3) playVoiceEndChime();
+    // Run over — burst chime for a run of 2+, then reset the chain.
+    if (voiceChainRef.current >= 2) playVoiceEndChime();
     voiceChainRef.current = 0;
     voiceChainLastIdxRef.current = -1;
   };
@@ -2198,18 +2232,22 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 <div onClick={() => { closeAttach(); setShowPoll(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer" }}>
                   <BarChart2 size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Poll</span>
                 </div>
-                <div onClick={() => { closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
-                  <ImageIcon size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Photo or video</span>
-                </div>
+                {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
+                  <div onClick={() => { closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                    <ImageIcon size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Photo or video</span>
+                  </div>
+                )}
                 <div onClick={() => { closeAttach(); fileInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <Paperclip size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>File (max 50MB)</span>
                 </div>
                 <div onClick={openLocationSheet} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <MapPin size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Share location</span>
                 </div>
-                <div onClick={() => { closeAttach(); openCamera(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
-                  <Camera size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Camera</span>
-                </div>
+                {!parentalBlockedType("image") && (
+                  <div onClick={() => { closeAttach(); openCamera(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                    <Camera size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Camera</span>
+                  </div>
+                )}
               </div>
               </>,
               document.body
@@ -2252,12 +2290,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               >
                 <Smile size={Math.max(22, Math.round(25 * composerHeight))} color={showEmojiPicker ? t.primary : t.textMuted} />
               </div>
-              <div
-                onClick={() => { setGalleryActive(true); setShowEmojiPicker(false); photoInputRef.current?.click(); }}
-                style={{ width: Math.max(30, Math.round(32 * composerHeight)), height: Math.max(30, Math.round(32 * composerHeight)), borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: galleryActive ? t.primaryLight : "transparent" }}
-              >
-                <ImageIcon size={Math.max(22, Math.round(25 * composerHeight))} color={galleryActive ? t.primary : t.textMuted} />
-              </div>
+              {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
+                <div
+                  onClick={() => { setGalleryActive(true); setShowEmojiPicker(false); photoInputRef.current?.click(); }}
+                  style={{ width: Math.max(30, Math.round(32 * composerHeight)), height: Math.max(30, Math.round(32 * composerHeight)), borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: galleryActive ? t.primaryLight : "transparent" }}
+                >
+                  <ImageIcon size={Math.max(22, Math.round(25 * composerHeight))} color={galleryActive ? t.primary : t.textMuted} />
+                </div>
+              )}
               <textarea
                 ref={composerRef}
                 value={input}
@@ -2285,6 +2325,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 style={{ width: Math.round(42 * composerHeight), height: Math.round(42 * composerHeight), borderRadius: "50%", background: t.primary, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
                 <Send size={Math.max(16, Math.round(17 * composerHeight))} color={t.bubbleMeText} />
               </button>
+            ) : parentalBlockedType("voice") ? (
+              <div
+                title="Voice notes are blocked by parental controls"
+                style={{ width: Math.max(36, Math.round(42 * composerHeight)), height: Math.max(36, Math.round(42 * composerHeight)), borderRadius: "50%", background: t.border, border: "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "not-allowed", opacity: 0.55, touchAction: "none" }}>
+                <Mic size={Math.max(16, Math.round(18 * composerHeight))} color={t.textMuted} />
+              </div>
             ) : (
               <button
                 onPointerDown={micPointerDown}

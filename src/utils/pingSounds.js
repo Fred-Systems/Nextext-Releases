@@ -61,12 +61,19 @@ export function playVoicePing() {
   } catch { /* ping is best-effort */ }
 }
 
-// End-of-burst chime: plays once when a RUN of consecutive voice notes (3+)
-// finishes, instead of pinging after every single note. Toggleable via the
-// nextext_voice_end_chime setting (default on).
+// End-of-burst chime: a distinct, brighter completion sound played once when a
+// RUN of consecutive voice notes (2+) finishes — on top of the regular per-note
+// ping. Toggleable via the nextext_voice_end_chime setting (default on).
 export function playVoiceEndChime() {
   try {
     if (localStorage.getItem("nextext_voice_end_chime") === "off") return;
-    playVoicePing();
+    pingCtx = pingCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (pingCtx.state === "suspended") pingCtx.resume().catch(() => {});
+    const ac = pingCtx;
+    const now = ac.currentTime;
+    // Ascending major arpeggio (C5-E5-G5-C6) — reads clearly as "burst complete"
+    // and is distinct from every per-note ping pattern.
+    [[523.25, 0, 0.14], [659.25, 0.09, 0.16], [783.99, 0.18, 0.2], [1046.5, 0.28, 0.34]]
+      .forEach(([freq, offset, dur]) => tone(ac, freq, now + offset, dur, 0.1));
   } catch { /* chime is best-effort */ }
 }

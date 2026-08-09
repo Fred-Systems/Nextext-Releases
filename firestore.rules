@@ -62,10 +62,13 @@ service cloud.firestore {
     }
     function mediaAllowed(msgType) {
       let r = myRestrictions();
+      // blockMedia is the legacy "block all media" flag; it must cover voice
+      // notes too (it previously only blocked image/video, letting voice slip
+      // through on accounts set up with the old field).
       return r == null ||
         !(((r.blockMedia == true || r.blockIncomingPhotos == true) && msgType == 'image') ||
           ((r.blockMedia == true || r.blockIncomingVideos == true) && msgType == 'video') ||
-          (r.blockVoiceNotes == true && msgType == 'voice'));
+          ((r.blockMedia == true || r.blockVoiceNotes == true) && msgType == 'voice'));
     }
     function groupsAllowedFor(uid) {
       let r = get(/databases/$(database)/documents/users/$(uid)).data.restrictions;

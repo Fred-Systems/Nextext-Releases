@@ -140,15 +140,45 @@ public class NextextNativePlugin extends Plugin {
         call.resolve(ret);
     }
 
+    // A chatId carried by a tapped local notification, held until the web app
+    // is ready to route it (emitted as an event, and retrievable on cold start
+    // via getPendingNotificationTap so the tap isn't lost before JS mounts).
+    private static String pendingNotificationTapChatId = null;
+
+    public void onNotificationTap(String chatId) {
+        if (chatId == null || chatId.isEmpty()) return;
+        pendingNotificationTapChatId = chatId;
+        try {
+            JSObject data = new JSObject();
+            data.put("chatId", chatId);
+            notifyListeners("localNotificationTap", data);
+        } catch (Exception ignored) { /* event delivery is best-effort */ }
+    }
+
+    @PluginMethod
+    public void getPendingNotificationTap(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("chatId", pendingNotificationTapChatId == null ? "" : pendingNotificationTapChatId);
+        pendingNotificationTapChatId = null;
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void showLocalNotification(PluginCall call) {
         // Shows a real Android status-bar notification. HTML5 Notification is a
-        // no-op in the Capacitor WebView on modern Android, so toasts were the
-        // only feedback — this gives actual heads-up/inbox notifications with a
-        // dedicated channel (which also makes the app appear under "Apps that
-        // can send notifications" in system settings).
-        final String title = call.getString("title", "NexText");
-        final String body = call.getString("body", "");
+        // no-op in the Capacitor WebView on modern Android, so this native
+        // bridge is the real notification path: heads-up/inbox notifications on
+        // the dedicated nextext_messages channel. The title is the sender's
+        // name (direct chats) or the group name (group chats, with the sender
+        // as a sub-text), with a proper white notification icon, the brand
+        // green accent, a large app-icon image and an expanded big-text body —
+        // and tapping it routes straight into the chat that sent the message.
+        final String fallbackTitle = call.getString("title", "NexText");
+        final String fallbackBody = call.getString("body", "");
+        final String senderName = call.getString("senderName", "");
+        final String groupName = call.getString("groupName", "");
+        final String messageText = call.getString("messageText", "");
+        final String chatId = call.getString("chatId", "");
         final String tag = call.getString("tag", "nextext");
         new Thread(() -> {
             try {
@@ -163,28 +193,66 @@ public class NextextNativePlugin extends Plugin {
                     android.app.NotificationChannel channel = new android.app.NotificationChannel(
                         channelId, "Messages", android.app.NotificationManager.IMPORTANCE_HIGH);
                     channel.setDescription("New messages and alerts");
+                    channel.enableLights(true);
+                    channel.setLightColor(0xFF10B981);
                     nm.createNotificationChannel(channel);
                 }
-                int iconRes = ctx.getApplicationInfo().icon != 0
-                    ? ctx.getApplicationInfo().icon
-                    : android.R.drawable.stat_notify_chat;
+                // Title: for group messages the GROUP name leads (the sender
+                // appears as a small sub-text beneath it); for direct messages
+                // the sender's name is the title.
+                String title;
+                String subText = null;
+                if (groupName != null && !groupName.isEmpty()) {
+                    title = groupName;
+                    subText = senderName;
+                } else if (senderName != null && !senderName.isEmpty()) {
+                    title = senderName;
+                } else {
+                    title = fallbackTitle;
+                }
+                String body = (messageText != null && !messageText.isEmpty()) ? messageText : fallbackBody;
                 android.app.Notification.Builder builder;
                 if (android.os.Build.VERSION.SDK_INT >= 26) {
                     builder = new android.app.Notification.Builder(ctx, channelId);
                 } else {
                     builder = new android.app.Notification.Builder(ctx);
                 }
-                builder.setSmallIcon(iconRes)
+                builder.setSmallIcon(R.drawable.ic_stat_nextext)
+                    .setColor(0xFF10B981)
                     .setContentTitle(title)
                     .setContentText(body)
                     .setAutoCancel(true)
                     .setWhen(System.currentTimeMillis())
-                    .setDefaults(android.app.Notification.DEFAULT_SOUND | android.app.Notification.DEFAULT_VIBRATE);
+                    .setPriority(android.app.Notification.PRIORITY_HIGH)
+                    .setCategory(android.app.Notification.CATEGORY_MESSAGE)
+                    .setDefaults(android.app.Notification.DEFAULT_SOUND | android.app.Notification.DEFAULT_VIBRATE | android.app.Notification.DEFAULT_LIGHTS);
+                // Group messages show the sender as a small sub-text under the
+                // group name (title), so the sender is always identifiable.
+                try {
+                    if (subText != null && !subText.isEmpty() && android.os.Build.VERSION.SDK_INT >= 16) {
+                        builder.setSubText(subText);
+                    }
+                } catch (Exception ignored) { /* sub-text is best-effort */ }
+                // Large icon = the app's launcher icon, for a richer heads-up.
+                try {
+                    android.graphics.Bitmap large = android.graphics.BitmapFactory.decodeResource(
+                        ctx.getResources(), ctx.getApplicationInfo().icon);
+                    if (large != null) builder.setLargeIcon(large);
+                } catch (Exception ignored) { /* large icon is best-effort */ }
+                // Expanded big-text body showing the full message.
+                try {
+                    if (android.os.Build.VERSION.SDK_INT >= 16) {
+                        builder.setStyle(new android.app.Notification.BigTextStyle().bigText(body));
+                    }
+                } catch (Exception ignored) { /* style is best-effort */ }
+                // Content intent: launches the app carrying the chatId so the
+                // tap can route the user straight into the conversation.
                 android.content.Intent launch = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
                 if (launch != null) {
                     launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    if (chatId != null && !chatId.isEmpty()) launch.putExtra("nextext_chat_id", chatId);
                     android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
-                        ctx, 0, launch,
+                        ctx, (chatId == null ? "".hashCode() : chatId.hashCode()), launch,
                         android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
                     builder.setContentIntent(pi);
                 }

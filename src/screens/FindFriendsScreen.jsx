@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { ChevronLeft, Users, RefreshCw, Smartphone, Share2 } from "lucide-react";
+import { ChevronLeft, Users, RefreshCw, Smartphone, Share2, Package } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, getDocs } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { sendContactRequest } from "../firebase/contacts";
+import { getLatestApkUrl } from "../updater/updateChecker";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
 const NextextNative = registerPlugin("NextextNative");
@@ -33,6 +34,9 @@ export default function FindFriendsScreen({ myUid, onBack }) {
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [invited, setInvited] = useState([]);
   const [shareStatus, setShareStatus] = useState("");
+  const [includeApk, setIncludeApk] = useState(false);
+  const [apkUrl, setApkUrl] = useState("");
+  const [apkBusy, setApkBusy] = useState(false);
 
   const ensurePermission = async () => {
     if (!Capacitor.isNativePlatform()) return true;
@@ -61,7 +65,23 @@ export default function FindFriendsScreen({ myUid, onBack }) {
   const handleShare = async (name, phone) => {
     setShareStatus("");
     const link = `https://nextext.app/invite?r=${encodeURIComponent(myUid || "")}`;
-    const text = `Hey${name ? " " + name : ""}! Let's chat on NexText — a fast, private messaging app. Sign up here: ${link}`;
+    // Optional APK: when the toggle is on, fetch (once, cached) the latest
+    // Android app download link and append it so the friend can install
+    // NexText directly. A fetch failure just drops the APK line — the plain
+    // invite still goes out.
+    let apkLine = "";
+    if (includeApk) {
+      let apk = apkUrl;
+      if (!apk && !apkBusy) {
+        setShareStatus("Fetching latest APK link…");
+        setApkBusy(true);
+        apk = (await getLatestApkUrl()) || "";
+        setApkUrl(apk);
+        setApkBusy(false);
+      }
+      if (apk) apkLine = `\nDownload the latest Android app here: ${apk}`;
+    }
+    const text = `Hey${name ? " " + name : ""}! Let's chat on NexText — a fast, private messaging app. Sign up here: ${link}${apkLine}`;
     // navigator.share is unreliable inside Android WebViews — it often exists
     // but rejects immediately, which the old code silently swallowed (the
     // "Invite button does nothing" report). Try it, but on any failure other
@@ -216,7 +236,22 @@ export default function FindFriendsScreen({ myUid, onBack }) {
 
             {otherContacts.length > 0 && (
               <>
-                <div style={{ fontWeight: 700, color: t.text, fontSize: 14, marginBottom: 8, marginTop: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 14px", background: t.primaryLight, borderRadius: 12, marginBottom: 8, marginTop: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                    <Package size={16} color={t.primary} style={{ flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontWeight: 700, color: t.text, fontSize: 13.5 }}>Include APK link</div>
+                      <div style={{ fontSize: 11.5, color: t.textMuted, lineHeight: 1.4, marginTop: 1 }}>Also send the latest Android app download so they can install NexText right away.</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIncludeApk((v) => !v)}
+                    aria-label="Toggle APK link in invites"
+                    style={{ width: 46, height: 26, borderRadius: 13, border: "none", background: includeApk ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.15s ease" }}>
+                    <span style={{ position: "absolute", top: 3, left: includeApk ? 23 : 3, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.15s ease", boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }} />
+                  </button>
+                </div>
+                <div style={{ fontWeight: 700, color: t.text, fontSize: 14, marginBottom: 8, marginTop: 12 }}>
                   Not on NexText yet ({otherContacts.length})
                 </div>
                 {otherContacts.map((c) => (

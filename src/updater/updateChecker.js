@@ -3,7 +3,7 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 const GITHUB_REPO = "Fred-Systems/nextext";
 const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/releases`;
 const LAST_SEEN_KEY = "nextext_last_seen_release";
-const APP_VERSION = "1.1.25";
+const APP_VERSION = "1.1.26";
 
 const NextextNative = registerPlugin("NextextNative");
 
@@ -71,6 +71,25 @@ export async function checkForUpdate() {
     const err = new Error(e?.message || "Could not check for updates.");
     err.code = e?.code || "NETWORK";
     throw err;
+  }
+}
+
+// Latest published (non-draft, non-prerelease) APK download URL, regardless of
+// whether it's newer than the running app — used to include the install link in
+// contact invites. Returns null on any failure (rate limit, network, no APK).
+export async function getLatestApkUrl() {
+  try {
+    const res = await fetch(`${GITHUB_API}?per_page=1`, {
+      headers: { Accept: "application/vnd.github.v3+json" },
+    });
+    if (!res.ok) return null;
+    const releases = await res.json();
+    const release = (Array.isArray(releases) ? releases : [])
+      .find((r) => !r.draft && !r.prerelease && (r.assets || []).some((a) => a.name && a.name.endsWith(".apk")));
+    const apk = (release?.assets || []).find((a) => a.name && a.name.endsWith(".apk"));
+    return apk?.browser_download_url || null;
+  } catch {
+    return null;
   }
 }
 

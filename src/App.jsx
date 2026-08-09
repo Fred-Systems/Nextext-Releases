@@ -29,13 +29,13 @@ import { useSystemConfigHook, requestAIAccess, setAIPersonality, PERSONALITIES }
 import AppLockScreen from "./screens/AppLockScreen";
 import StatusScreen from "./screens/StatusScreen";
 import GroupInfoScreen from "./screens/GroupInfoScreen";
-import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications } from "./firebase/notifications";
+import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap } from "./firebase/notifications";
 import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
 import UpdatePrompt from "./components/UpdatePrompt";
 import PageErrorBoundary from "./components/PageErrorBoundary";
 import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, openDownloadUrl, saveApkToDevice, setLastSeenRelease } from "./updater/updateChecker";
-import { PING_SOUNDS, playVoiceEndChime } from "./utils/pingSounds";
+import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
 import { updateGlobalSettings, useGlobalSettings } from "./firebase/config-settings";
 import { useSystemInsets } from "./utils/useSystemInsets";
 import { changeNames, isNameChangeBlocked, isUsernameAvailable } from "./firebase/names";
@@ -720,10 +720,10 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </div>
             {pinchZoomOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>In any chat, pinch the message list to make text bigger or smaller.</div>}
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>End-of-voice-note chime</span>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Voice note chimes</span>
               <Toggle on={voiceEndChimeOn} onClick={() => { const next = !voiceEndChimeOn; setVoiceEndChimeOn(next); localStorage.setItem("nextext_voice_end_chime", next ? "on" : "off"); }} />
             </div>
-            {voiceEndChimeOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Play a chime once when a run of 3+ voice notes finishes, instead of after every single note.</div>}
+            {voiceEndChimeOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>A chime plays after every voice note, plus a brighter completion chime when a run of 2+ notes finishes.</div>}
             {voiceEndChimeOn && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                 {PING_SOUNDS.map((s) => (
@@ -733,9 +733,9 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                       setPingSoundId(s.id);
                       localStorage.setItem("nextext_voice_ping_sound", s.id);
                       // Play an immediate preview so the user hears the chime
-                      // they're selecting — playVoiceEndChime reads the just-set
+                      // they're selecting — playVoicePing reads the just-set
                       // localStorage value to choose the pattern.
-                      playVoiceEndChime();
+                      playVoicePing();
                     }}
                     style={{
                       padding: "5px 10px",
@@ -1363,7 +1363,7 @@ function AppShell({ appLocked, setAppLocked }) {
   // as a swipe would.
   const tapTransition = () => {
     if (!animateOnTap) return "none";
-    return `transform ${swipeDuration()}s ${swipeBezier()}`;
+    return `left ${swipeDuration()}s ${swipeBezier()}`;
   };
 
   usePresenceHeartbeat(myUid);
@@ -1372,7 +1372,13 @@ function AppShell({ appLocked, setAppLocked }) {
 
   useEffect(() => {
     setNotificationTapHandler((chatId) => setPendingNotifChatId(chatId));
-    return () => setNotificationTapHandler(null);
+    // A tapped notification on a cold start fires before any JS listener
+    // exists; the native side holds the chatId until we poll for it here.
+    pollPendingNotificationTap();
+    // Retry once the splash is out of the way in case the bridge wasn't
+    // ready for the first read.
+    const retry = setTimeout(() => pollPendingNotificationTap(), 2500);
+    return () => { setNotificationTapHandler(null); clearTimeout(retry); };
   }, []);
 
   useEffect(() => {
@@ -1490,13 +1496,29 @@ function AppShell({ appLocked, setAppLocked }) {
             if (m.sentAt.toMillis() < since) return;         // skip old messages
             if (m.senderId === uid) return;                  // skip own messages
             if (m.deletedForSelf?.includes(uid)) return;
+            // Parental controls: don't alert for blocked message types (the
+            // bubbles are hidden in-chat too, so the notification must not
+            // leak them).
+            if (m.type === "voice" && userRestrictions?.blockVoiceNotes === true) return;
+            if (m.type === "image" && userRestrictions?.blockIncomingPhotos === true) return;
+            if (m.type === "video" && userRestrictions?.blockIncomingVideos === true) return;
             if (m.isScheduled && m.scheduledFor?.toMillis && m.scheduledFor.toMillis() > Date.now()) return;
             // Don't notify if the user is currently inside THIS chat.
             if (activeChat?.chatId === chatId && document.visibilityState === "visible") return;
             const senderName = (contacts || []).find((c) => c.uid === m.senderId)?.profile?.displayName || "Unknown";
-            const chatName = change.doc.data()?.groupName || senderName;
+            const isGroup = !!change.doc.data()?.groupName;
+            const chatName = isGroup ? change.doc.data()?.groupName : senderName;
             const body = m.type === "text" ? (m.text || "") : m.type === "image" ? "📷 Photo" : m.type === "video" ? "🎥 Video" : m.type === "voice" ? "🎤 Voice note" : m.type === "file" ? "📎 File" : m.type === "location" ? "📍 Location" : "New message";
-            showLocalNotification(chatName, body.length > 60 ? body.slice(0, 60) + "…" : body, chatId);
+            // Native notifications use senderName/groupName/messageText to
+            // build a proper title (sender for DMs, group name for groups with
+            // the sender as sub-text) and a chatId so tapping the notification
+            // opens the conversation.
+            showLocalNotification(chatName, body.length > 60 ? body.slice(0, 60) + "…" : body, chatId, {
+              chatId,
+              senderName,
+              groupName: isGroup ? chatName : "",
+              messageText: body,
+            });
           });
         });
         unsubs.push({ chatId, unsub: unsubMsg });
@@ -1778,12 +1800,13 @@ function AppShell({ appLocked, setAppLocked }) {
     if (bootKick === 0) return;
     if (bootLockedRef.current) return;
     bootLockedRef.current = true;
+    setActiveNavTab("chats");
     const target = currentTabIndex >= 0 ? currentTabIndex : 0;
     orderedTabs.forEach((key, i) => {
       const el = pageRefs.current[key];
       if (el) {
         el.style.transition = "none";
-        el.style.transform = `translate3d(${(i - target) * 100}%, 0, 0)`;
+        el.style.left = `${(i - target) * 100}%`;
       }
     });
     setPageIndex(target);
@@ -1866,7 +1889,7 @@ function AppShell({ appLocked, setAppLocked }) {
       const el = pageRefs.current[key];
       if (el) {
         el.style.transition = "none";
-        el.style.transform = `translate3d(${(i - drag.startIndex) * drag.width + offset}px, 0, 0)`;
+        el.style.left = `${(i - drag.startIndex) * drag.width + offset}px`;
       }
     });
     if (e.cancelable) e.preventDefault();
@@ -1889,6 +1912,18 @@ function AppShell({ appLocked, setAppLocked }) {
       // immediately, so a backgrounded app or unmounted component can never
       // strand the pager on a stale page (the old cold-start bug).
       const dur = swipeAnimationEnabled() ? swipeDuration() * 1000 : 0;
+      const trans = swipeAnimationEnabled() ? `left ${swipeDuration()}s ${swipeBezier()}` : "none";
+      // Snap every page to its target `left` explicitly so the DOM always
+      // matches the committed tab (React's reconciliation won't touch a page
+      // whose rendered `left` is unchanged, which could otherwise leave a
+      // mid-drag inline offset stuck on the page).
+      orderedTabs.forEach((k, i) => {
+        const el = pageRefs.current[k];
+        if (el) {
+          el.style.transition = trans;
+          el.style.left = `${(i - target) * 100}%`;
+        }
+      });
       setSnapAnimating(true);
       if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
       snapTimerRef.current = setTimeout(() => setSnapAnimating(false), dur || 1);
@@ -1909,7 +1944,7 @@ function AppShell({ appLocked, setAppLocked }) {
         const el = pageRefs.current[key];
         if (el) {
           el.style.transition = "";
-          el.style.transform = `translate3d(${(i - pageIndex) * 100}%, 0, 0)`;
+          el.style.left = `${(i - pageIndex) * 100}%`;
         }
       });
       setPagerDragging(false);
@@ -1966,24 +2001,23 @@ function AppShell({ appLocked, setAppLocked }) {
           const pageStyle = {
             position: "absolute", top: 0, bottom: 0, width: "100%",
             overflow: "hidden",
-            // GPU-accelerated horizontal transform — translate3d promotes the
-            // element to its own compositor layer, so swiping stays at 60fps
-            // without triggering layout recalculation (which `left` did every
-            // frame, causing jank on low-end devices).
-            transform: `translate3d(${(idx - effectiveIndex) * 100}%, 0, 0)`,
-            // During a swipe drag: no CSS transition (we drive `transform` directly).
+            // Pages are positioned with plain `left` offsets (no transforms,
+            // no willChange, no GPU compositor layers at rest). Promoting every
+            // page to its own compositor layer via translate3d re-triggered the
+            // WebView paint bug that left the app blank/dead on cold start
+            // until a forced re-render (v1.1.18 regression of the v1.1.12 fix).
+            // `left` is layout-only and paints reliably on every WebView load.
+            // Swipe drags still position pages directly (see pagerTouchMove).
+            left: `${(idx - effectiveIndex) * 100}%`,
+            // During a swipe drag: no CSS transition (we drive `left` directly).
             // Right after a swipe ends (snapAnimating): the animated slide from
             // the last drag offset to the snapped page.
             // Tap jumps: animated only when animateOnTap is enabled.
             transition: pagerDragging
               ? "none"
               : snapAnimating
-                ? (swipeAnimationEnabled() ? `transform ${swipeDuration()}s ${swipeBezier()}` : "none")
+                ? (swipeAnimationEnabled() ? `left ${swipeDuration()}s ${swipeBezier()}` : "none")
                 : tapTransition(),
-            // Will-change: optimizes compositor for fast horizontal swiping.
-            willChange: "transform",
-            // GPU layer promotion keeps the swiping pages buttery smooth.
-            backfaceVisibility: "hidden",
           };
           const pageRef = (el) => { pageRefs.current[key] = el; };
           if (key === "chats") return (
