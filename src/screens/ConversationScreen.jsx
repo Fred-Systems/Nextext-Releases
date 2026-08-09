@@ -1970,12 +1970,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
         <VoicePlayer url={m.mediaURL} duration={m.mediaDurationSeconds} mine={m.senderId === myUid} t={t} msgId={m.id} onEnded={handleVoiceEnded} autoPlayToken={voiceAutoPlayNonce} isAutoPlayTarget={m.id === voiceAutoPlayId} nowPlayingId={nowPlayingId} onPlayStart={handleVoicePlayStart} />
         {voiceTranscripts[m.id] ? (
-          <div style={{ marginTop: 6, fontSize: 12.5 * chatTextScale, color: mine ? "rgba(255,255,255,0.85)" : t.textMuted, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontStyle: "italic", maxWidth: 230 }}>"{voiceTranscripts[m.id]}"</div>
+          <div style={{ marginTop: 6, fontSize: 12.5 * chatTextScale, color: m.senderId === myUid ? "rgba(255,255,255,0.85)" : t.textMuted, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontStyle: "italic", maxWidth: 230 }}>"{voiceTranscripts[m.id]}"</div>
         ) : (
           <button
             onClick={(e) => { e.stopPropagation(); transcribeVoice(m); }}
             disabled={transcribingId === m.id}
-            style={{ marginTop: 5, padding: "5px 10px", borderRadius: 8, border: `1px solid ${mine ? "rgba(255,255,255,0.35)" : t.border}`, background: "transparent", color: mine ? "rgba(255,255,255,0.9)" : t.primary, fontSize: 12, fontWeight: 600, cursor: transcribingId === m.id ? "default" : "pointer" }}
+            style={{ marginTop: 5, padding: "5px 10px", borderRadius: 8, border: `1px solid ${m.senderId === myUid ? "rgba(255,255,255,0.35)" : t.border}`, background: "transparent", color: m.senderId === myUid ? "rgba(255,255,255,0.9)" : t.primary, fontSize: 12, fontWeight: 600, cursor: transcribingId === m.id ? "default" : "pointer" }}
           >
             {transcribingId === m.id ? "Transcribing…" : "Transcribe"}
           </button>
