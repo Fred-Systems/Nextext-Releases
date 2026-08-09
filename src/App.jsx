@@ -313,7 +313,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode: micModeProp, setMicMode: setMicModeProp, changeMicMode: changeMicModeProp, micTapOpensMenu: micTapOpensMenuProp, setMicTapOpensMenu: setMicTapOpensMenuProp, toggleMicTapOpensMenu: toggleMicTapOpensMenuProp }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, micTapOpensMenu, setMicTapOpensMenu, toggleMicTapOpensMenu }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -327,23 +327,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const [appLockEnabled, setAppLockEnabled] = useState(() => localStorage.getItem("nextext_app_lock") === "true" || (localStorage.getItem("nextext_app_lock") === "pending" && !!localStorage.getItem("nextext_app_lock_pass")));
   const [appLockPassSaved, setAppLockPassSaved] = useState(() => !!localStorage.getItem("nextext_app_lock_pass"));
   const appLockPassRef = useRef(null);
-  const [linkPreviewsOn, setLinkPreviewsOn] = useState(() => localStorage.getItem("nextext_link_previews") !== "off");
-  const [pinchZoomOn, setPinchZoomOn] = useState(() => localStorage.getItem("nextext_pinch_zoom") !== "false");
-  const [voiceEndChimeOn, setVoiceEndChimeOn] = useState(() => localStorage.getItem("nextext_voice_end_chime") !== "off");
-  const [pingSoundId, setPingSoundId] = useState(() => { try { return localStorage.getItem("nextext_voice_ping_sound") || "warm"; } catch { return "warm"; } });
-  const [voicePlayerStyle, setVoicePlayerStyle] = useState(() => { try { return localStorage.getItem("nextext_voice_player_style") || "waveform"; } catch { return "waveform"; } });
-  const [micMode, setMicMode] = useState(() => { try { return localStorage.getItem("nextext_mic_mode") || "hold"; } catch { return "hold"; } });
-  const [micTapOpensMenu, setMicTapOpensMenu] = useState(() => { try { return localStorage.getItem("nextext_mic_tap_opens_menu") !== "false"; } catch { return true; } });
-  const changeMicMode = (mode) => {
-    setMicMode(mode);
-    try { localStorage.setItem("nextext_mic_mode", mode); } catch {}
-  };
-  const toggleMicTapOpensMenu = () => {
-    const next = !micTapOpensMenu;
-    setMicTapOpensMenu(next);
-    try { localStorage.setItem("nextext_mic_tap_opens_menu", String(next)); } catch {}
-  };
-  const [autoUpdateCheckOn, setAutoUpdateCheckOn] = useState(() => localStorage.getItem("nextext_auto_update_check") !== "off");
   const sysConfig = useSystemConfigHook();
   const globalSettings = useGlobalSettings();
   const [aiRequestStatus, setAiRequestStatus] = useState("");
@@ -1265,6 +1248,23 @@ function AppShell({ appLocked, setAppLocked }) {
   const [savingUpdate, setSavingUpdate] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [pagerDragging, setPagerDragging] = useState(false);
+  const [linkPreviewsOn, setLinkPreviewsOn] = useState(() => localStorage.getItem("nextext_link_previews") !== "off");
+  const [pinchZoomOn, setPinchZoomOn] = useState(() => localStorage.getItem("nextext_pinch_zoom") !== "false");
+  const [voiceEndChimeOn, setVoiceEndChimeOn] = useState(() => localStorage.getItem("nextext_voice_end_chime") !== "off");
+  const [pingSoundId, setPingSoundId] = useState(() => { try { return localStorage.getItem("nextext_voice_ping_sound") || "warm"; } catch { return "warm"; } });
+  const [voicePlayerStyle, setVoicePlayerStyle] = useState(() => { try { return localStorage.getItem("nextext_voice_player_style") || "waveform"; } catch { return "waveform"; } });
+  const [micMode, setMicMode] = useState(() => { try { return localStorage.getItem("nextext_mic_mode") || "hold"; } catch { return "hold"; } });
+  const [micTapOpensMenu, setMicTapOpensMenu] = useState(() => { try { return localStorage.getItem("nextext_mic_tap_opens_menu") !== "false"; } catch { return true; } });
+  const changeMicMode = (mode) => {
+    setMicMode(mode);
+    try { localStorage.setItem("nextext_mic_mode", mode); } catch {}
+  };
+  const toggleMicTapOpensMenu = () => {
+    const next = !micTapOpensMenu;
+    setMicTapOpensMenu(next);
+    try { localStorage.setItem("nextext_mic_tap_opens_menu", String(next)); } catch {}
+  };
+  const [autoUpdateCheckOn, setAutoUpdateCheckOn] = useState(() => localStorage.getItem("nextext_auto_update_check") !== "off");
   const shellRef = useRef(null);
   const pageRefs = useRef({});
   const pagerDragRef = useRef(null);
