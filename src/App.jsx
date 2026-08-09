@@ -313,7 +313,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, micTapOpensMenu, setMicTapOpensMenu, toggleMicTapOpensMenu, pinchZoomOn, setPinchZoomOn }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, micTapOpensMenu, setMicTapOpensMenu, toggleMicTapOpensMenu, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -1367,7 +1367,7 @@ function AppShell({ appLocked, setAppLocked }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid]);
 
-// Cold-start safety net. Runs a beat AFTER the restore effect so any late
+// Cold-start safety net. Runs IMMEDIATELY AFTER the restore effect so any late
   // state writes (a notification tap routing to screen="chat" before the chat
   // list loaded, a stale mid-sign-out app_state, a blocked tab in navConfig)
   // are corrected. Guarantees the app always lands on the chat list with the
@@ -1381,6 +1381,8 @@ function AppShell({ appLocked, setAppLocked }) {
   const [coldStartComplete, setColdStartComplete] = useState(false);
   useEffect(() => {
     if (!myUid) return;
+    // Run synchronously (0ms) to ensure coldStartComplete is true before
+    // any notification tap handler can process a pending chatId.
     const t = setTimeout(() => {
       setScreen((prev) => {
         if (["list", "status", "settings"].includes(prev)) return prev;
@@ -1389,7 +1391,7 @@ function AppShell({ appLocked, setAppLocked }) {
       setActiveNavTab((prev) => (TAB_KEYS.includes(prev) ? prev : "chats"));
       setBootKick((n) => n + 1);
       setColdStartComplete(true);
-    }, 600);
+    }, 0);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid]);
@@ -2196,6 +2198,14 @@ function AppShell({ appLocked, setAppLocked }) {
                 toggleMicTapOpensMenu={toggleMicTapOpensMenu}
                 pinchZoomOn={pinchZoomOn}
                 setPinchZoomOn={setPinchZoomOn}
+                voiceEndChimeOn={voiceEndChimeOn}
+                setVoiceEndChimeOn={setVoiceEndChimeOn}
+                pingSoundId={pingSoundId}
+                setPingSoundId={setPingSoundId}
+                voicePlayerStyle={voicePlayerStyle}
+                setVoicePlayerStyle={setVoicePlayerStyle}
+                autoUpdateCheckOn={autoUpdateCheckOn}
+                setAutoUpdateCheckOn={setAutoUpdateCheckOn}
               />
               </PageErrorBoundary>
             </div>
