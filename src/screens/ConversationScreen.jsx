@@ -503,7 +503,19 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setLocError("");
     setLocPosition(null);
     // Request location permission right when user taps the button.
-    try { await NextextNative.requestLocationPermission(); } catch { /* fallback to geolocation */ }
+    let nativeGranted = false;
+    try {
+      const perm = await NextextNative.requestLocationPermission();
+      nativeGranted = perm?.granted === true;
+      if (!nativeGranted) {
+        setLocError("Location permission denied. Enable it in Settings → Permissions to share your location.");
+        setShowLocationSheet(true);
+        return;
+      }
+    } catch (e) {
+      console.warn("Native location permission request failed:", e);
+      // Native call failed, fall through to geolocation attempt
+    }
     setShowLocationSheet(true);
     fetchCurrentPosition();
   };

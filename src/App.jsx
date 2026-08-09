@@ -950,8 +950,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         {/* ═══ ACCOUNT ACTIONS ═══ */}
         <SectionCard title="Account" emoji="⚙️" sectionKey="accountActions">
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Send Feedback" sub="Message the admin directly" onClick={() => onNavigate("feedback")} />
-          <Row icon={<Compass size={18} color={t.primary} />} label="Replay Welcome Tour" sub="See the first-run guide again" onClick={onShowTour} />
-          <NotificationsRow myUid={myUid} t={t} />
+          <Row icon={<Compass size={18} color={t.primary} />} label="Replay Welcome Tour" sub="See the first-run guide again" onClick={(e) => { e.stopPropagation(); startTour(); }} />
           {isAdmin && <Row icon={<ShieldCheck size={18} color={t.primary} />} label="Admin Dashboard" sub="Users, reports, broadcasts" onClick={() => onNavigate("admin")} />}
 
           <div style={{ padding: "13px 0" }}>
@@ -1274,7 +1273,7 @@ function AppShell({ appLocked, setAppLocked }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid]);
 
-  // Cold-start safety net. Runs a beat AFTER the restore effect so any late
+// Cold-start safety net. Runs a beat AFTER the restore effect so any late
   // state writes (a notification tap routing to screen="chat" before the chat
   // list loaded, a stale mid-sign-out app_state, a blocked tab in navConfig)
   // are corrected. Guarantees the app always lands on the chat list with the
@@ -1284,12 +1283,11 @@ function AppShell({ appLocked, setAppLocked }) {
   // Settings" navigation that the user confirmed fixes it) so a stale inline
   // transform or paint glitch on a pager page can't strand the app.
   const [bootKick, setBootKick] = useState(0);
+  const bootLockedRef = useRef(false);
   useEffect(() => {
     if (!myUid) return;
     const t = setTimeout(() => {
       setScreen((prev) => {
-        // If we're sitting on "chat" with no conversation open (or any
-        // non-standard screen) drop back to the list so the bottom bar shows.
         if (["list", "status", "settings"].includes(prev)) return prev;
         return "list";
       });
@@ -1359,7 +1357,11 @@ function AppShell({ appLocked, setAppLocked }) {
   }, [myUid, auth.userDoc?.profileComplete]);
 
   const finishTour = () => { setShowTour(false); setTourStep(0); };
-  const startTour = useCallback(() => { setTourStep(0); setShowTour(true); }, []);
+  const startTour = useCallback(() => {
+    console.log("[Tour] startTour called");
+    setTourStep(0);
+    setShowTour(true);
+  }, []);
 
   const { contacts } = useContacts(myUid);
   const { chats: myChats } = useChats(myUid);
@@ -1715,7 +1717,7 @@ function AppShell({ appLocked, setAppLocked }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTabKey, screen, orderedTabs.join(",")]);
 
-  // Cold-start pager resync. The user reported the chat list + bottom bar are
+// Cold-start pager resync. The user reported the chat list + bottom bar are
   // missing/dead until they manually tap the Settings gear (a re-render). The
   // reliable trigger is a fresh re-render that re-applies each page's
   // transform; this layout effect replicates that automatically by clearing
@@ -1724,33 +1726,31 @@ function AppShell({ appLocked, setAppLocked }) {
   // net shortly after sign-in) so it runs once on real cold starts.
   useLayoutEffect(() => {
     if (bootKick === 0) return;
+    if (bootLockedRef.current) return;
+    bootLockedRef.current = true;
     const target = currentTabIndex >= 0 ? currentTabIndex : 0;
     orderedTabs.forEach((key, i) => {
       const el = pageRefs.current[key];
       if (el) {
-        // Wipe any inline transform/transition a prior swipe write left on
-        // the element so React's style.transform (freshly recomputed below)
-        // is the source of truth on this re-render.
         el.style.transition = "";
         el.style.transform = `translate3d(${(i - target) * 100}%, 0, 0)`;
       }
     });
-setPageIndex(target);
+    setPageIndex(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootKick]);
 
-  // Cold-start pager lock: runs synchronously after first render (before paint)
-  // to guarantee the Chats tab is at position 0 and activeNavTab="chats" when
-  // screen="list". This prevents the "blank list + missing bottom bar" bug
-  // where a restored activeNavTab="settings" with screen="list" put the
-  // pager on the Settings page (blank because screen≠"settings").
-  useLayoutEffect(() => {
-    if (!myUid) return;
+  // Cold-start pager lock: runs inside the pager sync effect when orderedTabs
+  // is first populated (after navConfig restore). Forces activeNavTab="chats"
+  // and snaps the Chats page to origin. Uses a ref to run only once.
+  // This is the primary cold-start fix; bootKick layoutEffect is the fallback.
+  useEffect(() => {
+    if (!myUid || bootLockedRef.current) return;
+    if (orderedTabs.length === 0) return;
     const target = orderedTabs.indexOf("chats");
     if (target === -1) return;
-    // Force activeNavTab to "chats" when on list screen
+    bootLockedRef.current = true;
     setActiveNavTab("chats");
-    // Snap all pages to correct positions with Chats at origin
     orderedTabs.forEach((key, i) => {
       const el = pageRefs.current[key];
       if (el) {
@@ -1760,7 +1760,7 @@ setPageIndex(target);
     });
     setPageIndex(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myUid]);
+  }, [orderedTabs.join(","), myUid]);
 
   const navigateToTab = (key) => {
     const idx = orderedTabs.indexOf(key);

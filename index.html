@@ -31,53 +31,10 @@
         <style>@keyframes nxspin{to{transform:rotate(360deg)}}</style>
       </div>
     </div>
-    <noscript>
+<noscript>
       <div style="position:fixed;inset:0;z-index:99999999;background:#FF3B30;color:#fff;display:flex;align-items:center;justify-content:center;font:bold 18px sans-serif;text-align:center;padding:32px;">
         JavaScript is disabled. NexText requires JavaScript to run.
       </div>
     </noscript>
-    <script>
-    var NX_VER = 'iife-v2';
-    var nxBootStart = Date.now();
-
-    var nxBticker = document.createElement('div');
-    nxBticker.id = 'nx-boot-ticker';
-    nxBticker.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99999999;background:rgba(255,0,0,0.9);color:#fff;font:bold 14px monospace;padding:8px 12px;text-align:center;letter-spacing:1px;';
-    nxBticker.textContent = 'v' + NX_VER + ' BOOT 0s';
-    document.body.appendChild(nxBticker);
-
-    setInterval(function(){
-      var s = Math.round((Date.now()-nxBootStart)/1000);
-      var root = document.getElementById('root');
-      var kids = root ? root.children.length : -1;
-      var splash = !!document.querySelector('[data-nx-splash]');
-      nxBticker.textContent = 'v' + NX_VER + ' ' + s + 's root:' + kids + ' splash:' + splash;
-    }, 500);
-
-    fetch('./assets/' + (function(){var s=document.querySelectorAll('script[src]');return s.length>0?s[s.length-1].getAttribute('src').split('/').pop():'unknown'})(), {method:'HEAD'}).then(function(r) {
-      window.__nxBundleStatus = r.status;
-      if (!r.ok) window.__nxCapturedErrors.push('FETCH: bundle HEAD returned ' + r.status);
-      else window.__nxBundleExists = true;
-    }).catch(function(e) {
-      window.__nxCapturedErrors.push('FETCH ERR: ' + e.message);
-    });
-
-    setTimeout(function() {
-      var root = document.getElementById('root');
-      if (root && root.querySelector('[data-nx-splash]')) {
-        var errCount = window.__nxCapturedErrors.length;
-        var errText = errCount > 0 ? window.__nxCapturedErrors.join('\n---\n') : '(none)';
-        var el = document.getElementById('nx-boot-error');
-        if (el) {
-          el.style.display = 'block';
-          el.style.pointerEvents = 'auto';
-          el.innerHTML = '<pre style="color:#ff6b6b;padding:16px;font-size:11px;white-space:pre-wrap;word-break:break-all;background:#0B141A;min-height:100vh;">' +
-            'v' + NX_VER + ' | Boot timeout (12s)\n' +
-            'bundle fetch: ' + (window.__nxBundleStatus||'?') + ' exists=' + (window.__nxBundleExists||false) + '\n' +
-            'errors (' + errCount + '):\n' + errText + '</pre>';
-        }
-      }
-    }, 12000);
-    </script>
   </body>
 </html>
