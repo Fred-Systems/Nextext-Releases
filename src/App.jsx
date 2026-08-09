@@ -1544,6 +1544,7 @@ function AppShell({ appLocked, setAppLocked }) {
             const isGroup = !!chatData.groupName;
             // Privacy: a chat locked by this user, or the whole-app lock, hides
             // sender + content from the notification — just a generic alert.
+            const appLockEnabled = localStorage.getItem("nextext_app_lock") === "true" || (localStorage.getItem("nextext_app_lock") === "pending" && !!localStorage.getItem("nextext_app_lock_pass"));
             const privateNotif = !!chatData.lockedBy?.[uid] || appLockEnabled;
             const chatName = isGroup ? chatData.groupName : senderName;
             const body = m.type === "text" ? (m.text || "") : m.type === "image" ? "📷 Photo" : m.type === "video" ? "🎥 Video" : m.type === "voice" ? "🎤 Voice note" : m.type === "file" ? "📎 File" : m.type === "location" ? "📍 Location" : "New message";
@@ -1576,7 +1577,7 @@ function AppShell({ appLocked, setAppLocked }) {
     unsubs.push({ chatId: "__chats__", unsub: unsubChats });
     return () => { unsubs.forEach((u) => { try { u.unsub(); } catch {} }); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid, appLockEnabled, userRestrictions]);
+  }, [auth.user?.uid, userRestrictions]);
 
 
   useEffect(() => {
