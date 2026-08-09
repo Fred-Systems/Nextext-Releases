@@ -5,6 +5,21 @@ import {
 } from "firebase/firestore";
 import { db } from "./config";
 
+// Get the display name for a contact: nickname if set, otherwise real name from profile
+export function getContactDisplayName(contact) {
+  if (!contact) return "Unknown";
+  // If contact has a nickname set, use it
+  if (contact.nickname && contact.nickname.trim()) return contact.nickname.trim();
+  // Otherwise fall back to profile displayName or username
+  return contact.profile?.displayName || contact.profile?.username || "Unknown";
+}
+
+// Get the real name (from profile) for a contact, ignoring nickname
+export function getContactRealName(contact) {
+  if (!contact) return "Unknown";
+  return contact.profile?.displayName || contact.profile?.username || "Unknown";
+}
+
 // Search users by username prefix — powers "add contact" and admin search.
 export async function searchUsersByUsername(prefix) {
   if (!prefix.trim()) return [];
@@ -45,6 +60,12 @@ export async function sendContactRequest(myUid, theirUid) {
 export async function acceptContactRequest(myUid, theirUid) {
   await setDoc(doc(db, "users", myUid, "contacts", theirUid), { status: "accepted" }, { merge: true });
   await setDoc(doc(db, "users", theirUid, "contacts", myUid), { status: "accepted" }, { merge: true });
+}
+
+// Update the nickname for a contact (local display name override)
+export async function setContactNickname(myUid, theirUid, nickname) {
+  const ref = doc(db, "users", myUid, "contacts", theirUid);
+  await setDoc(ref, { nickname: nickname || null }, { merge: true });
 }
 
 // Local cache of the last-known contact list so the chat list can paint

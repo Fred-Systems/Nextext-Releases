@@ -7,6 +7,7 @@ import { addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
 import Avatar from "../components/Avatar";
 import AvatarColorPicker from "../components/AvatarColorPicker";
+import { getContactDisplayName, getContactRealName, setContactNickname } from "../firebase/contacts";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { useStatuses } from "../firebase/status";
 import { uploadChatFile } from "../supabase/media";
@@ -86,6 +87,8 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
   const [avatarNonce, setAvatarNonce] = useState(0);
   const [localPhotoOverride, setLocalPhotoOverride] = useState(() => getLocalOverrides()[otherUid] || null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [nickname, setNickname] = useState(() => contact?.nickname || "");
+  const [savingNickname, setSavingNickname] = useState(false);
   const localPhotoRef = useRef(null);
   const { items: sharedMedia, loading: mediaLoading } = useSharedMedia(myUid, otherUid, tab);
 
@@ -156,9 +159,22 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
     setLocalPhotoOverride(null);
   };
 
+  const saveNickname = async () => {
+    if (!nickname.trim()) return;
+    setSavingNickname(true);
+    try {
+      await setContactNickname(myUid, otherUid, nickname.trim());
+    } catch (err) {
+      setError("Failed to save nickname: " + err.message);
+    }
+    setSavingNickname(false);
+  };
+
   const effectivePhotoURL = localPhotoOverride || contact?.profile?.photoURL;
 
-  const displayName = contact?.profile?.displayName || contact?.groupName || "Contact";
+  const realName = getContactRealName(contact);
+  const displayName = getContactDisplayName(contact);
+  const hasNickname = contact?.nickname && contact.nickname.trim();
 
   const safeBack = () => { try { onBack?.(); } catch { /* navigation guard */ } };
 
@@ -231,6 +247,36 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
           {!localPhotoOverride && (
             <div onClick={() => localPhotoRef.current?.click()} style={{ fontSize: 11.5, color: t.textMuted, cursor: "pointer", marginTop: 4 }}>
               {uploadingPhoto ? "Uploading…" : "Set photo for your eyes only"}
+            </div>
+          )}
+          {/* Nickname editor */}
+          {!isSelfProfile && !isAIContact && (
+            <div style={{ marginTop: 16, padding: "0 16px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontSize: 13.5, fontWeight: 600, color: t.text }}>Nickname</span>
+                <span style={{ fontSize: 11, color: t.textMuted }}>This name is only visible to you</span>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  type="text"
+                  value={nickname}
+                  onChange={(e) => setNickname(e.target.value)}
+                  placeholder={realName}
+                  style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 14 }}
+                />
+                <button
+                  onClick={saveNickname}
+                  disabled={savingNickname || !nickname.trim()}
+                  style={{ padding: "10px 16px", borderRadius: 8, background: nickname.trim() && !savingNickname ? t.primary : t.border, color: nickname.trim() && !savingNickname ? t.bubbleMeText : t.textMuted, border: "none", fontWeight: 600, fontSize: 13, cursor: nickname.trim() && !savingNickname ? "pointer" : "not-allowed" }}
+                >
+                  {savingNickname ? "Saving…" : "Save"}
+                </button>
+              </div>
+              {hasNickname && (
+                <div style={{ marginTop: 6, fontSize: 12, color: t.textMuted }}>
+                  Real name: {realName}
+                </div>
+              )}
             </div>
           )}
         </div>

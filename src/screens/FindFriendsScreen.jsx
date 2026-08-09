@@ -10,16 +10,30 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 const NextextNative = registerPlugin("NextextNative");
 
 function normalizePhone(raw) {
+  // Strip everything except digits; keep leading + for country code detection
   return String(raw || "").replace(/[^\d]/g, "");
 }
 
 // Match a NexText user's stored number against a device contact. Both sides
-// are reduced to digits; a match counts when the full number matches or the
-// last 10 digits match (handles country-code differences).
+// are reduced to digits; a match counts when:
+// 1. Full normalized numbers match exactly
+// 2. Last 10 digits match (handles country-code differences like +1 prefix)
+// 3. One number has leading 1 (US country code) and the other doesn't, but
+//    the remaining digits match
 function phonesMatch(a, b) {
   if (!a || !b) return false;
   if (a === b) return true;
-  if (a.length > 9 && b.length > 9) return a.slice(-10) === b.slice(-10);
+  // Compare last 10 digits (handles +1, +44, etc.)
+  if (a.length >= 10 && b.length >= 10) {
+    if (a.slice(-10) === b.slice(-10)) return true;
+  }
+  // Explicit US +1 handling: if one has leading 1 and other doesn't,
+  // compare without the leading 1
+  const aNo1 = a.startsWith("1") && a.length === 11 ? a.slice(1) : a;
+  const bNo1 = b.startsWith("1") && b.length === 11 ? b.slice(1) : b;
+  if (aNo1 !== a || bNo1 !== b) {
+    if (aNo1 === bNo1) return true;
+  }
   return false;
 }
 

@@ -26,7 +26,7 @@ import { getSystemInsets } from "../utils/systemInsets";
 const NextextNative = registerPlugin("NextextNative");
 import { useStatuses } from "../firebase/status";
 import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote } from "../firebase/ai";
-import { useContacts } from "../firebase/contacts";
+import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
 
 
 const VIEWED_KEY = "nextext_status_viewed";
@@ -363,6 +363,7 @@ function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, is
   };
 
   const formatTime = (secs) => {
+    if (!isFinite(secs) || secs <= 0) return "0:00";
     const s = Math.floor(secs);
     const m = Math.floor(s / 60);
     return `${m}:${String(s % 60).padStart(2, "0")}`;
@@ -455,7 +456,7 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
   );
 }
 
-export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false }) {
+export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false, micMode, setMicMode, changeMicMode, micTapOpensMenu, setMicTapOpensMenu, toggleMicTapOpensMenu }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth } = useTheme();
   const globalSettings = useGlobalSettings();
   const isGroup = !!contact?.isGroup;
@@ -626,21 +627,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [recordingSlideCancel, setRecordingSlideCancel] = useState(false);
   const [recLevel, setRecLevel] = useState(0);
   const [micMenuOpen, setMicMenuOpen] = useState(false);
-  // Recording gesture preference: "hold" (press & hold, release to send) or
-  // "tap" (tap starts the bar-mode recording with controls). Stored per user.
-  const [micMode, setMicMode] = useState(() => {
-    try { return localStorage.getItem("nextext_mic_mode") || "hold"; } catch { return "hold"; }
-  });
-  const changeMicMode = (mode) => {
-    setMicMode(mode);
-    try { localStorage.setItem("nextext_mic_mode", mode); } catch {}
-  };
   const micLongPressTimerRef = useRef(null);
   const [theyRecordingVoice, setTheyRecordingVoice] = useState(false);
   const [voiceAutoPlayId, setVoiceAutoPlayId] = useState(null);
   const [voiceAutoPlayNonce, setVoiceAutoPlayNonce] = useState(0);
   const [nowPlayingId, setNowPlayingId] = useState(null);
-  const [voiceTranscripts, setVoiceTranscripts] = useState({});
+  const [voiceTranscripts, setVoiceTranscripts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("nextext_voice_transcripts") || "{}"); } catch { return {}; }
+  });
   const [transcribingId, setTranscribingId] = useState(null);
   const [transcriptErrors, setTranscriptErrors] = useState({});
   const [showCamera, setShowCamera] = useState(false);
@@ -668,6 +662,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   useEffect(() => {
     getSystemInsets().then((insets) => setNavInset(insets.bottom || 0)).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("nextext_voice_transcripts", JSON.stringify(voiceTranscripts)); } catch {}
+  }, [voiceTranscripts]);
 
   const pinchEnabled = () => {
     // Defaults ON (matches the Settings toggle: anything except an explicit
@@ -1581,6 +1579,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   // ── Hold-to-record / tap-to-record gesture handling on the mic button ──
+  // Long-press = record (hold to record, release to send, slide left to cancel)
+  // Quick tap = open menu (if micTapOpensMenu enabled) or enter recording tap mode
   const micPointerDown = (e) => {
     e.preventDefault();
     if (recordingRef.current) return;
@@ -1600,13 +1600,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setRecordingHold(true);
     setRecordingSlideCancel(false);
 
-    // Long-press the mic (in either gesture mode) opens the recording-mode
-    // menu instead; the recording gesture started below is cancelled on release.
-    micLongPressTimerRef.current = setTimeout(() => {
-      micLongPressTimerRef.current = null;
-      setMicMenuOpen(true);
-      recordHoldCancelRef.current = true;
-    }, 450);
+    // No long-press timer to open menu — recording starts immediately.
+    // Menu opens on quick tap (release within ~300ms) if setting enabled.
 
     const onPointerMove = (ev) => {
       const start = recordHoldStartRef.current;
@@ -1674,18 +1669,21 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       cancelVoiceRecording();
       return;
     }
-    if (micMode === "tap") {
-      // Tap mode: a tap on the mic keeps recording in bar mode with
-      // pause/restart/cancel and an explicit Send button.
-      setRecordingTapMode(true);
+    // Quick tap (< 300ms): open menu if enabled, otherwise enter recording tap mode
+    if (heldMs < 300) {
+      if (micTapOpensMenu) {
+        setMicMenuOpen(true);
+      } else {
+        setRecordingTapMode(true);
+      }
       return;
     }
-    if (heldMs >= 350) {
-      // Long hold -> release to send.
-      stopVoiceRecording(true);
-    } else {
-      // Quick tap -> keep recording in bar mode with pause/restart/cancel/send.
+    // Long hold (>= 300ms): release to send
+    if (micMode === "tap") {
+      // In tap mode, long hold also enters tap mode for consistency
       setRecordingTapMode(true);
+    } else {
+      stopVoiceRecording(true);
     }
   };
 
@@ -1787,6 +1785,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const isBlockedVoice = (m) =>
     m.type === "voice" && !m.deletedForEveryone &&
     restrictions?.blockVoiceNotes === true && m.senderId !== myUid;
+  // Also block if blockMedia is enabled (covers all media types including voice)
+  const isMediaBlocked = (m) =>
+    m.type === "voice" && !m.deletedForEveryone &&
+    (restrictions?.blockVoiceNotes === true || restrictions?.blockMedia === true) && m.senderId !== myUid;
 
   // Client-side mirror of the firestore.rules `mediaAllowed` check. The rules
   // already block these sends server-side, but without a client gate the user
@@ -1808,12 +1810,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const visibleMessages = (searchQuery.trim()
     ? messages.filter((m) => m.text?.toLowerCase().includes(searchQuery.toLowerCase()))
     : messages
-  ).filter((m) => !isBlockedVoice(m));
+  ).filter((m) => !isMediaBlocked(m));
 
   const replyToSenderName = (senderId) => {
     if (senderId === myUid) return "You";
     if (isGroup) return memberNames[senderId] || "…";
-    return contact?.profile?.displayName || "…";
+    return getContactDisplayName(contact);
   };
 
   // When a voice note finishes, auto-advance to the next note — but only if
@@ -1882,6 +1884,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
     if (["image", "video", "voice", "file"].includes(m.type) && isMediaExpired(m, globalSettings?.mediaExpiryDays)) {
       const ExpiredIcon = m.type === "image" ? ImageOff : m.type === "video" ? VideoOff : m.type === "voice" ? MicOff : FileX;
+      const savedTranscript = m.type === "voice" ? voiceTranscripts[m.id] : null;
       return (
         <div>
           <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
@@ -1889,6 +1892,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             <ExpiredIcon size={16} color={t.textMuted} />
             <span style={{ fontSize: 13, fontStyle: "italic", color: t.textMuted }}>Expired</span>
           </div>
+          {savedTranscript && (
+            <div style={{ marginTop: 6, fontSize: 12.5 * chatTextScale, color: m.senderId === myUid ? "rgba(255,255,255,0.85)" : t.textMuted, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontStyle: "italic", maxWidth: 230 }}>"{savedTranscript}"</div>
+          )}
         </div>
       );
     }
@@ -1899,7 +1905,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       const isBlockedMedia =
         (m.type === "image" && (restrictions.blockMedia || restrictions.blockIncomingPhotos)) ||
         (m.type === "video" && (restrictions.blockMedia || restrictions.blockIncomingVideos)) ||
-        (m.type === "voice" && restrictions.blockVoiceNotes) ||
+        (m.type === "voice" && (restrictions.blockMedia || restrictions.blockVoiceNotes)) ||
         (m.type === "file" && (restrictions.blockMedia || restrictions.blockIncomingPhotos || restrictions.blockIncomingVideos));
       if (isBlockedMedia || (blockMedia && (m.type === "image" || m.type === "video"))) {
         return (
@@ -2024,7 +2030,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           ) : (
             <Avatar
               photoURL={isGroup ? null : (contact?.profile?.photoURL || otherUserPhoto)}
-              name={isGroup ? (myGroupNickname || chatMeta?.groupName || "Group") : (contact?.profile?.displayName || "…")}
+              name={isGroup ? (myGroupNickname || chatMeta?.groupName || "Group") : (getContactDisplayName(contact) || "…")}
               uid={isGroup ? null : otherUid}
               size={38}
               hasActiveStatus={!isGroup && hasOtherActiveStatus}
@@ -2036,7 +2042,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         </div>
           <div onClick={onOpenProfile} style={{ flex: 1, cursor: "pointer" }}>
           <div style={{ color: "#fff", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
-            {isSelfChat ? "Message Yourself" : isGroup ? (myGroupNickname || contact?.groupName || chatMeta?.groupName || "Group") : (contact?.profile?.displayName || "…")}
+            {isSelfChat ? "Message Yourself" : isGroup ? (myGroupNickname || contact?.groupName || chatMeta?.groupName || "Group") : (getContactDisplayName(contact) || "…")}
             {isLocked && <Lock size={13} color="rgba(255,255,255,0.8)" />}
             {isMuted && <BellOff size={13} color="rgba(255,255,255,0.7)" />}
           </div>

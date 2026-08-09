@@ -313,7 +313,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode: micModeProp, setMicMode: setMicModeProp, changeMicMode: changeMicModeProp, micTapOpensMenu: micTapOpensMenuProp, setMicTapOpensMenu: setMicTapOpensMenuProp, toggleMicTapOpensMenu: toggleMicTapOpensMenuProp }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -332,6 +332,17 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const [voiceEndChimeOn, setVoiceEndChimeOn] = useState(() => localStorage.getItem("nextext_voice_end_chime") !== "off");
   const [pingSoundId, setPingSoundId] = useState(() => { try { return localStorage.getItem("nextext_voice_ping_sound") || "warm"; } catch { return "warm"; } });
   const [voicePlayerStyle, setVoicePlayerStyle] = useState(() => { try { return localStorage.getItem("nextext_voice_player_style") || "waveform"; } catch { return "waveform"; } });
+  const [micMode, setMicMode] = useState(() => { try { return localStorage.getItem("nextext_mic_mode") || "hold"; } catch { return "hold"; } });
+  const [micTapOpensMenu, setMicTapOpensMenu] = useState(() => { try { return localStorage.getItem("nextext_mic_tap_opens_menu") !== "false"; } catch { return true; } });
+  const changeMicMode = (mode) => {
+    setMicMode(mode);
+    try { localStorage.setItem("nextext_mic_mode", mode); } catch {}
+  };
+  const toggleMicTapOpensMenu = () => {
+    const next = !micTapOpensMenu;
+    setMicTapOpensMenu(next);
+    try { localStorage.setItem("nextext_mic_tap_opens_menu", String(next)); } catch {}
+  };
   const [autoUpdateCheckOn, setAutoUpdateCheckOn] = useState(() => localStorage.getItem("nextext_auto_update_check") !== "off");
   const sysConfig = useSystemConfigHook();
   const globalSettings = useGlobalSettings();
@@ -785,6 +796,40 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 </div>
               ))}
             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Voice note recording mode</span>
+            </div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>How the microphone button behaves when pressed.</div>
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              {[
+                { id: "hold", label: "Hold to record" },
+                { id: "tap", label: "Tap to record" },
+              ].map((opt) => (
+                <div
+                  key={opt.id}
+                  onClick={() => changeMicMode(opt.id)}
+                  style={{
+                    flex: 1,
+                    padding: "7px 0",
+                    textAlign: "center",
+                    borderRadius: 8,
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    background: micMode === opt.id ? t.primary : t.bg,
+                    color: micMode === opt.id ? t.bubbleMeText : t.text,
+                    border: `1px solid ${micMode === opt.id ? t.primary : t.border}`,
+                  }}
+                >
+                  {opt.label}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Quick tap opens recording menu</span>
+              <Toggle on={micTapOpensMenu} onClick={toggleMicTapOpensMenu} />
+            </div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>When off, a quick tap on the mic starts recording directly (uses the selected mode above). When on, a quick tap opens the recording mode menu.</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Animate tab taps (animateOnTap)</span>
               <Toggle on={animateOnTap} onClick={() => setAnimateOnTap(!animateOnTap)} />
@@ -1333,6 +1378,7 @@ function AppShell({ appLocked, setAppLocked }) {
   // transform or paint glitch on a pager page can't strand the app.
   const [bootKick, setBootKick] = useState(0);
   const bootLockedRef = useRef(false);
+  const [coldStartComplete, setColdStartComplete] = useState(false);
   useEffect(() => {
     if (!myUid) return;
     const t = setTimeout(() => {
@@ -1342,6 +1388,7 @@ function AppShell({ appLocked, setAppLocked }) {
       });
       setActiveNavTab((prev) => (TAB_KEYS.includes(prev) ? prev : "chats"));
       setBootKick((n) => n + 1);
+      setColdStartComplete(true);
     }, 600);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1789,10 +1836,17 @@ function AppShell({ appLocked, setAppLocked }) {
   // Route into a chat when the user taps a notification (or a background
   // payload arrived while the app was closed). Waits for the chat list to load
   // on cold start, then drops the request if the chat can't be found.
+  // On cold start, we don't auto-open the chat until the bootKick has run
+  // (so the bottom nav is guaranteed visible). After cold start, open immediately.
   useEffect(() => {
     if (!pendingNotifChatId) return;
     const chat = (myChats || []).find((c) => c.id === pendingNotifChatId);
     if (chat) {
+      if (!coldStartComplete) {
+        // Cold start not complete — wait and retry
+        const t = setTimeout(() => {}, 200);
+        return () => clearTimeout(t);
+      }
       setPendingNotifChatId(null);
       const otherUid = (chat.participants || []).find((p) => p !== myUid);
       openChat(chat, otherUid, (contacts || []).find((c) => c.uid === otherUid));
@@ -1800,7 +1854,7 @@ function AppShell({ appLocked, setAppLocked }) {
       const t = setTimeout(() => setPendingNotifChatId((cur) => (cur === pendingNotifChatId ? null : cur)), 8000);
       return () => clearTimeout(t);
     }
-  }, [pendingNotifChatId, myChats, myUid, contacts]);
+  }, [pendingNotifChatId, myChats, myUid, contacts, coldStartComplete]);
 
   const openGroupInfo = (chat) => {
     setActiveGroup({ chatId: chat?.id, groupName: chat?.groupName });
@@ -2134,6 +2188,12 @@ function AppShell({ appLocked, setAppLocked }) {
                 searchBarScale={searchBarScale}
                 setSearchBarScale={setSearchBarScale}
                 setLiveUserDoc={setLiveUserDoc}
+                micMode={micMode}
+                setMicMode={setMicMode}
+                changeMicMode={changeMicMode}
+                micTapOpensMenu={micTapOpensMenu}
+                setMicTapOpensMenu={setMicTapOpensMenu}
+                toggleMicTapOpensMenu={toggleMicTapOpensMenu}
               />
               </PageErrorBoundary>
             </div>
@@ -2153,6 +2213,12 @@ function AppShell({ appLocked, setAppLocked }) {
           onOpenGroupInfo={openGroupInfo}
           showScrollDownSetting={showScrollDown}
           animatedScrollEntry={animatedScrollEntry}
+          micMode={micMode}
+          setMicMode={setMicMode}
+          changeMicMode={changeMicMode}
+          micTapOpensMenu={micTapOpensMenu}
+          setMicTapOpensMenu={setMicTapOpensMenu}
+          toggleMicTapOpensMenu={toggleMicTapOpensMenu}
         />
       )}
       {screen === "contactProfile" && activeChat && (

@@ -125,6 +125,20 @@ export async function setAIPersonality(userUid, personalityKey) {
 }
 
 // ── Groq API — clean browser fetch, no SDK ──
+function parseRateLimitError(errText, status) {
+  // Try to extract retry-after from error message or use default
+  // Groq returns 429 with error message like "Rate limit reached. Try again in 60s."
+  const match = errText?.match(/try again in (\d+)s/i) || errText?.match(/retry.after.?(\d+)/i);
+  const retrySeconds = match ? parseInt(match[1], 10) : 60;
+  const resetTime = new Date(Date.now() + retrySeconds * 1000);
+  const resetStr = resetTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return {
+    message: `AI limit reached. Please try again after ${resetStr}.`,
+    resetTime: resetTime.getTime(),
+    retrySeconds,
+  };
+}
+
 async function callGroq(apiKey, messages, temperature = 0.7) {
   const key = (apiKey || "").trim();
   if (!key) throw new Error("AI is not configured. No API key found in Firestore.");
@@ -143,6 +157,12 @@ async function callGroq(apiKey, messages, temperature = 0.7) {
   });
   if (!response.ok) {
     const errText = await response.text().catch(() => "Unknown error");
+    if (response.status === 429) {
+      const limitInfo = parseRateLimitError(errText, response.status);
+      const err = new Error(limitInfo.message);
+      err.rateLimit = limitInfo;
+      throw err;
+    }
     throw new Error(`Groq API error (${response.status}): ${errText}`);
   }
   const data = await response.json();
@@ -224,6 +244,12 @@ async function callGroqVision(apiKey, messages, model = "llama-3.2-11b-vision-in
     });
     if (!response.ok) {
       const errText = await response.text().catch(() => "Unknown error");
+      if (response.status === 429) {
+        const limitInfo = parseRateLimitError(errText, response.status);
+        const err = new Error(limitInfo.message);
+        err.rateLimit = limitInfo;
+        throw err;
+      }
       throw new Error(`Groq Vision API error (${response.status}): ${errText}`);
     }
     const data = await response.json();
@@ -335,6 +361,12 @@ export async function transcribeVoiceNote(userUid, audioBlob) {
   });
   if (!response.ok) {
     const errText = await response.text().catch(() => "Unknown error");
+    if (response.status === 429) {
+      const limitInfo = parseRateLimitError(errText, response.status);
+      const err = new Error(limitInfo.message);
+      err.rateLimit = limitInfo;
+      throw err;
+    }
     throw new Error(`Groq transcription error (${response.status}): ${errText}`);
   }
   const data = await response.json();

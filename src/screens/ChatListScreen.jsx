@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { useChats, toggleArchive, toggleFavorite, toggleLocked, deleteChatCompletely } from "../firebase/chats";
-import { useContacts, searchUsersByUsername, sendContactRequest, acceptContactRequest } from "../firebase/contacts";
+import { useContacts, searchUsersByUsername, sendContactRequest, acceptContactRequest, getContactDisplayName } from "../firebase/contacts";
 import { sendMediaMessage, getOrCreateDirectChat } from "../firebase/chats";
 import { usePresence, formatLastSeen } from "../firebase/presence";
 import { useStatuses } from "../firebase/status";
@@ -234,7 +234,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     const otherUid = participants.find((p) => p !== myUid) || myUid;
     if (otherUid === myUid) return selfContact?.profile?.displayName || "Me (You)";
     const contact = acceptedContacts.find((ac) => ac.uid === otherUid);
-    return contact?.profile?.displayName || "Unknown";
+    return getContactDisplayName(contact);
   };
 
   const aiApproved = userDoc?.aiApproved && !sysConfig?.aiGloballyDisabled && !sysConfig?.hideAiEverywhere && userDoc?.restrictions?.blockAI !== true;
