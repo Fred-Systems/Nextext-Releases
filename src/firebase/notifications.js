@@ -35,6 +35,21 @@ export function triggerNotificationVibration() {
 
 export function showLocalNotification(title, body, tag = "nextext-msg") {
   triggerNotificationVibration();
+  if (Capacitor.isNativePlatform()) {
+    // HTML5 Notification is a silent no-op inside the Capacitor WebView on
+    // modern Android, so route through the native bridge which posts a real
+    // status-bar notification on the nextext-messages channel.
+    try {
+      NextextNative.showLocalNotification({
+        title: title || "NexText",
+        body: body || "You have a new message.",
+        tag,
+      }).catch(() => {});
+    } catch (e) {
+      console.warn("[notifications] native notification error:", e);
+    }
+    return;
+  }
   try {
     if ("Notification" in window && Notification.permission === "granted") {
       new Notification(title || "NexText", {

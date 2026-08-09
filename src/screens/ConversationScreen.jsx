@@ -19,7 +19,7 @@ import { db } from "../firebase/config";
 import { registerPlugin } from "@capacitor/core";
 import Avatar, { getLocalPhotoOverride } from "../components/Avatar";
 import { extractFirstUrl, fetchLinkPreview, isLinkPreviewEnabled } from "../utils/linkPreview";
-import { playVoicePing } from "../utils/pingSounds";
+import { playVoiceEndChime } from "../utils/pingSounds";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { getSystemInsets } from "../utils/systemInsets";
 
@@ -381,7 +381,7 @@ function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, is
         src={url}
         onPlay={() => { setPlaying(true); }}
         onPause={() => { setPlaying(false); }}
-        onEnded={() => { setPlaying(false); onPlayStart?.(null); playVoicePing(); onEnded?.(msgId); }}
+        onEnded={() => { setPlaying(false); onPlayStart?.(null); onEnded?.(msgId); }}
         onError={() => setError(true)}
         onLoadedMetadata={() => { if (audioRef.current) setTotalDuration(audioRef.current.duration || duration || 0); }}
         onTimeUpdate={() => { if (!dragging.current && audioRef.current) setCurrentTime(audioRef.current.currentTime); }}
@@ -476,6 +476,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [locError, setLocError] = useState("");
   const [locPosition, setLocPosition] = useState(null);
   const liveLocRef = useRef(null);
+  // Voice-note "burst" tracking for the end-of-burst chime: consecutive notes
+  // the user listened to back-to-back. A run of 3+ triggers the chime once
+  // when it ends.
+  const voiceChainRef = useRef(0);
+  const voiceChainLastIdxRef = useRef(-1);
   const openAttach = () => { setAttachClosing(false); setAttachRendered(true); setShowAttach(true); };
   const closeAttach = () => {
     if (!attachRendered) return;
@@ -1726,9 +1731,18 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const isFavorite = chatMeta?.favoritedBy?.includes(myUid);
   const isLocked = chatMeta?.lockedBy?.[myUid];
 
-  const visibleMessages = searchQuery.trim()
+  // Parental controls: drop incoming voice notes when "block voice notes" is
+  // enabled. Filtering here (not just in renderBubble) removes them from the
+  // DOM and from autoplay chains entirely, so notes sent BEFORE the block was
+  // enabled are hidden too, not just new ones.
+  const isBlockedVoice = (m) =>
+    m.type === "voice" && !m.deletedForEveryone &&
+    restrictions?.blockVoiceNotes === true && m.senderId !== myUid;
+
+  const visibleMessages = (searchQuery.trim()
     ? messages.filter((m) => m.text?.toLowerCase().includes(searchQuery.toLowerCase()))
-    : messages;
+    : messages
+  ).filter((m) => !isBlockedVoice(m));
 
   const replyToSenderName = (senderId) => {
     if (senderId === myUid) return "You";
@@ -1736,19 +1750,39 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     return contact?.profile?.displayName || "…";
   };
 
-  // When a voice note finishes, ping and auto-advance to the next note — but
-  // only if it's the IMMEDIATELY following message (2+ messages apart = stop).
+  // When a voice note finishes, auto-advance to the next note — but only if
+  // it's the IMMEDIATELY following message (2+ messages apart = stop). The
+  // end-of-burst chime plays once when a run of 3+ consecutive notes ends
+  // (WhatsApp-style), instead of pinging after every single note.
   const handleVoiceEnded = (msgId) => {
     const idx = visibleMessages.findIndex((m) => m.id === msgId);
     if (idx === -1) return;
+    voiceChainRef.current += 1;
+    voiceChainLastIdxRef.current = idx;
     const next = visibleMessages[idx + 1];
     if (next && next.type === "voice" && !next.deletedForEveryone && next.mediaURL) {
       setVoiceAutoPlayId(next.id);
       setVoiceAutoPlayNonce((n) => n + 1);
+      return;
     }
+    // Run over — chime if it was a real burst, then reset the chain.
+    if (voiceChainRef.current >= 3) playVoiceEndChime();
+    voiceChainRef.current = 0;
+    voiceChainLastIdxRef.current = -1;
   };
 
-  const handleVoicePlayStart = (msgId) => setNowPlayingId(msgId);
+  const handleVoicePlayStart = (msgId) => {
+    // onPlayStart(null) fires when a note STOPS (the player pauses/ends) —
+    // that's not a new play and must not touch the burst chain.
+    if (msgId == null) { setNowPlayingId(null); return; }
+    const idx = visibleMessages.findIndex((m) => m.id === msgId);
+    // A play that isn't the immediate next note starts a fresh run, so notes
+    // played far apart never accumulate into a burst.
+    if (voiceChainLastIdxRef.current !== -1 && idx !== voiceChainLastIdxRef.current + 1) {
+      voiceChainRef.current = 0;
+    }
+    setNowPlayingId(msgId);
+  };
 
   const renderBubble = (m) => {
     const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays);

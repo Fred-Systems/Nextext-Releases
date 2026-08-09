@@ -125,6 +125,77 @@ public class NextextNativePlugin extends Plugin {
         requestPermissionForAlias("location", call, "locationPermsCallback");
     }
 
+    @PluginMethod
+    public void getLocationPermission(PluginCall call) {
+        // Pure status query — NEVER triggers the runtime prompt. The Permissions
+        // screen uses this for the status row so that simply opening the screen
+        // (or refreshing it) doesn't pop the OS dialog.
+        boolean fine = getContext().checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean coarse = getContext().checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        JSObject ret = new JSObject();
+        ret.put("granted", fine || coarse);
+        ret.put("fineGranted", fine);
+        ret.put("coarseGranted", coarse);
+        ret.put("status", (fine || coarse) ? "granted" : "unknown");
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void showLocalNotification(PluginCall call) {
+        // Shows a real Android status-bar notification. HTML5 Notification is a
+        // no-op in the Capacitor WebView on modern Android, so toasts were the
+        // only feedback — this gives actual heads-up/inbox notifications with a
+        // dedicated channel (which also makes the app appear under "Apps that
+        // can send notifications" in system settings).
+        final String title = call.getString("title", "NexText");
+        final String body = call.getString("body", "");
+        final String tag = call.getString("tag", "nextext");
+        new Thread(() -> {
+            try {
+                android.content.Context ctx = getContext();
+                String channelId = "nextext_messages";
+                android.app.NotificationManager nm = (android.app.NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm == null) {
+                    call.reject("no notification manager");
+                    return;
+                }
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    android.app.NotificationChannel channel = new android.app.NotificationChannel(
+                        channelId, "Messages", android.app.NotificationManager.IMPORTANCE_HIGH);
+                    channel.setDescription("New messages and alerts");
+                    nm.createNotificationChannel(channel);
+                }
+                int iconRes = ctx.getApplicationInfo().icon != 0
+                    ? ctx.getApplicationInfo().icon
+                    : android.R.drawable.stat_notify_chat;
+                android.app.Notification.Builder builder;
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    builder = new android.app.Notification.Builder(ctx, channelId);
+                } else {
+                    builder = new android.app.Notification.Builder(ctx);
+                }
+                builder.setSmallIcon(iconRes)
+                    .setContentTitle(title)
+                    .setContentText(body)
+                    .setAutoCancel(true)
+                    .setWhen(System.currentTimeMillis())
+                    .setDefaults(android.app.Notification.DEFAULT_SOUND | android.app.Notification.DEFAULT_VIBRATE);
+                android.content.Intent launch = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+                if (launch != null) {
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
+                        ctx, 0, launch,
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+                    builder.setContentIntent(pi);
+                }
+                nm.notify(tag, 0, builder.build());
+                call.resolve();
+            } catch (final Exception e) {
+                call.reject("notification failed: " + (e.getMessage() == null ? String.valueOf(e) : e.getMessage()));
+            }
+        }).start();
+    }
+
     @PermissionCallback
     private void locationPermsCallback(PluginCall call) {
         JSObject ret = new JSObject();

@@ -35,7 +35,7 @@ import PermissionsScreen from "./screens/PermissionsScreen";
 import UpdatePrompt from "./components/UpdatePrompt";
 import PageErrorBoundary from "./components/PageErrorBoundary";
 import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, openDownloadUrl, saveApkToDevice, setLastSeenRelease } from "./updater/updateChecker";
-import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
+import { PING_SOUNDS, playVoiceEndChime } from "./utils/pingSounds";
 import { updateGlobalSettings, useGlobalSettings } from "./firebase/config-settings";
 import { useSystemInsets } from "./utils/useSystemInsets";
 import { changeNames, isNameChangeBlocked, isUsernameAvailable } from "./firebase/names";
@@ -193,13 +193,15 @@ function NameSetting({ myUid, userDoc, globalSettings }) {
       <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
         Your display name is shown to everyone you chat with. Your username (&#64;name) is how people find you. Old chats keep the name you had when the message was sent — this only affects new messages.
       </div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: t.text, marginBottom: 4 }}>Display name</div>
       <input
         value={displayName}
         onChange={(e) => setDisplayName(e.target.value)}
         placeholder="Display name"
         style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, color: t.text, background: t.bg }}
       />
-      <div style={{ display: "flex", alignItems: "center", marginTop: 8, border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden", background: t.bg }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: t.text, marginTop: 8, marginBottom: 4 }}>Username</div>
+      <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.border}`, borderRadius: 10, overflow: "hidden", background: t.bg }}>
         <span style={{ color: t.textMuted, fontSize: 14, paddingLeft: 12 }}>&#64;</span>
         <input
           value={username}
@@ -327,7 +329,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const appLockPassRef = useRef(null);
   const [linkPreviewsOn, setLinkPreviewsOn] = useState(() => localStorage.getItem("nextext_link_previews") !== "off");
   const [pinchZoomOn, setPinchZoomOn] = useState(() => localStorage.getItem("nextext_pinch_zoom") !== "false");
-  const [voicePingsOn, setVoicePingsOn] = useState(() => localStorage.getItem("nextext_voice_pings") !== "off");
+  const [voiceEndChimeOn, setVoiceEndChimeOn] = useState(() => localStorage.getItem("nextext_voice_end_chime") !== "off");
   const [pingSoundId, setPingSoundId] = useState(() => { try { return localStorage.getItem("nextext_voice_ping_sound") || "warm"; } catch { return "warm"; } });
   const [voicePlayerStyle, setVoicePlayerStyle] = useState(() => { try { return localStorage.getItem("nextext_voice_player_style") || "waveform"; } catch { return "waveform"; } });
   const [autoUpdateCheckOn, setAutoUpdateCheckOn] = useState(() => localStorage.getItem("nextext_auto_update_check") !== "off");
@@ -718,11 +720,11 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </div>
             {pinchZoomOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>In any chat, pinch the message list to make text bigger or smaller.</div>}
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Voice note chime</span>
-              <Toggle on={voicePingsOn} onClick={() => { const next = !voicePingsOn; setVoicePingsOn(next); localStorage.setItem("nextext_voice_pings", next ? "on" : "off"); }} />
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>End-of-voice-note chime</span>
+              <Toggle on={voiceEndChimeOn} onClick={() => { const next = !voiceEndChimeOn; setVoiceEndChimeOn(next); localStorage.setItem("nextext_voice_end_chime", next ? "on" : "off"); }} />
             </div>
-            {voicePingsOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Play a short chime when a voice note finishes playing.</div>}
-            {voicePingsOn && (
+            {voiceEndChimeOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Play a chime once when a run of 3+ voice notes finishes, instead of after every single note.</div>}
+            {voiceEndChimeOn && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                 {PING_SOUNDS.map((s) => (
                   <div
@@ -731,9 +733,9 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                       setPingSoundId(s.id);
                       localStorage.setItem("nextext_voice_ping_sound", s.id);
                       // Play an immediate preview so the user hears the chime
-                      // they're selecting — playVoicePing reads the just-set
+                      // they're selecting — playVoiceEndChime reads the just-set
                       // localStorage value to choose the pattern.
-                      playVoicePing();
+                      playVoiceEndChime();
                     }}
                     style={{
                       padding: "5px 10px",
@@ -950,7 +952,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         {/* ═══ ACCOUNT ACTIONS ═══ */}
         <SectionCard title="Account" emoji="⚙️" sectionKey="accountActions">
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Send Feedback" sub="Message the admin directly" onClick={() => onNavigate("feedback")} />
-          <Row icon={<Compass size={18} color={t.primary} />} label="Replay Welcome Tour" sub="See the first-run guide again" onClick={(e) => { e.stopPropagation(); startTour(); }} />
+          <Row icon={<Compass size={18} color={t.primary} />} label="Replay Welcome Tour" sub="See the first-run guide again" onClick={(e) => { e.stopPropagation(); onShowTour(); }} />
           {isAdmin && <Row icon={<ShieldCheck size={18} color={t.primary} />} label="Admin Dashboard" sub="Users, reports, broadcasts" onClick={() => onNavigate("admin")} />}
 
           <div style={{ padding: "13px 0" }}>
@@ -1103,31 +1105,72 @@ function normalizeNavConfig(input) {
 }
 
 const TOUR_STEPS = [
-  { emoji: "👋", title: "Welcome to NexText", body: "A fast, private messaging app for you and your friends. Here's a quick 30-second tour to get you started." },
-  { emoji: "💬", title: "Chats", body: "Tap a conversation to open it. Swipe between tabs at the bottom to jump between Chats, Status, Groups, and Settings. Long-press a chat for extra actions." },
-  { emoji: "📸", title: "Status & Media", body: "Post photo/video statuses for your contacts to see for 24 hours. Share images, videos, voice notes, and files in any chat — tap the paperclip or plus in the composer." },
-  { emoji: "🔒", title: "Privacy", body: "NexText is built around your privacy: end-to-end media expiry, chat locks, editable message history, blocked contacts, and parental controls all live in Settings → Privacy & Security." },
-  { emoji: "🤖", title: "NexText AI", body: "Ask the AI assistant anything, switch between 8 personalities (including the new Debater), analyze images, or summarize any of your chats from the AI conversation." },
+  { target: null, tab: null, emoji: "👋", title: "Welcome to NexText", body: "A fast, private messaging app for you and your friends. I'll walk you through the app — tap Next to explore it live." },
+  { target: "chats", tab: "chats", emoji: "💬", title: "Chats", body: "This is your chat list. Tap a conversation to open it, or the + button to start a new chat. Long-press any chat for extra actions. Try tapping the Chats tab at the bottom." },
+  { target: "status", tab: "status", emoji: "📸", title: "Status & Media", body: "Post photo/video statuses your contacts can see for 24 hours. In any chat, the paperclip lets you share images, videos, voice notes, and files." },
+  { target: "groups", tab: "groups", emoji: "👥", title: "Groups", body: "Create groups with your friends, broadcast lists, and organized conversations. The Groups tab filters your group chats." },
+  { target: "settings", tab: "settings", emoji: "🔒", title: "Privacy & Settings", body: "Everything lives here: themes, privacy controls, permissions, chat locks, parental controls, and the Admin Dashboard. Swipe or tap the tabs below to move around." },
+  { target: null, tab: null, emoji: "🤖", title: "NexText AI", body: "NexText AI is request-only — not everyone has it by default. If you want the assistant (8 personalities, image analysis, chat summaries), ask for access in Settings → NexText AI." },
 ];
 
-function TourOverlay({ step, total, onNext, onSkip }) {
+function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
   const s = TOUR_STEPS[step];
+  const [rect, setRect] = useState(null);
+  const measure = useCallback(() => {
+    if (!s?.target) { setRect(null); return; }
+    const el = document.querySelector(`[data-tour-nav="${s.target}"]`);
+    if (!el) { setRect(null); return; }
+    const r = el.getBoundingClientRect();
+    setRect({ x: r.left, y: r.top, w: r.width, h: r.height });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s?.target]);
+  useEffect(() => {
+    measure();
+    // Re-measure after the page settles (the tour navigates the app live, so
+    // the target's position changes as screens mount) and keep polling while
+    // the tour is open so the spotlight stays glued to the nav tab even if
+    // the user taps around.
+    const t = setTimeout(measure, 380);
+    const t2 = setTimeout(measure, 900);
+    const poll = setInterval(measure, 600);
+    window.addEventListener("resize", measure);
+    return () => { clearTimeout(t); clearTimeout(t2); clearInterval(poll); window.removeEventListener("resize", measure); };
+  }, [measure]);
   if (!s) return null;
+  const zBackdrop = 2147483600;
+  const zHole = 2147483645;
+  const zCard = 2147483646;
+  const cardStyle = {
+    position: "fixed", top: 28, left: 14, right: 14, zIndex: zCard,
+    background: "#121B22", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 18,
+    padding: "20px 18px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+  };
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 2147483647, background: "#0B141A", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 28px" }}>
-      <div style={{ fontSize: 56, marginBottom: 18 }}>{s.emoji}</div>
-      <div style={{ fontWeight: 800, fontSize: 22, color: "#fff", marginBottom: 10, textAlign: "center" }}>{s.title}</div>
-      <div style={{ fontSize: 14.5, color: "rgba(255,255,255,0.85)", lineHeight: 1.6, textAlign: "center", maxWidth: 300, marginBottom: 34 }}>{s.body}</div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 34 }}>
-        {TOUR_STEPS.map((_, i) => (
-          <div key={i} style={{ width: i === step ? 22 : 8, height: 8, borderRadius: 4, background: i === step ? "#10B981" : "rgba(255,255,255,0.3)", transition: "all 0.25s" }} />
-        ))}
+    <>
+      {/* Dim everything except the spotlighted target */}
+      {rect ? (
+        <div style={{ position: "fixed", left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex: zHole, boxShadow: "0 0 0 9999px rgba(0,0,0,0.72)", borderRadius: 12, pointerEvents: "none", transition: "left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease" }} />
+      ) : (
+        <div style={{ position: "fixed", inset: 0, zIndex: zBackdrop, background: "rgba(0,0,0,0.72)", pointerEvents: "none" }} />
+      )}
+      <div style={cardStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <span style={{ fontSize: 26 }}>{s.emoji}</span>
+          <span style={{ fontWeight: 800, fontSize: 18, color: "#fff" }}>{s.title}</span>
+        </div>
+        <div style={{ fontSize: 13.5, color: "rgba(255,255,255,0.85)", lineHeight: 1.55, marginBottom: 16 }}>{s.body}</div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+          {TOUR_STEPS.map((_, i) => (
+            <div key={i} style={{ flex: 1, height: 4, borderRadius: 2, background: i === step ? "#10B981" : "rgba(255,255,255,0.25)", transition: "all 0.25s" }} />
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          {step > 0 && <button onClick={onPrev} style={{ padding: "11px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.25)", background: "transparent", color: "#fff", fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Back</button>}
+          <button onClick={onSkip} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid rgba(255,255,255,0.25)", background: "transparent", color: "#fff", fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Skip</button>
+          <button onClick={onNext} style={{ flex: 1.5, padding: "11px 0", borderRadius: 12, border: "none", background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>{step === total - 1 ? "Get Started" : "Next"}</button>
+        </div>
       </div>
-      <div style={{ display: "flex", gap: 10, width: "100%", maxWidth: 300 }}>
-        <button onClick={onSkip} style={{ flex: 1, padding: "13px 0", borderRadius: 12, border: "1px solid rgba(255,255,255,0.25)", background: "transparent", color: "#fff", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>Skip</button>
-        <button onClick={onNext} style={{ flex: 1.4, padding: "13px 0", borderRadius: 12, border: "none", background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>{step === total - 1 ? "Get Started" : "Next"}</button>
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -1180,11 +1223,13 @@ function AppShell({ appLocked, setAppLocked }) {
   const shellRef = useRef(null);
   const pageRefs = useRef({});
   const pagerDragRef = useRef(null);
-  // Remain true until the first committed render, so the very first paint
-  // uses the *derived* active index (see pageStyle below) instead of the
-  // stale pageIndex(0). After commit, the useEffect will have synced
-  // pageIndex to the active tab and we can stop using the derived value.
-  const firstRenderRef = useRef(true);
+  // True for the brief snap window after a swipe ends, so React applies the
+  // animated transition while the transform jumps to the target index (CSS
+  // animates from the last drag position). Avoids the old setTimeout-deferred
+  // nav commit that could be dropped on unmount/background and strand the
+  // pager on a stale page.
+  const [snapAnimating, setSnapAnimating] = useState(false);
+  const snapTimerRef = useRef(null);
 
   // ── App state persistence ──────────────────────────────────────────
   // Persists navigation state to localStorage so relaunching the app
@@ -1362,6 +1407,14 @@ function AppShell({ appLocked, setAppLocked }) {
     setTourStep(0);
     setShowTour(true);
   }, []);
+
+  // Interactive tour navigation: each step may jump to a tab so the user sees
+  // the real screens the guide is describing (spotlighted by TourOverlay).
+  const goTourStep = (idx) => {
+    const s = TOUR_STEPS[idx];
+    if (s?.tab) navigateToTab(s.tab);
+    setTourStep(idx);
+  };
 
   const { contacts } = useContacts(myUid);
   const { chats: myChats } = useChats(myUid);
@@ -1711,19 +1764,16 @@ function AppShell({ appLocked, setAppLocked }) {
   useEffect(() => {
     if (currentTabIndex === -1) return;
     if (!pagerDragRef.current?.active) setPageIndex(currentTabIndex);
-    // First committed render is done — switch to pageIndex-driven placement
-    // so swipe handlers and tap navigation animate around the active index.
-    firstRenderRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTabKey, screen, orderedTabs.join(",")]);
 
-// Cold-start pager resync. The user reported the chat list + bottom bar are
+  // Cold-start pager resync. The user reported the chat list + bottom bar are
   // missing/dead until they manually tap the Settings gear (a re-render). The
   // reliable trigger is a fresh re-render that re-applies each page's
-  // transform; this layout effect replicates that automatically by clearing
-  // any stale inline transform left on the page DOM and snapping the active
-  // page to the origin before paint. Driven by bootKick (bumped by the safety
-  // net shortly after sign-in) so it runs once on real cold starts.
+  // transform; this layout effect replicates that automatically by snapping
+  // any stale inline transform (left by a swipe) back to the derived active
+  // index before paint. Driven by bootKick (bumped by the safety net shortly
+  // after sign-in) so it runs once on real cold starts.
   useLayoutEffect(() => {
     if (bootKick === 0) return;
     if (bootLockedRef.current) return;
@@ -1732,7 +1782,7 @@ function AppShell({ appLocked, setAppLocked }) {
     orderedTabs.forEach((key, i) => {
       const el = pageRefs.current[key];
       if (el) {
-        el.style.transition = "";
+        el.style.transition = "none";
         el.style.transform = `translate3d(${(i - target) * 100}%, 0, 0)`;
       }
     });
@@ -1751,13 +1801,6 @@ function AppShell({ appLocked, setAppLocked }) {
     if (target === -1) return;
     bootLockedRef.current = true;
     setActiveNavTab("chats");
-    orderedTabs.forEach((key, i) => {
-      const el = pageRefs.current[key];
-      if (el) {
-        el.style.transition = "none";
-        el.style.transform = `translate3d(${(i - target) * 100}%, 0, 0)`;
-      }
-    });
     setPageIndex(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderedTabs.join(","), myUid]);
@@ -1774,6 +1817,10 @@ function AppShell({ appLocked, setAppLocked }) {
   const pagerTouchStart = (e) => {
     if (screen !== "list" && screen !== "status" && screen !== "settings") return;
     if (storyViewerOpen) return;
+    // A new drag interrupts any in-flight snap animation — snap back to the
+    // tap transition immediately.
+    if (snapTimerRef.current) { clearTimeout(snapTimerRef.current); snapTimerRef.current = null; }
+    setSnapAnimating(false);
     const shell = shellRef.current;
     if (!shell) return;
     const width = shell.clientWidth || 1;
@@ -1834,35 +1881,21 @@ function AppShell({ appLocked, setAppLocked }) {
     let target = drag.startIndex;
     if (drag.offset < -threshold || drag.velocity < -0.4) target = Math.min(drag.startIndex + 1, len - 1);
     else if (drag.offset > threshold || drag.velocity > 0.4) target = Math.max(drag.startIndex - 1, 0);
-    // Compute the snap transition. The swipe-end snap is always animated when
-    // swipeAnimationOn is true (regardless of animateOnTap which only applies
-    // to bottom-bar tap navigation).
-    const snapTransition = swipeAnimationEnabled() ? `transform ${swipeDuration()}s ${swipeBezier()}` : "none";
-    orderedTabs.forEach((key, i) => {
-      const el = pageRefs.current[key];
-      if (el) {
-        // Snap each page into place via transform (GPU-accelerated translate3d).
-        el.style.transition = snapTransition;
-        el.style.transform = `translate3d(${(i - target) * 100}%, 0, 0)`;
-      }
-    });
     if (target !== drag.startIndex) {
       const key = orderedTabs[target];
-      if (key) {
-        // Defer setting pageIndex/screen until AFTER the snap animation finishes
-        // so React's re-render doesn't override the inline transition mid-flight
-        // (the cause of "tab taps still animate by default" — React's "none"
-        // transition was clobbering the swipe snap's transition).
-        const dur = swipeAnimationEnabled() ? swipeDuration() * 1000 : 0;
-        setTimeout(() => {
-          setPageIndex(target);
-          if (key === "status") { setStatusOrigin("status"); setScreen("status"); }
-          else if (key === "settings") setScreen("settings");
-          else { setActiveNavTab(key); setScreen("list"); }
-        }, dur);
-      } else {
-        setPageIndex(target);
-      }
+      // snapAnimating makes React apply the animated transition to the index
+      // jump, so CSS animates from the last drag offset to the snapped page.
+      // There is NO deferred setTimeout nav commit here — the tab state lands
+      // immediately, so a backgrounded app or unmounted component can never
+      // strand the pager on a stale page (the old cold-start bug).
+      const dur = swipeAnimationEnabled() ? swipeDuration() * 1000 : 0;
+      setSnapAnimating(true);
+      if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
+      snapTimerRef.current = setTimeout(() => setSnapAnimating(false), dur || 1);
+      setPageIndex(target);
+      if (key === "status") { setStatusOrigin("status"); setScreen("status"); }
+      else if (key === "settings") setScreen("settings");
+      else { setActiveNavTab(key); setScreen("list"); }
     }
     setPagerDragging(false);
   };
@@ -1923,15 +1956,13 @@ function AppShell({ appLocked, setAppLocked }) {
       onTouchCancel={pagerTouchCancel}
     >
         {orderedTabs.map((key, idx) => {
-          // Use currentTabIndex (derived from screen/activeNavTab) as the
-          // initial placement so the first paint already shows the right
-          // page at left:0% instead of leaving it blank until the sync
-          // useEffect runs. Without this, a reordered navConfig (where the
-          // active tab isn't index 0) shows an empty pager for one render
-          // cycle — which was the cause of "UI missing until navigating to
-          // Settings forces a re-render" on launch.
-          const activeIdx = currentTabIndex >= 0 ? currentTabIndex : 0;
-          const effectiveIndex = firstRenderRef.current ? activeIdx : pageIndex;
+          // Placement is ALWAYS derived from the live active tab (except while
+          // a swipe drag is in flight, where inline transforms drive it). This
+          // guarantees the first paint, every navigation, and every re-render
+          // land on the correct page — no first-render flag, no effect-ordering
+          // dependency, no stale pageIndex to strand the pager on cold start.
+          const activeIdx = currentTabIndex >= 0 ? currentTabIndex : pageIndex;
+          const effectiveIndex = pagerDragRef.current?.active ? pageIndex : activeIdx;
           const pageStyle = {
             position: "absolute", top: 0, bottom: 0, width: "100%",
             overflow: "hidden",
@@ -1941,10 +1972,14 @@ function AppShell({ appLocked, setAppLocked }) {
             // frame, causing jank on low-end devices).
             transform: `translate3d(${(idx - effectiveIndex) * 100}%, 0, 0)`,
             // During a swipe drag: no CSS transition (we drive `transform` directly).
-            // After the drag ends / a tap jumps to a new page:
-            //   - default (animateOnTap=false): instant "none" for tap navigation
-            //   - animateOnTap:=true: animated slide matching the swipe bezier
-            transition: pagerDragging ? "none" : tapTransition(),
+            // Right after a swipe ends (snapAnimating): the animated slide from
+            // the last drag offset to the snapped page.
+            // Tap jumps: animated only when animateOnTap is enabled.
+            transition: pagerDragging
+              ? "none"
+              : snapAnimating
+                ? (swipeAnimationEnabled() ? `transform ${swipeDuration()}s ${swipeBezier()}` : "none")
+                : tapTransition(),
             // Will-change: optimizes compositor for fast horizontal swiping.
             willChange: "transform",
             // GPU layer promotion keeps the swiping pages buttery smooth.
@@ -2105,7 +2140,7 @@ function AppShell({ appLocked, setAppLocked }) {
             {navTabs.map(({ key, icon: Icon, label }) => {
               const isActive = key === "settings" ? screen === "settings" : key === "status" ? screen === "status" : (screen === "list" && activeNavTab === key);
               return (
-              <div key={key} onClick={() => navigateToTab(key)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "10px 0 12px", cursor: "pointer", color: isActive ? t.primary : t.textMuted, position: "relative" }}>
+              <div key={key} data-tour-nav={key} onClick={() => navigateToTab(key)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "10px 0 12px", cursor: "pointer", color: isActive ? t.primary : t.textMuted, position: "relative" }}>
                 <div style={{ position: "relative" }}>
                   <Icon size={20} />
                   {key === "chats" && totalUnreadChats > 0 && (
@@ -2150,7 +2185,8 @@ function AppShell({ appLocked, setAppLocked }) {
         <TourOverlay
           step={tourStep}
           total={TOUR_STEPS.length}
-          onNext={() => { if (tourStep >= TOUR_STEPS.length - 1) finishTour(); else setTourStep((s) => s + 1); }}
+          onNext={() => { if (tourStep >= TOUR_STEPS.length - 1) finishTour(); else goTourStep(tourStep + 1); }}
+          onPrev={() => { if (tourStep > 0) goTourStep(tourStep - 1); }}
           onSkip={finishTour}
         />
       ) : null, document.body)}

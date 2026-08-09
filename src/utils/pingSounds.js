@@ -53,11 +53,20 @@ function tone(ac, freq, start, dur, gain) {
 
 export function playVoicePing() {
   try {
-    if (localStorage.getItem("nextext_voice_pings") === "off") return;
     pingCtx = pingCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (pingCtx.state === "suspended") pingCtx.resume().catch(() => {});
     const now = pingCtx.currentTime;
     const id = getPingSoundId();
     (PATTERNS[id] || PATTERNS.classic).forEach(([freq, offset, dur, gain]) => tone(pingCtx, freq, now + offset, dur, gain));
   } catch { /* ping is best-effort */ }
+}
+
+// End-of-burst chime: plays once when a RUN of consecutive voice notes (3+)
+// finishes, instead of pinging after every single note. Toggleable via the
+// nextext_voice_end_chime setting (default on).
+export function playVoiceEndChime() {
+  try {
+    if (localStorage.getItem("nextext_voice_end_chime") === "off") return;
+    playVoicePing();
+  } catch { /* chime is best-effort */ }
 }

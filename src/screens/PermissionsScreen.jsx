@@ -84,8 +84,11 @@ export default function PermissionsScreen({ myUid, onBack }) {
   const queryLocation = async () => {
     if (Capacitor.isNativePlatform()) {
       try {
-        const res = await NextextNative.requestLocationPermission();
-        return res.granted ? "granted" : "prompt";
+        // Pure status getter — does NOT trigger the runtime prompt. Calling
+        // requestLocationPermission() here was popping the OS dialog whenever
+        // the screen (or any refresh) loaded, making "Allow" appear broken.
+        const res = await NextextNative.getLocationPermission();
+        return res.granted ? "granted" : (res.denied === true ? "denied" : "prompt");
       } catch { return "unknown"; }
     }
     try {
