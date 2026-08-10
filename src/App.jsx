@@ -1328,6 +1328,8 @@ function AppShell({ appLocked, setAppLocked }) {
   useEffect(() => { screenRef.current = screen; }, [screen]);
   const storyViewerOpenRef = useRef(storyViewerOpen);
   useEffect(() => { storyViewerOpenRef.current = storyViewerOpen; }, [storyViewerOpen]);
+  const tourVisibleRef = useRef(showTour);
+  useEffect(() => { tourVisibleRef.current = showTour; }, [showTour]);
 
   const restoreAppState = () => {
     try {
@@ -1387,6 +1389,7 @@ function AppShell({ appLocked, setAppLocked }) {
   const [bootKick, setBootKick] = useState(0);
   const bootLockedRef = useRef(false);
   const [coldStartComplete, setColdStartComplete] = useState(false);
+  const [diagNotice, setDiagNotice] = useState(null);
   useEffect(() => {
     if (!myUid) return;
     // Run synchronously (0ms) to ensure coldStartComplete is true before
@@ -1431,50 +1434,111 @@ function AppShell({ appLocked, setAppLocked }) {
   }, [coldStartComplete]);
 
   // Awake-kick watchdog. On cold starts the Android WebView compositor can
-  // stall with the app VISUALLY painted but interaction-dead and the bottom
-  // nav not repainted — the only recovery was the user navigating to Settings
-  // ("pop, everything works"). This replicates that recovery automatically
-  // once the app has fully settled (after the splash), invisibly:
-  //   1. Force a full compositor rebuild of the shell via a transient transform
-  //      toggle — the same repaint a Settings navigation triggers, no visible
-  //      flash, no screen change.
-  //   2. If the bottom bar's DOM nodes are still ABSENT while we're on a tab
-  //      screen (React/DOM desync, not paint), do the real Settings-trip the
-  //      user relies on and snap back to the chat list.
+  // stall right after the in-app splash unmounts: the app stays VISUALLY
+  // painted but interaction-dead (requestAnimationFrame stops being serviced,
+  // taps land but no new frame is ever composited) and the bottom nav is not
+  // repainted. The only recovery was the user navigating to Settings ("pop,
+  // everything works"). This replicates that recovery automatically:
+  //   1. Probe whether the compositor is actually alive: requestAnimationFrame
+  //      is driven by the WebView's frame scheduler, so a stalled compositor
+  //      stops servicing RAF callbacks. A visible, healthy app responds within
+  //      one frame (~17ms).
+  //   2. If RAF is dead (double-checked), do the user's proven recovery — a
+  //      real Settings trip and snap back to the chat list. The screen swap
+  //      forces a fresh composite, exactly like the manual tap that fixed it.
+  //   3. Also verify the bottom bar's DOM node is actually painted on top
+  //      (hit-test at its expected position) — a DOM node existing but never
+  //      composited on top is the "bar missing" symptom's render-tree half.
+  // Skipped while the welcome tour is up (its backdrop legitimately covers the
+  // bar) and when the bar is intentionally hidden (hideNav / story viewer).
   useEffect(() => {
     if (!coldStartComplete) return;
-    const settle = setTimeout(() => {
-      let kickedShell = false;
-      const shellEl = document.getElementById("nextext-app-shell");
-      if (shellEl) {
-        try {
-          const prevTransform = shellEl.style.transform;
-          const prevTransition = shellEl.style.transition;
-          shellEl.style.transition = "none";
-          shellEl.style.transform = "scale(0.9998)";
-          shellEl.style.transformOrigin = "top left";
-          void shellEl.offsetHeight;
-          shellEl.style.transform = prevTransform;
-          shellEl.style.transition = prevTransition;
-          kickedShell = true;
-        } catch { /* best-effort */ }
-      }
-      const onTab = ["list", "status", "settings"].includes(screenRef.current);
-      const barPresent = !!document.querySelector("[data-tour-nav]");
+    const settle = setTimeout(async () => {
+      let diag = "";
+      let noticeShown = false;
       try {
-        window.__nxCapturedErrors.push(
-          `DIAG awake screen=${screenRef.current} tabOk=${onTab} bar=${barPresent} kickedShell=${kickedShell}`
-        );
-      } catch { /* best-effort */ }
-      if (onTab && !barPresent) {
-        // React never committed the bar — reproduce the user's proven recovery.
-        setScreen("settings");
-        setTimeout(() => {
-          setScreen("list");
-          setActiveNavTab("chats");
-          setBootKick((n) => n + 1);
-        }, 400);
+        const rafAlive = () => new Promise((resolve) => {
+          if (document.visibilityState === "hidden") { resolve(true); return; }
+          let settled = false;
+          const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+          try { requestAnimationFrame(() => done(true)); } catch { done(false); }
+          setTimeout(() => done(false), 300);
+        });
+        const barOnTop = () => {
+          try {
+            const cx = Math.floor(window.innerWidth / 2);
+            const cy = Math.max(0, Math.floor(window.innerHeight - 30));
+            let node = document.elementFromPoint(cx, cy);
+            while (node && node !== document.documentElement) {
+              if (node.hasAttribute && node.hasAttribute("data-tour-nav")) return true;
+              node = node.parentElement;
+            }
+          } catch { /* best-effort */ }
+          return false;
+        };
+        const rebuildShell = () => {
+          const shellEl = document.getElementById("nextext-app-shell");
+          if (!shellEl) return false;
+          try {
+            const prevTransform = shellEl.style.transform;
+            const prevTransition = shellEl.style.transition;
+            shellEl.style.transition = "none";
+            shellEl.style.transform = "scale(0.9998)";
+            shellEl.style.transformOrigin = "top left";
+            void shellEl.offsetHeight;
+            shellEl.style.transform = prevTransform;
+            shellEl.style.transition = prevTransition;
+            return true;
+          } catch { return false; }
+        };
+        const onTab = ["list", "status", "settings"].includes(screenRef.current);
+        const wantBar = onTab && !hideNav && !storyViewerOpenRef.current && !tourVisibleRef.current;
+        const barOK = !wantBar || barOnTop();
+        const rafOK = await rafAlive();
+        if (!rafOK) {
+          // Compositor is probably stalled (a double-check: a single missed
+          // frame can happen while fonts/layout settle).
+          await new Promise((r) => setTimeout(r, 500));
+          const rafOK2 = await rafAlive();
+          if (!rafOK2) {
+            // Replicate the user's manual recovery: trip to Settings, snap back.
+            setDiagNotice("NexText was frozen on start and auto-recovered.");
+            noticeShown = true;
+            diag = `DIAG awake RECOVERED screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=dead`;
+            setScreen("settings");
+            await new Promise((r) => setTimeout(r, 400));
+            setScreen("list");
+            setActiveNavTab("chats");
+            setBootKick((n) => n + 1);
+            const recovered = await rafAlive();
+            diag += ` after=${recovered ? "alive" : "STILL-DEAD"}`;
+          } else {
+            diag = `DIAG awake ok screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=slow`;
+          }
+        } else {
+          const kicked = rebuildShell();
+          if (wantBar && !barOK) {
+            // DOM/hit-test says the bar isn't on top even though RAF is alive
+            // — force a real trip so the bar actually composites.
+            setDiagNotice("The bottom bar wasn't painted on start — auto-fixed.");
+            noticeShown = true;
+            diag = `DIAG awake BARFIX screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive kicked=${kicked}`;
+            setScreen("settings");
+            await new Promise((r) => setTimeout(r, 400));
+            setScreen("list");
+            setActiveNavTab("chats");
+            setBootKick((n) => n + 1);
+          } else {
+            diag = `DIAG awake ok screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive kicked=${kicked}`;
+          }
+        }
+      } catch (err) {
+        diag = `DIAG awake-error ${err?.message || err}`;
       }
+      try {
+        window.__nxCapturedErrors.push(diag);
+      } catch { /* best-effort */ }
+      if (noticeShown) setTimeout(() => setDiagNotice(null), 20000);
     }, 3400);
     return () => clearTimeout(settle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2438,10 +2502,9 @@ function AppShell({ appLocked, setAppLocked }) {
               width: 34, height: 34,
               border: "3px solid rgba(16, 185, 129, 0.25)",
               borderTopColor: "#10B981",
-              animation: "nextext-spin 0.9s linear infinite",
+              borderRadius: "50%",
             }}
           />
-          <style>{`@keyframes nextext-spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       ), document.body)}
 
@@ -2480,6 +2543,13 @@ function AppShell({ appLocked, setAppLocked }) {
           onSaveToDevice={handleSaveApkToDevice}
           error={updateStatus || null}
         />
+      )}
+
+      {diagNotice && (
+        <div style={{ position: "fixed", bottom: 76, left: 10, right: 10, zIndex: 2147483500, background: "#3D0A0A", border: "1px solid #FF3B30", borderRadius: 10, padding: "10px 30px 10px 10px", color: "#FFB3B3", fontSize: 11, fontFamily: "monospace" }}>
+          {diagNotice}
+          <span onClick={() => setDiagNotice(null)} style={{ position: "absolute", top: 4, right: 10, cursor: "pointer", color: "#fff", fontSize: 14 }}>×</span>
+        </div>
       )}
     </div>
     </>
