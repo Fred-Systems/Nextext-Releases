@@ -313,7 +313,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -809,6 +809,12 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               ))}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Recording bar size</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{Math.round(recordingBarScale * 100)}%</span>
+            </div>
+            <input type="range" min="0.6" max="1.6" step="0.05" value={recordingBarScale} onChange={(e) => setRecordingBarScale(Number(e.target.value))} style={{ flex: 1, width: "100%", accentColor: t.primary, marginTop: 6 }} />
+            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Adjust the size of the recording controls when the mic is active.</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Animate tab taps (animateOnTap)</span>
               <Toggle on={animateOnTap} onClick={() => setAnimateOnTap(!animateOnTap)} />
             </div>
@@ -1170,9 +1176,16 @@ function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
   };
   return (
     <>
-      {/* Dim everything except the spotlighted target */}
+      {/* Dim everything except the spotlighted target.
+          The spotlight uses a huge box-shadow "hole" so the rest of the app is
+          dimmed around the target. CRITICAL: the spread must be screen-sized
+          (100vmax), NOT a giant fixed pixel value (9999px) — a ~20,000px
+          shadow layer is exactly the kind of massive paint region that stalls
+          the Android WebView compositor on cold start (app visually painted
+          but interaction-dead, bottom nav not repainted — the "dead app until
+          you tap Settings" bug). */}
       {rect ? (
-        <div style={{ position: "fixed", left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex: zHole, boxShadow: "0 0 0 9999px rgba(0,0,0,0.72)", borderRadius: 12, pointerEvents: "none", transition: "left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease" }} />
+        <div style={{ position: "fixed", left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex: zHole, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.72)", borderRadius: 12, pointerEvents: "none", transition: "left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease" }} />
       ) : (
         <div style={{ position: "fixed", inset: 0, zIndex: zBackdrop, background: "rgba(0,0,0,0.72)", pointerEvents: "none" }} />
       )}
@@ -1207,6 +1220,7 @@ function AppShell({ appLocked, setAppLocked }) {
   const [activeChat, setActiveChat] = useState(null);
   const [activeGroup, setActiveGroup] = useState(null);
   const [uiScale, setUiScale] = useState(() => Number(localStorage.getItem(UI_SCALE_KEY)) || 1);
+  const [recordingBarScale, setRecordingBarScale] = useState(() => { try { const v = Number(localStorage.getItem("nextext_recording_bar_scale")); return v && v >= 0.6 && v <= 1.6 ? v : 1; } catch { return 1; } });
   const [showScrollDown, setShowScrollDown] = useState(() => localStorage.getItem(SCROLL_DOWN_KEY) !== "false");
   const [animatedScrollEntry, setAnimatedScrollEntry] = useState(() => localStorage.getItem("nextext_animated_scroll_entry") === "true");
   const [compactList, setCompactList] = useState(() => localStorage.getItem("nextext_compact_list") === "true");
@@ -1413,6 +1427,56 @@ function AppShell({ appLocked, setAppLocked }) {
     } catch {
       /* diagnostics must never crash the app */
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coldStartComplete]);
+
+  // Awake-kick watchdog. On cold starts the Android WebView compositor can
+  // stall with the app VISUALLY painted but interaction-dead and the bottom
+  // nav not repainted — the only recovery was the user navigating to Settings
+  // ("pop, everything works"). This replicates that recovery automatically
+  // once the app has fully settled (after the splash), invisibly:
+  //   1. Force a full compositor rebuild of the shell via a transient transform
+  //      toggle — the same repaint a Settings navigation triggers, no visible
+  //      flash, no screen change.
+  //   2. If the bottom bar's DOM nodes are still ABSENT while we're on a tab
+  //      screen (React/DOM desync, not paint), do the real Settings-trip the
+  //      user relies on and snap back to the chat list.
+  useEffect(() => {
+    if (!coldStartComplete) return;
+    const settle = setTimeout(() => {
+      let kickedShell = false;
+      const shellEl = document.getElementById("nextext-app-shell");
+      if (shellEl) {
+        try {
+          const prevTransform = shellEl.style.transform;
+          const prevTransition = shellEl.style.transition;
+          shellEl.style.transition = "none";
+          shellEl.style.transform = "scale(0.9998)";
+          shellEl.style.transformOrigin = "top left";
+          void shellEl.offsetHeight;
+          shellEl.style.transform = prevTransform;
+          shellEl.style.transition = prevTransition;
+          kickedShell = true;
+        } catch { /* best-effort */ }
+      }
+      const onTab = ["list", "status", "settings"].includes(screenRef.current);
+      const barPresent = !!document.querySelector("[data-tour-nav]");
+      try {
+        window.__nxCapturedErrors.push(
+          `DIAG awake screen=${screenRef.current} tabOk=${onTab} bar=${barPresent} kickedShell=${kickedShell}`
+        );
+      } catch { /* best-effort */ }
+      if (onTab && !barPresent) {
+        // React never committed the bar — reproduce the user's proven recovery.
+        setScreen("settings");
+        setTimeout(() => {
+          setScreen("list");
+          setActiveNavTab("chats");
+          setBootKick((n) => n + 1);
+        }, 400);
+      }
+    }, 3400);
+    return () => clearTimeout(settle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coldStartComplete]);
 
@@ -1753,6 +1817,7 @@ function AppShell({ appLocked, setAppLocked }) {
   };
 
   useEffect(() => { localStorage.setItem(UI_SCALE_KEY, String(uiScale)); }, [uiScale]);
+  useEffect(() => { localStorage.setItem("nextext_recording_bar_scale", String(recordingBarScale)); }, [recordingBarScale]);
   useEffect(() => { localStorage.setItem(SCROLL_DOWN_KEY, String(showScrollDown)); }, [showScrollDown]);
   useEffect(() => { localStorage.setItem("nextext_animate_on_tap", String(animateOnTap)); }, [animateOnTap]);
   useEffect(() => { localStorage.setItem("nextext_swipe_animation", swipeAnimationOn ? "on" : "off"); }, [swipeAnimationOn]);
@@ -2197,6 +2262,8 @@ function AppShell({ appLocked, setAppLocked }) {
                 onOpenTheme={() => setShowThemeSheet(true)}
                 uiScale={uiScale}
                 setUiScale={setUiScale}
+                recordingBarScale={recordingBarScale}
+                setRecordingBarScale={setRecordingBarScale}
                 showScrollDown={showScrollDown}
                 setShowScrollDown={setShowScrollDown}
                 animatedScrollEntry={animatedScrollEntry}
@@ -2265,6 +2332,7 @@ function AppShell({ appLocked, setAppLocked }) {
           showScrollDownSetting={showScrollDown}
           animatedScrollEntry={animatedScrollEntry}
           micMode={micMode}
+          recordingBarScale={recordingBarScale}
         />
       )}
       {screen === "contactProfile" && activeChat && (

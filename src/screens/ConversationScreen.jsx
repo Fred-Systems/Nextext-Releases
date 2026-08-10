@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin } from "lucide-react";
+import { ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import {
   useMessages, sendTextMessage, markChatRead, setTypingHeartbeat, reactToMessage,
@@ -456,8 +456,9 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
   );
 }
 
-export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false, micMode }) {
+export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false, micMode, recordingBarScale = 1 }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth } = useTheme();
+  const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
   const isGroup = !!contact?.isGroup;
   const [chatId, setChatId] = useState(initialChatId);
@@ -626,6 +627,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [recordingTapMode, setRecordingTapMode] = useState(false);
   const [recordingSlideCancel, setRecordingSlideCancel] = useState(false);
   const [recLevel, setRecLevel] = useState(0);
+  // Stopped-but-not-sent voice note (Stop button) — can be listened to and then
+  // sent or discarded. `{ url, blob, duration, type, isNative }`.
+  const [recordedPreview, setRecordedPreview] = useState(null);
+  const recordedPreviewRef = useRef(null);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const previewAudioRef = useRef(null);
+  useEffect(() => { recordedPreviewRef.current = recordedPreview; }, [recordedPreview]);
+  useEffect(() => () => { try { if (recordedPreviewRef.current?.url) URL.revokeObjectURL(recordedPreviewRef.current.url); } catch {} }, []);
   const [theyRecordingVoice, setTheyRecordingVoice] = useState(false);
   const [voiceAutoPlayId, setVoiceAutoPlayId] = useState(null);
   const [voiceAutoPlayNonce, setVoiceAutoPlayNonce] = useState(0);
@@ -1341,6 +1350,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
   const startVoiceRecording = async () => {
     setSendError("");
+    if (recordedPreviewRef.current) discardRecordedPreview();
     const blocked = parentalBlockedType("voice");
     if (blocked) { setSendError(blocked); return; }
     const token = ++voiceSessionTokenRef.current;
@@ -1446,18 +1456,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     stopRecLevelMonitor();
   };
 
-  const stopVoiceRecording = async (send) => {
-    clearInterval(recordTimerRef.current);
-    stopVoiceHeartbeat();
-    const finalDuration = recordSeconds;
-    // Android MediaRecorder frequently writes a corrupt/empty MP4 when the
-    // recording is stopped within the first ~half second, so a sub-second tap
-    // is treated as a cancel rather than a broken note being uploaded.
-    const elapsedMs = recordStartTsRef.current ? Date.now() - recordStartTsRef.current : 0;
-    recordStartTsRef.current = null;
+  // Stop whichever recorder is active and hand back the captured audio blob.
+  // Shared by send (stopVoiceRecording) and the Stop button (preview), so both
+  // paths get identical stop semantics (flush onstop + trailing chunk drain).
+  const stopRecorder = async () => {
+    const wasNative = recordingNativeRef.current;
     let blob = null;
     try {
-      if (recordingNativeRef.current) {
+      if (wasNative) {
         const res = await NextextNative.stopVoiceRecording();
         if (res?.base64) blob = base64ToBlob(res.base64, res.mimeType || "audio/mp4");
       } else {
@@ -1486,8 +1492,20 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     } catch (err) {
       setSendError("Couldn't stop recording: " + err.message);
     }
-    const wasNative = recordingNativeRef.current;
     recordingNativeRef.current = false;
+    return { blob, wasNative };
+  };
+
+  const stopVoiceRecording = async (send) => {
+    clearInterval(recordTimerRef.current);
+    stopVoiceHeartbeat();
+    const finalDuration = recordSeconds;
+    // Android MediaRecorder frequently writes a corrupt/empty MP4 when the
+    // recording is stopped within the first ~half second, so a sub-second tap
+    // is treated as a cancel rather than a broken note being uploaded.
+    const elapsedMs = recordStartTsRef.current ? Date.now() - recordStartTsRef.current : 0;
+    recordStartTsRef.current = null;
+    const { blob, wasNative } = await stopRecorder();
     resetRecordingUi();
     if (!send) return;
     // Parental controls may have been enabled while the note was being
@@ -1515,6 +1533,73 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       else setSendError("Couldn't send voice note: " + err.message);
     }
     setUploading(false);
+  };
+
+  // "Stop" button in the recording bar: stop recording but keep the audio as a
+  // pending preview so the user can listen to it before deciding to send.
+  const stopVoiceRecordingToPreview = async () => {
+    clearInterval(recordTimerRef.current);
+    stopVoiceHeartbeat();
+    const finalDuration = recordSeconds;
+    const elapsedMs = recordStartTsRef.current ? Date.now() - recordStartTsRef.current : 0;
+    recordStartTsRef.current = null;
+    const { blob, wasNative } = await stopRecorder();
+    resetRecordingUi();
+    if (elapsedMs < 500) {
+      setSendError("The recording was too short to keep — try holding the mic a little longer.");
+      return;
+    }
+    if (!blob || blob.size === 0) {
+      setSendError("Voice note failed — no audio was captured. Make sure the mic permission is granted.");
+      return;
+    }
+    discardRecordedPreview(false);
+    setRecordedPreview({
+      url: URL.createObjectURL(blob),
+      blob,
+      duration: Math.max(1, Math.round(finalDuration)),
+      type: blob.type || (wasNative ? "audio/mp4" : "audio/webm"),
+      isNative: wasNative,
+    });
+  };
+
+  const sendRecordedPreview = async () => {
+    const p = recordedPreview;
+    if (!p) return;
+    const blocked = parentalBlockedType("voice");
+    if (blocked) { setSendError(blocked); return; }
+    if (!p.blob || !chatId || p.blob.size === 0) {
+      setSendError("Voice note failed — no audio was captured.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const file = new File([p.blob], `voice-${Date.now()}.${p.isNative ? "m4a" : "webm"}`, { type: p.type || (p.isNative ? "audio/mp4" : "audio/webm") });
+      const result = await uploadChatFile(chatId, myUid, file);
+      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: p.duration });
+      discardRecordedPreview();
+    } catch (err) {
+      if (err instanceof FileTooLargeError) setSendError("Voice note too large (over 50MB).");
+      else setSendError("Couldn't send voice note: " + err.message);
+    }
+    setUploading(false);
+  };
+
+  const discardRecordedPreview = (stopPlayback = true) => {
+    if (stopPlayback) {
+      try { previewAudioRef.current?.pause(); } catch {}
+    }
+    try { if (recordedPreviewRef.current?.url) URL.revokeObjectURL(recordedPreviewRef.current.url); } catch {}
+    setRecordedPreview(null);
+    setPreviewPlaying(false);
+  };
+
+  const togglePreviewPlayback = () => {
+    const audio = previewAudioRef.current;
+    if (!audio || !recordedPreview) return;
+    if (previewPlaying) { audio.pause(); setPreviewPlaying(false); return; }
+    audio.currentTime = 0;
+    audio.play().then(() => setPreviewPlaying(true)).catch(() => setPreviewPlaying(false));
   };
 
   const cancelVoiceRecording = async () => {
@@ -2225,17 +2310,17 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         ) : recording ? (
           <>
             {recordingHold && !recordingSlideCancel && (
-              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: t.surface, borderRadius: 24, padding: "10px 16px" }}>
-                <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#FF3B30", flexShrink: 0, animation: "nextext-rec-pulse 1s ease-in-out infinite" }} />
-                <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>{Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, "0")}</span>
-                <LiveWave level={recLevel} active color={t.accent} height={20} count={22} />
-                <span style={{ marginLeft: "auto", fontSize: 12, color: t.textMuted, flexShrink: 0 }}>‹ Slide to cancel</span>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: Math.max(6, Math.round(10 * rs)), background: t.surface, borderRadius: 24, padding: `${Math.max(8, Math.round(10 * rs))}px ${Math.max(12, Math.round(16 * rs))}px` }}>
+                <div style={{ width: Math.max(8, Math.round(10 * rs)), height: Math.max(8, Math.round(10 * rs)), borderRadius: "50%", background: "#FF3B30", flexShrink: 0, animation: "nextext-rec-pulse 1s ease-in-out infinite" }} />
+                <span style={{ fontSize: Math.max(12, Math.round(14 * rs)), fontWeight: 600, color: t.text }}>{Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, "0")}</span>
+                <LiveWave level={recLevel} active color={t.accent} height={Math.max(16, Math.round(20 * rs))} count={22} />
+                <span style={{ marginLeft: "auto", fontSize: Math.max(11, Math.round(12 * rs)), color: t.textMuted, flexShrink: 0 }}>‹ Slide to cancel</span>
               </div>
             )}
             {recordingHold && recordingSlideCancel && (
-              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: "#FF3B30", borderRadius: 24, padding: "10px 16px" }}>
-                <X size={16} color="#fff" />
-                <span style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Release to cancel</span>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: Math.max(6, Math.round(10 * rs)), background: "#FF3B30", borderRadius: 24, padding: `${Math.max(8, Math.round(10 * rs))}px ${Math.max(12, Math.round(16 * rs))}px` }}>
+                <X size={Math.max(14, Math.round(16 * rs))} color="#fff" />
+                <span style={{ fontSize: Math.max(12, Math.round(14 * rs)), fontWeight: 700, color: "#fff" }}>Release to cancel</span>
               </div>
             )}
             {recordingHold && (
@@ -2251,26 +2336,44 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             )}
             {recordingTapMode && (
               <>
-                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: t.surface, borderRadius: 24, padding: "6px 10px", minWidth: 0 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: recordingPaused ? "#F5A623" : "#FF3B30", flexShrink: 0, animation: recordingPaused ? "none" : "nextext-rec-pulse 1s ease-in-out infinite" }} />
-                  <span style={{ fontSize: 14, fontWeight: 600, color: t.text, minWidth: 40, fontVariantNumeric: "tabular-nums" }}>{Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, "0")}</span>
-                  <LiveWave level={recLevel} active={!recordingPaused} color={recordingPaused ? "#F5A623" : t.accent} height={16} count={14} />
-                  <div onClick={recordingPaused ? resumeVoiceRecording : pauseVoiceRecording} style={{ width: 30, height: 30, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-                    {recordingPaused ? <Play size={13} color={t.primary} /> : <Pause size={13} color={t.primary} />}
+                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: Math.max(6, Math.round(8 * rs)), background: t.surface, borderRadius: 24, padding: `${Math.max(5, Math.round(6 * rs))}px ${Math.max(8, Math.round(10 * rs))}px`, minWidth: 0 }}>
+                  <div style={{ width: Math.max(8, Math.round(10 * rs)), height: Math.max(8, Math.round(10 * rs)), borderRadius: "50%", background: recordingPaused ? "#F5A623" : "#FF3B30", flexShrink: 0, animation: recordingPaused ? "none" : "nextext-rec-pulse 1s ease-in-out infinite" }} />
+                  <span style={{ fontSize: Math.max(12, Math.round(14 * rs)), fontWeight: 600, color: t.text, minWidth: 40, fontVariantNumeric: "tabular-nums" }}>{Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, "0")}</span>
+                  <LiveWave level={recLevel} active={!recordingPaused} color={recordingPaused ? "#F5A623" : t.accent} height={Math.max(12, Math.round(16 * rs))} count={14} />
+                  <div onClick={recordingPaused ? resumeVoiceRecording : pauseVoiceRecording} style={{ width: Math.max(24, Math.round(30 * rs)), height: Math.max(24, Math.round(30 * rs)), borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                    {recordingPaused ? <Play size={Math.max(11, Math.round(13 * rs))} color={t.primary} /> : <Pause size={Math.max(11, Math.round(13 * rs))} color={t.primary} />}
                   </div>
-                  <div onClick={restartVoiceRecording} title="Restart" style={{ width: 30, height: 30, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-                    <RotateCcw size={13} color={t.primary} />
+                  <div onClick={restartVoiceRecording} title="Restart" style={{ width: Math.max(24, Math.round(30 * rs)), height: Math.max(24, Math.round(30 * rs)), borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                    <RotateCcw size={Math.max(11, Math.round(13 * rs))} color={t.primary} />
                   </div>
-                  <span onClick={() => cancelVoiceRecording()} style={{ marginLeft: "auto", color: t.textMuted, fontSize: 12.5, cursor: "pointer", flexShrink: 0 }}>Cancel</span>
+                  <div onClick={() => stopVoiceRecordingToPreview()} title="Stop" style={{ width: Math.max(24, Math.round(30 * rs)), height: Math.max(24, Math.round(30 * rs)), borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                    <Square size={Math.max(11, Math.round(13 * rs))} color={t.primary} />
+                  </div>
+                  <span onClick={() => cancelVoiceRecording()} style={{ marginLeft: "auto", color: t.textMuted, fontSize: Math.max(11, Math.round(12.5 * rs)), cursor: "pointer", flexShrink: 0 }}>Cancel</span>
                 </div>
-                <button onClick={() => stopVoiceRecording(true)} style={{ width: 42, height: 42, borderRadius: "50%", background: t.primary, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-                  <Send size={17} color={t.bubbleMeText} />
+                <button onClick={() => stopVoiceRecording(true)} style={{ width: Math.max(34, Math.round(42 * rs)), height: Math.max(34, Math.round(42 * rs)), borderRadius: "50%", background: t.primary, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                  <Send size={Math.max(14, Math.round(17 * rs))} color={t.bubbleMeText} />
                 </button>
               </>
             )}
           </>
         ) : uploading ? (
           <div style={{ flex: 1, textAlign: "center", padding: "12px", color: t.textMuted, fontSize: 13 }}>Uploading…</div>
+        ) : recordedPreview ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", gap: Math.max(6, Math.round(10 * rs)), background: t.surface, borderRadius: 24, padding: `${Math.max(5, Math.round(6 * rs))}px ${Math.max(10, Math.round(14 * rs))}px`, minWidth: 0 }}>
+            <audio ref={previewAudioRef} src={recordedPreview.url} preload="metadata" onEnded={() => setPreviewPlaying(false)} onPause={() => setPreviewPlaying(false)} onPlay={() => setPreviewPlaying(true)} />
+            <div onClick={togglePreviewPlayback} title={previewPlaying ? "Pause" : "Listen"} style={{ width: Math.max(32, Math.round(40 * rs)), height: Math.max(32, Math.round(40 * rs)), borderRadius: "50%", background: previewPlaying ? t.primary : t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+              {previewPlaying ? <Pause size={Math.max(15, Math.round(18 * rs))} color={t.bubbleMeText} /> : <Headphones size={Math.max(15, Math.round(18 * rs))} color={t.primary} />}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
+              <span style={{ fontSize: Math.max(11, Math.round(13 * rs)), fontWeight: 700, color: t.text }}>Recording preview</span>
+              <span style={{ fontSize: Math.max(10.5, Math.round(12 * rs)), color: t.textMuted }}>{Math.floor(recordedPreview.duration / 60)}:{String(recordedPreview.duration % 60).padStart(2, "0")} — tap the button to listen</span>
+            </div>
+            <span onClick={() => discardRecordedPreview()} style={{ color: t.textMuted, fontSize: Math.max(11, Math.round(12.5 * rs)), cursor: "pointer", flexShrink: 0, textDecoration: "underline" }}>Discard</span>
+            <button onClick={sendRecordedPreview} style={{ width: Math.max(34, Math.round(42 * rs)), height: Math.max(34, Math.round(42 * rs)), borderRadius: "50%", background: t.primary, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+              <Send size={Math.max(14, Math.round(17 * rs))} color={t.bubbleMeText} />
+            </button>
+          </div>
         ) : (
           <>
             {showEmojiPicker && (
