@@ -1469,35 +1469,44 @@ function AppShell({ appLocked, setAppLocked }) {
         });
         const barOnTop = () => {
           try {
-            const cx = Math.floor(window.innerWidth / 2);
-            const cy = Math.max(0, Math.floor(window.innerHeight - 30));
-            let node = document.elementFromPoint(cx, cy);
-            while (node && node !== document.documentElement) {
-              if (node.hasAttribute && node.hasAttribute("data-tour-nav")) return true;
-              node = node.parentElement;
+            // Multi-point probe across the bar (25%/50%/75% width) so a single
+            // point landing on a tab border/gap can't cause a false negative.
+            for (const fx of [0.25, 0.5, 0.75]) {
+              const cx = Math.floor(window.innerWidth * fx);
+              const cy = Math.max(0, Math.floor(window.innerHeight - 30));
+              let node = document.elementFromPoint(cx, cy);
+              while (node && node !== document.documentElement) {
+                if (node.hasAttribute && node.hasAttribute("data-tour-nav")) return true;
+                node = node.parentElement;
+              }
             }
           } catch { /* best-effort */ }
           return false;
         };
-        // Force a full re-composite WITHOUT any visible change. All nudges are
-        // applied and reverted inside one synchronous task (forced reflow in
-        // between), so the browser paints only the final, unchanged state —
-        // but the layout/paint invalidation still commits a fresh frame with
-        // the bar composited on top.
+        // Force the bar into the compositor's frame. Two kinds of nudge:
+        //   a) PERSISTENT: a real 0.1px change to the shell's bottom padding
+        //      that is never reverted. The earlier reverted-in-one-task kicks
+        //      failed precisely because they left the painted output identical
+        //      — the WebView correctly skips painting an unchanged frame, so
+        //      the bar never got recomposited. A persistent (imperceptible)
+        //      change guarantees the browser emits a fresh frame that includes
+        //      the bar.
+        //   b) TRANSIENT: transform + visibility + z-stack toggles (reverted
+        //      inside one synchronous task) as a first cheap attempt.
         const forceRepaint = () => {
           const shellEl = document.getElementById("nextext-app-shell");
           if (shellEl) {
             try {
               const prevTransform = shellEl.style.transform;
               const prevTransition = shellEl.style.transition;
-              const prevPadding = shellEl.style.paddingTop;
               shellEl.style.transition = "none";
               shellEl.style.transform = "scale(0.9998)";
               shellEl.style.transformOrigin = "top left";
-              shellEl.style.paddingTop = "0px";
+              if (!/0\.1px/.test(shellEl.style.paddingBottom || "")) {
+                shellEl.style.paddingBottom = "calc(var(--safe-bottom) + 0.1px)";
+              }
               void shellEl.offsetHeight;
               shellEl.style.transform = prevTransform;
-              shellEl.style.paddingTop = prevPadding;
               shellEl.style.transition = prevTransition;
             } catch { /* best-effort */ }
           }
@@ -2495,7 +2504,7 @@ function AppShell({ appLocked, setAppLocked }) {
         }
         if (!navTabs.length) return null;
         return (
-          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, transform: "translateZ(0)", paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
             {navTabs.map(({ key, icon: Icon, label }) => {
               const isActive = key === "settings" ? screen === "settings" : key === "status" ? screen === "status" : (screen === "list" && activeNavTab === key);
               return (
