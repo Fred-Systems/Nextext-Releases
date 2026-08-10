@@ -313,7 +313,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, micTapOpensMenu, setMicTapOpensMenu, toggleMicTapOpensMenu, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -809,11 +809,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               ))}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Quick tap opens recording menu</span>
-              <Toggle on={micTapOpensMenu} onClick={toggleMicTapOpensMenu} />
-            </div>
-            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>When off, a quick tap on the mic starts recording directly (uses the selected mode above). When on, a quick tap opens the recording mode menu.</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Animate tab taps (animateOnTap)</span>
               <Toggle on={animateOnTap} onClick={() => setAnimateOnTap(!animateOnTap)} />
             </div>
@@ -1254,15 +1249,9 @@ function AppShell({ appLocked, setAppLocked }) {
   const [pingSoundId, setPingSoundId] = useState(() => { try { return localStorage.getItem("nextext_voice_ping_sound") || "warm"; } catch { return "warm"; } });
   const [voicePlayerStyle, setVoicePlayerStyle] = useState(() => { try { return localStorage.getItem("nextext_voice_player_style") || "waveform"; } catch { return "waveform"; } });
   const [micMode, setMicMode] = useState(() => { try { return localStorage.getItem("nextext_mic_mode") || "hold"; } catch { return "hold"; } });
-  const [micTapOpensMenu, setMicTapOpensMenu] = useState(() => { try { return localStorage.getItem("nextext_mic_tap_opens_menu") !== "false"; } catch { return true; } });
   const changeMicMode = (mode) => {
     setMicMode(mode);
     try { localStorage.setItem("nextext_mic_mode", mode); } catch {}
-  };
-  const toggleMicTapOpensMenu = () => {
-    const next = !micTapOpensMenu;
-    setMicTapOpensMenu(next);
-    try { localStorage.setItem("nextext_mic_tap_opens_menu", String(next)); } catch {}
   };
   const [autoUpdateCheckOn, setAutoUpdateCheckOn] = useState(() => localStorage.getItem("nextext_auto_update_check") !== "off");
   const shellRef = useRef(null);
@@ -1320,6 +1309,11 @@ function AppShell({ appLocked, setAppLocked }) {
   // handlers) can read the CURRENT uid without a stale closure.
   const myUidRef = useRef(myUid);
   useEffect(() => { myUidRef.current = myUid; }, [myUid]);
+
+  const screenRef = useRef(screen);
+  useEffect(() => { screenRef.current = screen; }, [screen]);
+  const storyViewerOpenRef = useRef(storyViewerOpen);
+  useEffect(() => { storyViewerOpenRef.current = storyViewerOpen; }, [storyViewerOpen]);
 
   const restoreAppState = () => {
     try {
@@ -1395,6 +1389,32 @@ function AppShell({ appLocked, setAppLocked }) {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid]);
+
+  // Story-viewer invariant: the viewer is only ever mounted while the Status
+  // tab is on screen. If storyViewerOpen sticks true on any other screen it
+  // silently hides the bottom nav (bar renders only when !hideNav &&
+  // !storyViewerOpen && screen is a tab), stranding the user. Enforce it on
+  // every render so a stale viewer can never suppress the bar again.
+  useEffect(() => {
+    if (storyViewerOpen && screen !== "status") setStoryViewerOpen(false);
+  }, [storyViewerOpen, screen]);
+
+  // Boot diagnostic: record the bottom-bar-relevant state once the cold-start
+  // safety net has run. If the bar is ever reported missing again this is the
+  // ground truth (state vs geometry) — e.g. it will show hideNav=true (bar
+  // intentionally hidden), uiScale>1 (scale clipping), or a healthy snapshot
+  // that points to a rendering/geometry issue instead of app state.
+  useEffect(() => {
+    if (!coldStartComplete) return;
+    try {
+      window.__nxCapturedErrors.push(
+        `DIAG boot screen=${screen} tab=${activeNavTab} hideNav=${hideNav} story=${storyViewerOpen} uiScale=${uiScale} topBar=${topBarVisible} navKeys=${(navConfig || []).map((n) => n.key).join(",")} viewport=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`
+      );
+    } catch {
+      /* diagnostics must never crash the app */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coldStartComplete]);
 
   const swipeAnimationEnabled = () => swipeAnimationOn;
 
@@ -1746,6 +1766,10 @@ function AppShell({ appLocked, setAppLocked }) {
   // the next launch restores it.
   useEffect(() => {
     const relock = () => {
+      if (document.visibilityState === "visible") {
+        onForeground();
+        return;
+      }
       if (document.visibilityState !== "hidden") return;
       saveAppStateRef.current();
       const enabled = localStorage.getItem("nextext_app_lock") === "true";
@@ -1754,12 +1778,19 @@ function AppShell({ appLocked, setAppLocked }) {
       if (shouldLock) setAppLocked(true);
     };
     const relockNative = ({ isActive }) => {
-      if (isActive) return;
+      if (isActive) { onForeground(); return; }
       saveAppStateRef.current();
       const enabled = localStorage.getItem("nextext_app_lock") === "true";
       const pass = localStorage.getItem("nextext_app_lock_pass");
       const shouldLock = enabled && !!pass;
       if (shouldLock) setAppLocked(true);
+    };
+    // On resume, self-heal a story viewer left open on a non-status screen so
+    // the bottom nav is never hidden when the app comes back to the front.
+    const onForeground = () => {
+      if (storyViewerOpenRef.current && screenRef.current !== "status") {
+        setStoryViewerOpen(false);
+      }
     };
     document.addEventListener("visibilitychange", relock);
     let capListener = null;
@@ -2057,12 +2088,21 @@ function AppShell({ appLocked, setAppLocked }) {
     }
   };
 
+  // UI-scale scaling. The shell is scaled from the top-left corner; to keep the
+  // scaled output EXACTLY filling the viewport we pre-shrink the box to
+  // 100/uiScale% (both axes) so scale(uiScale) expands it right back to 100%.
+  // Without this, uiScale > 1 pushed the whole shell below the visible bottom
+  // edge — the bottom nav (positioned at bottom:0 inside the shell) ended up
+  // off-screen, which read as "bottom bar missing on every app reopen" because
+  // the setting persists across restarts.
   const containerStyle = {
-    position: "absolute", inset: 0,
+    position: "absolute",
+    top: 0,
+    left: 0,
     overflow: "hidden",
     fontFamily: appFont,
-    width: "100%",
-    height: "100%",
+    width: uiScale === 1 ? "100%" : `${(100 / uiScale).toFixed(4)}%`,
+    height: uiScale === 1 ? "100%" : `${(100 / uiScale).toFixed(4)}%`,
     paddingTop: "var(--safe-top)",
     paddingBottom: "var(--safe-bottom)",
     ...(uiScale !== 1 ? { transform: `scale(${uiScale})`, transformOrigin: "top left" } : {}),
@@ -2193,9 +2233,6 @@ function AppShell({ appLocked, setAppLocked }) {
                 micMode={micMode}
                 setMicMode={setMicMode}
                 changeMicMode={changeMicMode}
-                micTapOpensMenu={micTapOpensMenu}
-                setMicTapOpensMenu={setMicTapOpensMenu}
-                toggleMicTapOpensMenu={toggleMicTapOpensMenu}
                 pinchZoomOn={pinchZoomOn}
                 setPinchZoomOn={setPinchZoomOn}
                 voiceEndChimeOn={voiceEndChimeOn}
@@ -2206,6 +2243,8 @@ function AppShell({ appLocked, setAppLocked }) {
                 setVoicePlayerStyle={setVoicePlayerStyle}
                 autoUpdateCheckOn={autoUpdateCheckOn}
                 setAutoUpdateCheckOn={setAutoUpdateCheckOn}
+                linkPreviewsOn={linkPreviewsOn}
+                setLinkPreviewsOn={setLinkPreviewsOn}
               />
               </PageErrorBoundary>
             </div>
@@ -2226,11 +2265,6 @@ function AppShell({ appLocked, setAppLocked }) {
           showScrollDownSetting={showScrollDown}
           animatedScrollEntry={animatedScrollEntry}
           micMode={micMode}
-          setMicMode={setMicMode}
-          changeMicMode={changeMicMode}
-          micTapOpensMenu={micTapOpensMenu}
-          setMicTapOpensMenu={setMicTapOpensMenu}
-          toggleMicTapOpensMenu={toggleMicTapOpensMenu}
         />
       )}
       {screen === "contactProfile" && activeChat && (

@@ -456,7 +456,7 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
   );
 }
 
-export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false, micMode, setMicMode, changeMicMode, micTapOpensMenu, setMicTapOpensMenu, toggleMicTapOpensMenu }) {
+export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false, micMode }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth } = useTheme();
   const globalSettings = useGlobalSettings();
   const isGroup = !!contact?.isGroup;
@@ -626,8 +626,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [recordingTapMode, setRecordingTapMode] = useState(false);
   const [recordingSlideCancel, setRecordingSlideCancel] = useState(false);
   const [recLevel, setRecLevel] = useState(0);
-  const [micMenuOpen, setMicMenuOpen] = useState(false);
-  const micLongPressTimerRef = useRef(null);
   const [theyRecordingVoice, setTheyRecordingVoice] = useState(false);
   const [voiceAutoPlayId, setVoiceAutoPlayId] = useState(null);
   const [voiceAutoPlayNonce, setVoiceAutoPlayNonce] = useState(0);
@@ -1435,7 +1433,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
   const resetRecordingUi = () => {
     voiceSessionTokenRef.current++;
-    setMicMenuOpen(false);
     setRecording(false);
     setRecordingHold(false);
     setRecordingTapMode(false);
@@ -1580,7 +1577,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
   // ── Hold-to-record / tap-to-record gesture handling on the mic button ──
   // Long-press = record (hold to record, release to send, slide left to cancel)
-  // Quick tap = open menu (if micTapOpensMenu enabled) or enter recording tap mode
+  // Quick tap = enter recording tap mode (pause/restart/cancel/send bar)
   const micPointerDown = (e) => {
     e.preventDefault();
     if (recordingRef.current) return;
@@ -1600,8 +1597,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setRecordingHold(true);
     setRecordingSlideCancel(false);
 
-    // No long-press timer to open menu — recording starts immediately.
-    // Menu opens on quick tap (release within ~300ms) if setting enabled.
+    // Recording starts immediately. Release behavior is decided in micPointerUp:
+    // quick tap -> keep recording in tap-mode bar, long hold -> release to send.
 
     const onPointerMove = (ev) => {
       const start = recordHoldStartRef.current;
@@ -1652,10 +1649,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   const micPointerUp = () => {
-    if (micLongPressTimerRef.current) {
-      clearTimeout(micLongPressTimerRef.current);
-      micLongPressTimerRef.current = null;
-    }
     const start = recordHoldStartRef.current;
     const wasHolding = recordingHoldRef.current;
     const heldMs = start ? Date.now() - start.t : 0;
@@ -1669,26 +1662,22 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       cancelVoiceRecording();
       return;
     }
-    // Quick tap (< 300ms): open menu if enabled, otherwise enter recording tap mode
-    if (heldMs < 300) {
-      if (micTapOpensMenu) {
-        setMicMenuOpen(true);
-      } else {
-        setRecordingTapMode(true);
-      }
+    if (micMode === "tap") {
+      // Tap mode: a tap on the mic keeps recording in bar mode with
+      // pause/restart/cancel and an explicit Send button.
+      setRecordingTapMode(true);
       return;
     }
-    // Long hold (>= 300ms): release to send
-    if (micMode === "tap") {
-      // In tap mode, long hold also enters tap mode for consistency
-      setRecordingTapMode(true);
-    } else {
+    if (heldMs >= 300) {
+      // Long hold -> release to send.
       stopVoiceRecording(true);
+    } else {
+      // Quick tap -> keep recording in bar mode with pause/restart/cancel/send.
+      setRecordingTapMode(true);
     }
   };
 
   const handleBack = () => {
-    setMicMenuOpen(false);
     if (recordingRef.current) {
       clearInterval(recordTimerRef.current);
       stopVoiceHeartbeat();
@@ -2413,7 +2402,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 onPointerUp={micPointerUp}
                 onPointerCancel={() => cancelVoiceRecording()}
                 onContextMenu={(e) => e.preventDefault()}
-                title={micMode === "tap" ? "Tap to record. Long-press for voice note settings." : "Hold to record, release to send. Tap to record with controls. Long-press for voice note settings."}
+                title={micMode === "tap" ? "Tap to record. Hold to record with controls." : "Hold to record, release to send. Tap to record with controls."}
                 style={{ width: Math.max(36, Math.round(42 * composerHeight)), height: Math.max(36, Math.round(42 * composerHeight)), borderRadius: "50%", background: t.primary, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, touchAction: "none", WebkitTapHighlightColor: "transparent" }}>
                 <Mic size={Math.max(16, Math.round(18 * composerHeight))} color={t.bubbleMeText} />
               </button>
@@ -2421,35 +2410,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </>
         )}
       </div>
-
-      {micMenuOpen && (
-        <div onClick={() => setMicMenuOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 70, display: "flex", alignItems: "flex-end" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: t.surface, width: "100%", borderRadius: "18px 18px 0 0", padding: "16px 20px 24px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Voice note recording</span>
-              <X size={20} color={t.textMuted} onClick={() => setMicMenuOpen(false)} style={{ cursor: "pointer" }} />
-            </div>
-            <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 12 }}>
-              Long-press the mic button to open this menu.
-            </div>
-            {[["hold", "Press & hold to record", "Hold the mic and release to send. Swipe left while holding to cancel."], ["tap", "Tap to record", "Tap the mic once — recording starts with pause, restart, cancel and a Send button."]].map(([mode, label, desc]) => (
-              <div
-                key={mode}
-                onClick={() => { changeMicMode(mode); setMicMenuOpen(false); }}
-                style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${micMode === mode ? t.primary : t.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  {micMode === mode && <div style={{ width: 10, height: 10, borderRadius: "50%", background: t.primary }} />}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: t.text }}>{label}</div>
-                  <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>{desc}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {activeMsg && (() => {
         const sentMs = activeMsg.sentAt?.toMillis?.() || Date.now();
