@@ -1389,7 +1389,14 @@ function AppShell({ appLocked, setAppLocked }) {
   const [bootKick, setBootKick] = useState(0);
   const bootLockedRef = useRef(false);
   const [coldStartComplete, setColdStartComplete] = useState(false);
-  const [diagNotice, setDiagNotice] = useState(null);
+  // While true, the in-app splash stays fully opaque. The awake-kick releases
+  // it once the cold-start repair has run, so the Settings-trip recovery
+  // happens invisibly behind the splash instead of flashing the screen.
+  const [splashHold, setSplashHold] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setSplashHold(false), 6000);
+    return () => clearTimeout(t);
+  }, []);
   useEffect(() => {
     if (!myUid) return;
     // Run synchronously (0ms) to ensure coldStartComplete is true before
@@ -1434,32 +1441,47 @@ function AppShell({ appLocked, setAppLocked }) {
   }, [coldStartComplete]);
 
   // Awake-kick watchdog. On cold starts the Android WebView compositor can
-  // stall right after the in-app splash unmounts: the app stays VISUALLY
-  // painted but interaction-dead (requestAnimationFrame stops being serviced,
-  // taps land but no new frame is ever composited) and the bottom nav is not
-  // repainted. The only recovery was the user navigating to Settings ("pop,
-  // everything works"). This replicates that recovery automatically:
+  // stall right after the app's first frame: the bottom nav is painted out of
+  // the frame entirely (its DOM node is present, but never composited on top —
+  // the "bar missing" symptom) and only a real navigation forces a fresh
+  // composite that includes it. Only such a navigation reliably fixes it
+  // (translateZ promotion and single-task repaint nudges don't — an identical
+  // painted output legitimately never triggers a repaint). So this replicates
+  // the user's manual Settings trip, but runs it BEHIND the still-opaque
+  // splash screen: the splash is held open until the repair completes, so the
+  // user never sees the flash or a missing bar — it just appears with the bar
+  // already there.
   //   1. Probe whether the compositor is actually alive: requestAnimationFrame
   //      is driven by the WebView's frame scheduler, so a stalled compositor
-  //      stops servicing RAF callbacks. A visible, healthy app responds within
-  //      one frame (~17ms).
-  //   2. Verify the bottom bar's DOM node is actually painted on top
-  //      (hit-test at its expected position) — a DOM node existing but never
-  //      composited on top is the "bar missing" symptom. If the bar isn't on
-  //      top, first try INVISIBLE repaint kicks (transform + layout + re-stack
-  //      nudges, all reverted inside one synchronous task so nothing flashes),
-  //      re-checking after each attempt.
-  //   3. Only if the bar still isn't on top does it fall back to the visible
-  //      Settings trip the user originally found by hand (a quick flash, then
-  //      the bar appears).
-  // Skipped while the welcome tour is up (its backdrop legitimately covers the
-  // bar) and when the bar is intentionally hidden (hideNav / story viewer).
+  //      stops servicing RAF callbacks.
+  //   2. Hit-test the bar at multiple points; if it isn't on top, try invisible
+  //      repaint kicks first (a persistent 0.1px layout change included), and
+  //      only fall back to the visible-free Settings trip if they don't take.
+  //   3. Always release the splash hold afterwards (a 6s safety fallback also
+  //      guarantees the splash can never trap the user).
+  // Deferred while the welcome tour is up (its backdrop legitimately covers the
+  // bar and re-runs when the tour ends).
   useEffect(() => {
     if (!coldStartComplete) return;
+    if (showTour) return; // defer — re-runs when the tour ends
+    let cancelled = false;
     const settle = setTimeout(async () => {
-      let diag = "";
-      let noticeShown = false;
+      const waitForBarDom = () => new Promise((resolve) => {
+        let waited = 0;
+        const check = () => {
+          if (cancelled) { resolve(); return; }
+          if (document.querySelector("[data-tour-nav]")) { resolve(); return; }
+          waited += 200;
+          if (waited >= 4000) { resolve(); return; }
+          setTimeout(check, 200);
+        };
+        check();
+      });
+      await waitForBarDom();
+      if (cancelled) return;
+      let diag = "DIAG awake-skip";
       try {
+        const delay = (ms) => new Promise((r) => setTimeout(r, ms));
         const rafAlive = () => new Promise((resolve) => {
           if (document.visibilityState === "hidden") { resolve(true); return; }
           let settled = false;
@@ -1483,16 +1505,10 @@ function AppShell({ appLocked, setAppLocked }) {
           } catch { /* best-effort */ }
           return false;
         };
-        // Force the bar into the compositor's frame. Two kinds of nudge:
-        //   a) PERSISTENT: a real 0.1px change to the shell's bottom padding
-        //      that is never reverted. The earlier reverted-in-one-task kicks
-        //      failed precisely because they left the painted output identical
-        //      — the WebView correctly skips painting an unchanged frame, so
-        //      the bar never got recomposited. A persistent (imperceptible)
-        //      change guarantees the browser emits a fresh frame that includes
-        //      the bar.
-        //   b) TRANSIENT: transform + visibility + z-stack toggles (reverted
-        //      inside one synchronous task) as a first cheap attempt.
+        // Force the bar into the compositor's frame. The PERSISTENT 0.1px
+        // change is the important part: reverted-in-one-task kicks leave the
+        // painted output identical, so the WebView correctly skips repainting
+        // an unchanged frame and the bar never gets recomposited.
         const forceRepaint = () => {
           const shellEl = document.getElementById("nextext-app-shell");
           if (shellEl) {
@@ -1510,7 +1526,6 @@ function AppShell({ appLocked, setAppLocked }) {
               shellEl.style.transition = prevTransition;
             } catch { /* best-effort */ }
           }
-          // Re-stack the bar container so it's forced into the paint pass.
           try {
             const bar = document.querySelector("[data-tour-nav]");
             const wrap = bar?.parentElement;
@@ -1526,9 +1541,8 @@ function AppShell({ appLocked, setAppLocked }) {
           } catch { /* best-effort */ }
         };
         const tripRecovery = async () => {
-          // The user's proven recovery: trip to Settings, snap back to list.
           setScreen("settings");
-          await new Promise((r) => setTimeout(r, 400));
+          await delay(400);
           setScreen("list");
           setActiveNavTab("chats");
           setBootKick((n) => n + 1);
@@ -1538,13 +1552,11 @@ function AppShell({ appLocked, setAppLocked }) {
         const barOK = !wantBar || barOnTop();
         const rafOK = await rafAlive();
         if (!rafOK) {
-          // Compositor is probably stalled (a double-check: a single missed
-          // frame can happen while fonts/layout settle).
-          await new Promise((r) => setTimeout(r, 500));
+          // Compositor is probably stalled (double-check: a single missed frame
+          // can happen while fonts/layout settle).
+          await delay(500);
           const rafOK2 = await rafAlive();
           if (!rafOK2) {
-            setDiagNotice("NexText was frozen on start and auto-recovered.");
-            noticeShown = true;
             diag = `DIAG awake RECOVERED screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=dead`;
             await tripRecovery();
             const recovered = await rafAlive();
@@ -1558,14 +1570,12 @@ function AppShell({ appLocked, setAppLocked }) {
           let fixed = false;
           for (let attempt = 0; attempt < 2 && !fixed; attempt++) {
             forceRepaint();
-            await new Promise((r) => setTimeout(r, 200));
+            await delay(200);
             fixed = barOnTop();
           }
           if (fixed) {
             diag = `DIAG awake bar-fixed screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=->true raf=alive invisible`;
           } else {
-            setDiagNotice("The bottom bar wasn't painted on start — auto-fixed.");
-            noticeShown = true;
             diag = `DIAG awake BARFIX screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive trip`;
             await tripRecovery();
           }
@@ -1575,14 +1585,16 @@ function AppShell({ appLocked, setAppLocked }) {
       } catch (err) {
         diag = `DIAG awake-error ${err?.message || err}`;
       }
-      try {
-        window.__nxCapturedErrors.push(diag);
-      } catch { /* best-effort */ }
-      if (noticeShown) setTimeout(() => setDiagNotice(null), 8000);
-    }, 3400);
-    return () => clearTimeout(settle);
+      if (!cancelled) {
+        try { window.__nxCapturedErrors.push(diag); } catch { /* best-effort */ }
+        // Release the splash so it fades normally — any recovery above already
+        // ran behind its opaque cover, so nothing flashes.
+        setSplashHold(false);
+      }
+    }, 2200);
+    return () => { cancelled = true; clearTimeout(settle); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [coldStartComplete]);
+  }, [coldStartComplete, showTour]);
 
   const swipeAnimationEnabled = () => swipeAnimationOn;
 
@@ -1650,7 +1662,7 @@ function AppShell({ appLocked, setAppLocked }) {
     const seenKey = `nextext_tour_seen_${myUid}`;
     if (localStorage.getItem(seenKey) === getCurrentVersion()) return;
     localStorage.setItem(seenKey, getCurrentVersion());
-    const t = setTimeout(() => { startTour(); }, 1200);
+    const t = setTimeout(() => { startTour(); }, 4200);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid, auth.userDoc?.profileComplete]);
@@ -1822,10 +1834,11 @@ function AppShell({ appLocked, setAppLocked }) {
       setSplashVisible(false);
       return;
     }
-    const fadeTimer = setTimeout(() => setSplashFading(true), 1500);
-    const dismissTimer = setTimeout(() => { setSplashVisible(false); }, 3000);
+    if (splashHold) return;
+    const fadeTimer = setTimeout(() => setSplashFading(true), 300);
+    const dismissTimer = setTimeout(() => { setSplashVisible(false); }, 1000);
     return () => { clearTimeout(fadeTimer); clearTimeout(dismissTimer); };
-  }, [showSplash]);
+  }, [showSplash, splashHold]);
 
   // Auto-check for app updates once after login (delayed 5s to not block load).
   // Only runs when the "Notify me about app updates" setting is on, and skips
@@ -2583,13 +2596,6 @@ function AppShell({ appLocked, setAppLocked }) {
           onSaveToDevice={handleSaveApkToDevice}
           error={updateStatus || null}
         />
-      )}
-
-      {diagNotice && (
-        <div style={{ position: "fixed", bottom: 76, left: 10, right: 10, zIndex: 2147483500, background: "#3D0A0A", border: "1px solid #FF3B30", borderRadius: 10, padding: "10px 30px 10px 10px", color: "#FFB3B3", fontSize: 11, fontFamily: "monospace" }}>
-          {diagNotice}
-          <span onClick={() => setDiagNotice(null)} style={{ position: "absolute", top: 4, right: 10, cursor: "pointer", color: "#fff", fontSize: 14 }}>×</span>
-        </div>
       )}
     </div>
     </>
