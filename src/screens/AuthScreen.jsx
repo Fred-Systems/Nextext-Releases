@@ -3,6 +3,7 @@ import { MessageSquare, Eye, EyeOff } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit } from "firebase/firestore";
 import { db } from "../firebase/config";
+import DownloadApkButton from "../components/DownloadApkButton";
 
 export default function AuthScreen({ auth }) {
   const { t } = useTheme();
@@ -191,6 +192,8 @@ export default function AuthScreen({ auth }) {
         <div onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); setUsernameTaken(false); }} style={{ textAlign: "center", fontSize: 13, color: t.primary, fontWeight: 600, cursor: "pointer", marginTop: 20 }}>
           {mode === "signin" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
         </div>
+
+        <DownloadApkButton subtle />
       </div>
 
       {showPrivacyPolicy && (

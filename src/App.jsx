@@ -33,6 +33,7 @@ import { initNotifications, setNotificationTapHandler, showLocalNotification, ge
 import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
 import UpdatePrompt from "./components/UpdatePrompt";
+import DownloadApkButton from "./components/DownloadApkButton";
 import PageErrorBoundary from "./components/PageErrorBoundary";
 import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, openDownloadUrl, saveApkToDevice, setLastSeenRelease } from "./updater/updateChecker";
 import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
@@ -476,7 +477,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         <SectionCard title="Account & Profile" emoji="👤" sectionKey="account">
           <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 0", cursor: "pointer" }} onClick={() => profilePhotoRef.current?.click()}>
             <input ref={profilePhotoRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleProfilePhoto} />
-            <Avatar key={avatarNonce} photoURL={userDoc?.photoURL} name={userDoc?.username || userDoc?.displayName} uid={myUid} size={52} />
+            <Avatar key={avatarNonce} photoURL={userDoc?.photoURL} name={userDoc?.displayName || userDoc?.username} uid={myUid} size={52} />
             <div>
               <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>{userDoc?.displayName || userDoc?.username || "Your name"}</div>
               <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1, display: "flex", alignItems: "center", gap: 4 }}>
@@ -1002,6 +1003,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             {updateStatus && (
               <div style={{ fontSize: 12.5, color: updateStatus.includes("up to date") ? t.primary : "#FF3B30", fontWeight: 600, marginTop: 6, textAlign: "center" }}>{updateStatus}</div>
             )}
+            <DownloadApkButton />
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Notify me about app updates</span>
               <Toggle on={autoUpdateCheckOn} onClick={() => { const next = !autoUpdateCheckOn; setAutoUpdateCheckOn(next); localStorage.setItem("nextext_auto_update_check", next ? "on" : "off"); }} />
@@ -1394,9 +1396,14 @@ function AppShell({ appLocked, setAppLocked }) {
   // happens invisibly behind the splash instead of flashing the screen.
   const [splashHold, setSplashHold] = useState(true);
   useEffect(() => {
-    const t = setTimeout(() => setSplashHold(false), 6000);
+    const t = setTimeout(() => setSplashHold(false), 8000);
     return () => clearTimeout(t);
   }, []);
+  // Opaque full-screen cover shown ONLY while the Settings-trip recovery runs.
+  // Unlike the splash (skippable in Settings / never shows if the user turned
+  // it off), this cover is independent of any setting, so the trip is always
+  // guaranteed hidden even on devices with the splash disabled.
+  const [repairCoverOn, setRepairCoverOn] = useState(false);
   useEffect(() => {
     if (!myUid) return;
     // Run synchronously (0ms) to ensure coldStartComplete is true before
@@ -1472,13 +1479,13 @@ function AppShell({ appLocked, setAppLocked }) {
           if (cancelled) { resolve(); return; }
           if (document.querySelector("[data-tour-nav]")) { resolve(); return; }
           waited += 200;
-          if (waited >= 4000) { resolve(); return; }
+          if (waited >= 2500) { resolve(); return; }
           setTimeout(check, 200);
         };
         check();
       });
       await waitForBarDom();
-      if (cancelled) return;
+      if (cancelled) { setSplashHold(false); return; }
       let diag = "DIAG awake-skip";
       try {
         const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1541,11 +1548,19 @@ function AppShell({ appLocked, setAppLocked }) {
           } catch { /* best-effort */ }
         };
         const tripRecovery = async () => {
+          // A real navigation is the only thing that reliably forces the
+          // compositor to re-composite WITH the bottom bar. Run it under the
+          // opaque repair cover so it can never flash — this cover works even
+          // when the splash is disabled (unlike the splash-hold).
+          setRepairCoverOn(true);
           setScreen("settings");
-          await delay(400);
+          await delay(50);
+          await delay(350);
           setScreen("list");
           setActiveNavTab("chats");
           setBootKick((n) => n + 1);
+          await delay(120);
+          setRepairCoverOn(false);
         };
         const onTab = ["list", "status", "settings"].includes(screenRef.current);
         const wantBar = onTab && !hideNav && !storyViewerOpenRef.current && !tourVisibleRef.current;
@@ -1558,7 +1573,7 @@ function AppShell({ appLocked, setAppLocked }) {
           const rafOK2 = await rafAlive();
           if (!rafOK2) {
             diag = `DIAG awake RECOVERED screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=dead`;
-            await tripRecovery();
+            if (!cancelled) await tripRecovery();
             const recovered = await rafAlive();
             diag += ` after=${recovered ? "alive" : "STILL-DEAD"}`;
           } else {
@@ -1566,7 +1581,8 @@ function AppShell({ appLocked, setAppLocked }) {
           }
         } else if (wantBar && !barOK) {
           // Bar DOM exists but isn't composited on top. Try invisible repaints
-          // first; only flash the Settings trip if they genuinely don't take.
+          // first; only fall back to the Settings trip (hidden under the
+          // repair cover) if they genuinely don't take.
           let fixed = false;
           for (let attempt = 0; attempt < 2 && !fixed; attempt++) {
             forceRepaint();
@@ -1577,7 +1593,7 @@ function AppShell({ appLocked, setAppLocked }) {
             diag = `DIAG awake bar-fixed screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=->true raf=alive invisible`;
           } else {
             diag = `DIAG awake BARFIX screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive trip`;
-            await tripRecovery();
+            if (!cancelled) await tripRecovery();
           }
         } else {
           diag = `DIAG awake ok screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive`;
@@ -1585,12 +1601,12 @@ function AppShell({ appLocked, setAppLocked }) {
       } catch (err) {
         diag = `DIAG awake-error ${err?.message || err}`;
       }
-      if (!cancelled) {
-        try { window.__nxCapturedErrors.push(diag); } catch { /* best-effort */ }
-        // Release the splash so it fades normally — any recovery above already
-        // ran behind its opaque cover, so nothing flashes.
-        setSplashHold(false);
-      }
+      try { window.__nxCapturedErrors.push(diag); } catch { /* best-effort */ }
+      // Release the splash so it fades normally — any recovery above already
+      // ran under the opaque repair cover (or behind the still-held splash),
+      // so nothing ever flashes. A separate 8s fallback guarantees the splash
+      // can't trap the user even if this effect never reaches this point.
+      setSplashHold(false);
     }, 2200);
     return () => { cancelled = true; clearTimeout(settle); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2538,6 +2554,10 @@ function AppShell({ appLocked, setAppLocked }) {
           </div>
         );
       })()}
+
+      {createPortal(repairCoverOn && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 2147483400, background: "#121B22" }} />
+      ), document.body)}
 
       {createPortal(splashVisible && (
         <div
