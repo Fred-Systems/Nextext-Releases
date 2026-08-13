@@ -1,9 +1,9 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
+import { version as APP_VERSION } from "../../package.json";
 
 const GITHUB_REPO = "Fred-Systems/nextext";
 const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/releases`;
 const LAST_SEEN_KEY = "nextext_last_seen_release";
-const APP_VERSION = "1.1.40";
 
 const NextextNative = registerPlugin("NextextNative");
 
