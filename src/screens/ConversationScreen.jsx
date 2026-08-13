@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones } from "lucide-react";
+import { ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import {
   useMessages, sendTextMessage, markChatRead, setTypingHeartbeat, reactToMessage,
@@ -8,7 +8,7 @@ import {
   voteOnPoll, editMessage, deleteMessageForSelf, deleteMessageForEveryone,
   toggleFavorite, setMute, clearMute, sendMediaMessage, toggleLocked, toggleArchive, deleteChatCompletely,
   isMediaExpired, setVoiceRecordingHeartbeat, clearVoiceRecordingStatus,
-  sendLocationMessage, updateLiveLocation,
+  sendLocationMessage, updateLiveLocation, sendContactMessage,
 } from "../firebase/chats";
 import { getWallpaperForChat, setWallpaperForChat, fileToWallpaperDataUrl } from "../theme/wallpaper";
 import { usePresence, formatLastSeen } from "../firebase/presence";
@@ -27,6 +27,7 @@ const NextextNative = registerPlugin("NextextNative");
 import { useStatuses } from "../firebase/status";
 import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote } from "../firebase/ai";
 import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
+import ContactSharePicker from "../components/ContactSharePicker";
 
 
 const VIEWED_KEY = "nextext_status_viewed";
@@ -456,7 +457,7 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
   );
 }
 
-export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false, micMode, recordingBarScale = 1 }) {
+export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false, micMode, recordingBarScale = 1 }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth } = useTheme();
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
@@ -474,6 +475,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [attachClosing, setAttachClosing] = useState(false);
   const [galleryActive, setGalleryActive] = useState(false);
   const [showLocationSheet, setShowLocationSheet] = useState(false);
+  const [showLiveDurations, setShowLiveDurations] = useState(false);
+  const [liveCustomMinutes, setLiveCustomMinutes] = useState("");
+  const [showContactShare, setShowContactShare] = useState(false);
   const [locBusy, setLocBusy] = useState(false);
   const [locError, setLocError] = useState("");
   const [locPosition, setLocPosition] = useState(null);
@@ -509,6 +513,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     closeAttach();
     setLocError("");
     setLocPosition(null);
+    setShowLiveDurations(false);
+    setLiveCustomMinutes("");
     // Request location permission right when user taps the button.
     let nativeGranted = false;
     try {
@@ -598,6 +604,49 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       setLocBusy(false);
     }
   };
+
+  // ── Share contact ───────────────────────────────────────────
+  // From the composer + menu: pick which of your contacts to send as a card
+  // into the current chat.
+  const shareContactIntoChat = async (pickedContact) => {
+    if (!chatId) return;
+    try {
+      await sendContactMessage(chatId, myUid, {
+        uid: pickedContact.uid,
+        contactName: getContactDisplayName(pickedContact),
+        contactUsername: pickedContact.profile?.username || null,
+        contactPhotoURL: pickedContact.profile?.photoURL || null,
+      }, otherParticipants);
+    } catch (e) {
+      setSendError(e?.message || "Couldn't share that contact.");
+    }
+  };
+
+  // Card action: open a direct chat with the shared contact (create it if
+  // it doesn't exist yet).
+  const openSharedContactChat = async (m) => {
+    if (!m.contactUid || !onOpenChat) return;
+    try {
+      const newChatId = await getOrCreateDirectChat(myUid, m.contactUid);
+      onOpenChat(newChatId, m.contactUid, { uid: m.contactUid, profile: { displayName: m.contactName || null, username: m.contactUsername || null, photoURL: m.contactPhotoURL || null } });
+    } catch { /* chat setup failure */ }
+  };
+
+  // Card action: add the shared contact to my contacts as accepted.
+  const saveSharedContact = async (m) => {
+    if (!m.contactUid || m.contactUid === myUid) return;
+    try {
+      await setDoc(doc(db, "users", myUid, "contacts", m.contactUid), {
+        addedAt: serverTimestamp(),
+        nickname: null,
+        status: "accepted",
+        blocked: false,
+        mutedUntil: null,
+        favorite: false,
+        customAppearance: { photoURL: null, color: null },
+      }, { merge: true });
+    } catch { /* rules may reject; silently ignore */ }
+  };
   const [showPoll, setShowPoll] = useState(false);
   const [showOverflow, setShowOverflow] = useState(openSettings || false);
 
@@ -642,6 +691,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [voiceTranscripts, setVoiceTranscripts] = useState(() => {
     try { return JSON.parse(localStorage.getItem("nextext_voice_transcripts") || "{}"); } catch { return {}; }
   });
+  // Per-device, per-transcription "hide" preference (localStorage, not
+  // Firestore — hiding is a personal display choice, not chat data).
+  const [hiddenTranscripts, setHiddenTranscripts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("nextext_hidden_transcripts") || "{}"); } catch { return {}; }
+  });
   const [transcribingId, setTranscribingId] = useState(null);
   const [transcriptErrors, setTranscriptErrors] = useState({});
   const [showCamera, setShowCamera] = useState(false);
@@ -673,6 +727,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   useEffect(() => {
     try { localStorage.setItem("nextext_voice_transcripts", JSON.stringify(voiceTranscripts)); } catch {}
   }, [voiceTranscripts]);
+
+  useEffect(() => {
+    try { localStorage.setItem("nextext_hidden_transcripts", JSON.stringify(hiddenTranscripts)); } catch {}
+  }, [hiddenTranscripts]);
 
   const pinchEnabled = () => {
     // Defaults ON (matches the Settings toggle: anything except an explicit
@@ -1928,11 +1986,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setNowPlayingId(msgId);
   };
 
-  // Transcribes a voice note via Groq Whisper (in-memory; nothing written to
-  // the message doc, so it works regardless of Firestore write rules).
+  // Transcribes a voice note via Groq Whisper. The result is saved to the
+  // message doc (so it survives the audio-expiry window) and mirrored into
+  // local state. If the Firestore write is rejected by rules, it still shows
+  // in-memory/localStorage for the current device.
   const transcribeVoice = async (m) => {
     if (transcribingId || !m?.id) return;
-    if (voiceTranscripts[m.id]) return;
+    if (voiceTranscripts[m.id] || m.transcript) return;
     if (!m.mediaURL) {
       setTranscriptErrors((e) => ({ ...e, [m.id]: "This note's audio has expired." }));
       return;
@@ -1943,12 +2003,52 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       const res = await fetch(m.mediaURL);
       const blob = await res.blob();
       const text = await transcribeVoiceNote(myUid, blob);
+      try {
+        await updateDoc(doc(db, "chats", chatId, "messages", m.id), { transcript: text });
+      } catch { /* rules may reject non-owner writes — in-memory copy still works */ }
       setVoiceTranscripts((prev) => ({ ...prev, [m.id]: text }));
     } catch (err) {
       setTranscriptErrors((prev) => ({ ...prev, [m.id]: err?.message || "Transcription failed. Check your connection and try again." }));
     } finally {
       setTranscribingId(null);
     }
+  };
+
+  const hideTranscript = (m) => setHiddenTranscripts((prev) => ({ ...prev, [m.id]: true }));
+  const unhideTranscript = (m) => setHiddenTranscripts((prev) => { const n = { ...prev }; delete n[m.id]; return n; });
+  // Transcription shown for a message comes from the message doc first
+  // (persists past audio expiry) with the local copy as fallback.
+  const transcriptTextFor = (m) => m.transcript || voiceTranscripts[m.id] || null;
+
+  const TranscriptBlock = ({ m }) => {
+    const text = transcriptTextFor(m);
+    const hidden = hiddenTranscripts[m.id] === true;
+    if (!text) return null;
+    return (
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginTop: 6, maxWidth: 230 }}>
+        <div style={{ fontSize: 12.5 * chatTextScale, color: m.senderId === myUid ? "rgba(255,255,255,0.85)" : t.textMuted, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontStyle: "italic", flex: 1 }}>
+          {hidden ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); unhideTranscript(m); }}
+              style={{ background: "transparent", border: "none", padding: 0, color: m.senderId === myUid ? "rgba(255,255,255,0.75)" : t.primary, fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontStyle: "normal" }}
+            >
+              Show transcript
+            </button>
+          ) : (
+            <span>"{text}"</span>
+          )}
+        </div>
+        {!hidden && (
+          <button
+            onClick={(e) => { e.stopPropagation(); hideTranscript(m); }}
+            title="Hide transcription"
+            style={{ background: "transparent", border: "none", padding: 2, color: m.senderId === myUid ? "rgba(255,255,255,0.7)" : t.textMuted, cursor: "pointer", flexShrink: 0, lineHeight: 1 }}
+          >
+            <EyeOff size={13} />
+          </button>
+        )}
+      </div>
+    );
   };
 
   const renderBubble = (m) => {
@@ -1958,7 +2058,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
     if (["image", "video", "voice", "file"].includes(m.type) && isMediaExpired(m, globalSettings?.mediaExpiryDays)) {
       const ExpiredIcon = m.type === "image" ? ImageOff : m.type === "video" ? VideoOff : m.type === "voice" ? MicOff : FileX;
-      const savedTranscript = m.type === "voice" ? voiceTranscripts[m.id] : null;
       return (
         <div>
           <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
@@ -1966,8 +2065,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             <ExpiredIcon size={16} color={t.textMuted} />
             <span style={{ fontSize: 13, fontStyle: "italic", color: t.textMuted }}>Expired</span>
           </div>
-          {savedTranscript && (
-            <div style={{ marginTop: 6, fontSize: 12.5 * chatTextScale, color: m.senderId === myUid ? "rgba(255,255,255,0.85)" : t.textMuted, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontStyle: "italic", maxWidth: 230 }}>"{savedTranscript}"</div>
+          {m.type === "voice" && transcriptTextFor(m) && (
+            <TranscriptBlock m={m} />
           )}
         </div>
       );
@@ -2025,6 +2124,33 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         </div>
       );
     }
+    if (m.type === "contact") {
+      const alreadySaved = m.contactUid && m.contactUid !== myUid && (convoContacts || []).some((c) => c.uid === m.contactUid && c.status === "accepted");
+      const isMe = m.contactUid === myUid;
+      return (
+        <div>
+          <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
+          <div style={{ width: 240, borderRadius: 10, overflow: "hidden", border: `1px solid ${t.border}`, background: t.bubbleOtherBg }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px" }}>
+              <Avatar photoURL={m.contactPhotoURL} name={m.contactName || "Contact"} uid={m.contactUid} size={44} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.contactName || "Contact"}</div>
+                {m.contactUsername && <div style={{ fontSize: 12, color: t.textMuted }}>@{m.contactUsername}</div>}
+              </div>
+            </div>
+            <div style={{ display: "flex", borderTop: `1px solid ${t.border}` }}>
+              <div onClick={(e) => { e.stopPropagation(); openSharedContactChat(m); }} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", cursor: onOpenChat ? "pointer" : "default", borderRight: `1px solid ${t.border}`, color: t.primary, fontSize: 12.5, fontWeight: 700 }}>
+                <MessageSquare size={14} /> Message
+              </div>
+              <div onClick={(e) => { e.stopPropagation(); saveSharedContact(m); }} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", cursor: isMe ? "default" : "pointer", color: alreadySaved ? "#28A745" : t.primary, fontSize: 12.5, fontWeight: 700, opacity: isMe ? 0.5 : 1 }}>
+                <UserPlus size={14} /> {isMe ? "You" : alreadySaved ? "Saved" : "Save"}
+              </div>
+            </div>
+          </div>
+          {expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
+        </div>
+      );
+    }
     if (m.type === "image") return (
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
@@ -2049,8 +2175,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
         <VoicePlayer url={m.mediaURL} duration={m.mediaDurationSeconds} mine={m.senderId === myUid} t={t} msgId={m.id} onEnded={handleVoiceEnded} autoPlayToken={voiceAutoPlayNonce} isAutoPlayTarget={m.id === voiceAutoPlayId} nowPlayingId={nowPlayingId} onPlayStart={handleVoicePlayStart} />
-        {voiceTranscripts[m.id] ? (
-          <div style={{ marginTop: 6, fontSize: 12.5 * chatTextScale, color: m.senderId === myUid ? "rgba(255,255,255,0.85)" : t.textMuted, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontStyle: "italic", maxWidth: 230 }}>"{voiceTranscripts[m.id]}"</div>
+        {transcriptTextFor(m) ? (
+          <TranscriptBlock m={m} />
         ) : (
           <button
             onClick={(e) => { e.stopPropagation(); transcribeVoice(m); }}
@@ -2410,6 +2536,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 <div onClick={openLocationSheet} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <MapPin size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Share location</span>
                 </div>
+                <div onClick={() => { closeAttach(); setShowContactShare(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <UserPlus size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Contact</span>
+                </div>
                 {!parentalBlockedType("image") && (
                   <div onClick={() => { closeAttach(); openCamera(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                     <Camera size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Camera</span>
@@ -2430,7 +2559,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     <X size={18} />
                   </button>
                 </div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 12, lineHeight: 1.5 }}>Send your current location. Live sharing updates the pin automatically for the chosen duration.</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 12, lineHeight: 1.5 }}>Send a one-time pin of where you are, or share your live location that updates automatically for a set time.</div>
                 {locPosition && (
                   <div style={{ height: 140, borderRadius: 10, overflow: "hidden", marginBottom: 12, position: "relative" }}>
                     <iframe title="Your location" src={`https://maps.google.com/maps?q=${locPosition.lat},${locPosition.lng}&z=16&output=embed`} style={{ width: "100%", height: "100%", border: "none", pointerEvents: "none" }} />
@@ -2438,12 +2567,46 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 )}
                 {locBusy && <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: t.textMuted, marginBottom: 12 }}><span style={{ width: 14, height: 14, border: "2px solid rgba(0,0,0,0.15)", borderTopColor: t.primary, borderRadius: "50%", animation: "nextext-spin 0.8s linear infinite" }} /> Getting your location…</div>}
                 {locError && <div style={{ color: "#FF3B30", fontSize: 12.5, marginBottom: 12 }}>{locError}</div>}
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  <button onClick={() => sendLocation(0)} disabled={!locPosition || locBusy} style={{ flex: 1, minWidth: "45%", padding: "11px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: locPosition && !locBusy ? "pointer" : "not-allowed", opacity: locPosition && !locBusy ? 1 : 0.5 }}>Send location</button>
-                  <button onClick={() => sendLocation(15)} disabled={!locPosition || locBusy} style={{ flex: 1, minWidth: "45%", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13, cursor: locPosition && !locBusy ? "pointer" : "not-allowed", opacity: locPosition && !locBusy ? 1 : 0.5 }}>Live for 15 min</button>
-                  <button onClick={() => sendLocation(60)} disabled={!locPosition || locBusy} style={{ flex: 1, minWidth: "45%", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13, cursor: locPosition && !locBusy ? "pointer" : "not-allowed", opacity: locPosition && !locBusy ? 1 : 0.5 }}>Live for 1 hour</button>
-                  <button onClick={() => sendLocation(480)} disabled={!locPosition || locBusy} style={{ flex: 1, minWidth: "45%", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13, cursor: locPosition && !locBusy ? "pointer" : "not-allowed", opacity: locPosition && !locBusy ? 1 : 0.5 }}>Live for 8 hours</button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => sendLocation(0)} disabled={!locPosition || locBusy} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: locPosition && !locBusy ? "pointer" : "not-allowed", opacity: locPosition && !locBusy ? 1 : 0.5 }}>
+                    Send current location
+                  </button>
+                  <button onClick={() => setShowLiveDurations((v) => !v)} disabled={!locPosition || locBusy} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: `1px solid ${showLiveDurations ? t.primary : t.border}`, background: showLiveDurations ? t.primaryLight : "transparent", color: showLiveDurations ? t.primary : t.text, fontWeight: 700, fontSize: 13, cursor: locPosition && !locBusy ? "pointer" : "not-allowed", opacity: locPosition && !locBusy ? 1 : 0.5 }}>
+                    Share live location
+                  </button>
                 </div>
+                {showLiveDurations && (
+                  <>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+                      {[[15, "15 min"], [60, "1 hour"], [480, "8 hours"]].map(([mins, label]) => (
+                        <button key={mins} onClick={() => sendLocation(mins)} disabled={!locPosition || locBusy} style={{ flex: 1, minWidth: "30%", padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 12.5, cursor: locPosition && !locBusy ? "pointer" : "not-allowed", opacity: locPosition && !locBusy ? 1 : 0.5 }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+                      <input
+                        type="number"
+                        min="1"
+                        max="1440"
+                        value={liveCustomMinutes}
+                        onChange={(e) => setLiveCustomMinutes(e.target.value)}
+                        placeholder="Custom minutes"
+                        style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 13, minWidth: 0 }}
+                      />
+                      <button
+                        onClick={() => {
+                          const mins = Math.min(1440, Math.max(1, Math.round(Number(liveCustomMinutes)) || 15));
+                          sendLocation(mins);
+                        }}
+                        disabled={!locPosition || locBusy || !liveCustomMinutes.trim()}
+                        style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: locPosition && !locBusy && liveCustomMinutes.trim() ? "pointer" : "not-allowed", opacity: locPosition && !locBusy && liveCustomMinutes.trim() ? 1 : 0.5 }}
+                      >
+                        Start
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
               </>,
               document.body
@@ -2575,6 +2738,16 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         );
       })()}
       {showPoll && <PollCreateSheet t={t} onClose={() => setShowPoll(false)} onCreate={createPoll} />}
+      {showContactShare && (
+        <ContactSharePicker
+          t={t}
+          myUid={myUid}
+          contacts={convoContacts}
+          mode="pick-contact"
+          onClose={() => setShowContactShare(false)}
+          onShare={(c) => { shareContactIntoChat(c); }}
+        />
+      )}
       {showSchedule && <ScheduleSendSheet t={t} onClose={() => setShowSchedule(false)} onSchedule={sendScheduled} />}
 
       {contactCardMember && (

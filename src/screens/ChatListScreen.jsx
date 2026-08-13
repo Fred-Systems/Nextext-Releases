@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone } from "lucide-react";
+import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { useChats, toggleArchive, toggleFavorite, toggleLocked, deleteChatCompletely } from "../firebase/chats";
 import { useContacts, searchUsersByUsername, sendContactRequest, acceptContactRequest, getContactDisplayName } from "../firebase/contacts";
@@ -17,7 +17,7 @@ import { uploadChatFile } from "../supabase/media";
 import Avatar from "../components/Avatar";
 import NewGroupScreen from "./NewGroupScreen";
 import FindFriendsScreen from "./FindFriendsScreen";
-import { doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, collection, getCountFromServer } from "firebase/firestore";
 import { db } from "../firebase/config";
 
 function highlightText(text, query, color) {
@@ -160,6 +160,77 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       photoURL: userDoc.photoURL || null,
     },
   } : null;
+
+  // ── Contact sorting ────────────────────────────────────────
+  const CONTACT_SORT_OPTIONS = [
+    { key: "alpha", label: "Alphabetical" },
+    { key: "recent", label: "Last contacted" },
+    { key: "oldest", label: "Oldest" },
+    { key: "popular", label: "Popular" },
+    { key: "newest", label: "Recently added" },
+  ];
+  const [contactSort, setContactSort] = useState(() => {
+    try {
+      const v = localStorage.getItem("nextext_contact_sort");
+      return v && CONTACT_SORT_OPTIONS.some((o) => o.key === v) ? v : "recent";
+    } catch { return "recent"; }
+  });
+  const [showSortMenu, setShowSortMenu] = useState(false);
+  useEffect(() => {
+    try { localStorage.setItem("nextext_contact_sort", contactSort); } catch {}
+  }, [contactSort]);
+  // Settings can change the sort while the chat list is already mounted —
+  // listen for the custom event and pick up the new value.
+  useEffect(() => {
+    const handler = () => {
+      try {
+        const v = localStorage.getItem("nextext_contact_sort");
+        if (v && CONTACT_SORT_OPTIONS.some((o) => o.key === v)) setContactSort(v);
+      } catch {}
+    };
+    window.addEventListener("nextext-contact-sort-change", handler);
+    return () => window.removeEventListener("nextext-contact-sort-change", handler);
+  }, []);
+
+  // "Popular" ranks by total messages exchanged per direct chat. Counts come
+  // from a cheap server-side aggregation, refreshed each time this sort is
+  // active (cache lives in component state for the session).
+  const [msgCounts, setMsgCounts] = useState({});
+  useEffect(() => {
+    if (contactSort !== "popular" || !myUid) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(acceptedContacts.map(async (c) => {
+        try {
+          const snap = await getCountFromServer(collection(db, "chats", [myUid, c.uid].sort().join("_"), "messages"));
+          return [c.uid, snap.data().count];
+        } catch { return [c.uid, 0]; }
+      }));
+      if (!cancelled) setMsgCounts(Object.fromEntries(entries));
+    })();
+    return () => { cancelled = true; };
+  }, [contactSort, myUid]);
+
+  const chatTimeOf = (uid) => {
+    const chat = chats.find((ch) => ch.id === [myUid, uid].sort().join("_"));
+    return chat?.lastMessage?.sentAt?.toMillis?.() || 0;
+  };
+  const sortedContacts = [...acceptedContacts].sort((a, b) => {
+    const name = (c) => (getContactDisplayName(c) || "").toLowerCase();
+    switch (contactSort) {
+      case "alpha":
+        return name(a).localeCompare(name(b));
+      case "oldest":
+        return (a.addedAt?.toMillis?.() || 0) - (b.addedAt?.toMillis?.() || 0);
+      case "newest":
+        return (b.addedAt?.toMillis?.() || 0) - (a.addedAt?.toMillis?.() || 0);
+      case "popular":
+        return (msgCounts[b.uid] || 0) - (msgCounts[a.uid] || 0) || name(a).localeCompare(name(b));
+      case "recent":
+      default:
+        return chatTimeOf(b.uid) - chatTimeOf(a.uid);
+    }
+  });
 
   const saveCustomLists = (lists) => {
     setCustomLists(lists);
@@ -624,11 +695,36 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               ))}
             </>
           )}
-          <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted, marginBottom: 8, marginTop: pendingContacts.length > 0 ? 16 : 0 }}>YOUR CONTACTS</div>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted, marginBottom: 8, marginTop: pendingContacts.length > 0 ? 16 : 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span>YOUR CONTACTS</span>
+            <div style={{ position: "relative" }}>
+              <button onClick={() => setShowSortMenu((v) => !v)} title="Sort contacts" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                <ArrowDownWideNarrow size={16} color={t.primary} />
+              </button>
+              {showSortMenu && (
+                <>
+                  <div onClick={() => setShowSortMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 11 }} />
+                  <div style={{ position: "absolute", right: 0, top: 34, zIndex: 12, background: t.surface, borderRadius: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.2)", padding: "6px 0", minWidth: 170 }}>
+                    {CONTACT_SORT_OPTIONS.map((o) => (
+                      <div key={o.key} onClick={() => { setContactSort(o.key); setShowSortMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", fontSize: 13.5, fontWeight: contactSort === o.key ? 700 : 500, color: contactSort === o.key ? t.primary : t.text, cursor: "pointer" }}>
+                        {contactSort === o.key && <span style={{ width: 14, color: t.primary }}>✓</span>}
+                        <span style={{ marginLeft: contactSort === o.key ? 0 : 22 }}>{o.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
           {selfContact && (
-            <div onClick={() => onOpenChat(null, myUid, selfContact, { openProfile: true })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", cursor: "pointer" }}>
-              <Avatar photoURL={selfContact.profile?.photoURL} name={selfContact.profile?.displayName} uid={myUid} size={36} onViewProfile={() => onOpenChat(null, myUid, selfContact, { openProfile: true })} />
-              <span style={{ fontSize: 14, color: t.text, fontWeight: 600 }}>{selfContact.profile?.displayName} <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500 }}>(You)</span></span>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
+              <div onClick={() => onOpenChat(null, myUid, selfContact, { openProfile: true })} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}>
+                <Avatar photoURL={selfContact.profile?.photoURL} name={selfContact.profile?.displayName} uid={myUid} size={36} onViewProfile={() => onOpenChat(null, myUid, selfContact, { openProfile: true })} />
+                <span style={{ fontSize: 14, color: t.text, fontWeight: 600 }}>{selfContact.profile?.displayName} <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500 }}>(You)</span></span>
+              </div>
+              <div onClick={() => onOpenChat(null, myUid, selfContact)} style={{ width: 34, height: 34, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }} title="Start Chat">
+                <MessageCircle size={16} color={t.primary} />
+              </div>
             </div>
           )}
           {acceptedContacts.length === 0 && !aiApproved && <div style={{ fontSize: 13, color: t.textMuted }}>No contacts yet.</div>}
@@ -639,7 +735,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               <span style={{ fontSize: 14, color: t.text, fontWeight: 600 }}>NexText AI</span>
             </div>
           )}
-          {acceptedContacts.map((c) => (
+          {sortedContacts.map((c) => (
             <div key={c.uid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
               <div onClick={() => onOpenChat(null, c.uid, c, { openProfile: true })} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}>
                 <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={36} onViewProfile={() => onOpenChat(null, c.uid, c, { openProfile: true })} />
@@ -895,7 +991,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             {acceptedContacts.length === 0 && (
               <div style={{ fontSize: 13, color: t.textMuted, padding: "8px 0" }}>No contacts yet. Add contacts before creating a broadcast.</div>
             )}
-            {acceptedContacts.map((c) => (
+          {acceptedContacts.map((c) => (
               <div key={c.uid} onClick={() => toggleBroadcastMember(c.uid)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer" }}>
                 <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={38} />
                 <span style={{ flex: 1, fontWeight: 600, color: t.text, fontSize: 14.5 }}>{c.profile?.displayName}</span>

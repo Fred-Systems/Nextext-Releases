@@ -331,6 +331,26 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const sysConfig = useSystemConfigHook();
   const globalSettings = useGlobalSettings();
   const [aiRequestStatus, setAiRequestStatus] = useState("");
+  const CONTACT_SORT_OPTIONS = [
+    { key: "alpha", label: "Alphabetical" },
+    { key: "recent", label: "Last contacted" },
+    { key: "oldest", label: "Oldest" },
+    { key: "popular", label: "Popular" },
+    { key: "newest", label: "Recently added" },
+  ];
+  const [contactSort, setContactSort] = useState(() => {
+    try {
+      const v = localStorage.getItem("nextext_contact_sort");
+      return v && CONTACT_SORT_OPTIONS.some((o) => o.key === v) ? v : "recent";
+    } catch { return "recent"; }
+  });
+  const changeContactSort = (key) => {
+    setContactSort(key);
+    try {
+      localStorage.setItem("nextext_contact_sort", key);
+      window.dispatchEvent(new Event("nextext-contact-sort-change"));
+    } catch {}
+  };
 
   const userRestrictions = userDoc?.restrictions || null;
   const customStatusInputRef = useRef(null);
@@ -912,6 +932,30 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           <Row icon={<CircleDot size={18} color={t.primary} />} label="Scroll-to-bottom button" sub={showScrollDown ? "On" : "Off"} right={<Toggle on={showScrollDown} onClick={() => setShowScrollDown(!showScrollDown)} />} />
           <Row icon={<CircleDot size={18} color={t.primary} />} label="Animated scroll entry" sub={animatedScrollEntry ? "Smooth jump" : "Instant mount"} right={<Toggle on={animatedScrollEntry} onClick={() => { const next = !animatedScrollEntry; setAnimatedScrollEntry(next); localStorage.setItem("nextext_animated_scroll_entry", next ? "true" : "false"); }} />} />
           <Row icon={<Users size={18} color={t.primary} />} label="Compact chat list" sub={compactList ? "Denser rows" : "Standard spacing"} right={<Toggle on={compactList} onClick={() => { const next = !compactList; setCompactList(next); localStorage.setItem("nextext_compact_list", next ? "true" : "false"); }} />} />
+          <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+            <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Sort contacts</div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Ordering used in the contact list on the Chats tab.</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {CONTACT_SORT_OPTIONS.map((o) => (
+                <div
+                  key={o.key}
+                  onClick={() => changeContactSort(o.key)}
+                  style={{
+                    padding: "7px 12px",
+                    borderRadius: 8,
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    background: contactSort === o.key ? t.primary : t.bg,
+                    color: contactSort === o.key ? t.bubbleMeText : t.text,
+                    border: `1px solid ${contactSort === o.key ? t.primary : t.border}`,
+                  }}
+                >
+                  {o.label}
+                </div>
+              ))}
+            </div>
+          </div>
           <Row icon={<Users size={18} color={t.primary} />} label="Hide bottom navigation" sub={hideNav ? "Hidden" : "Visible"} right={<Toggle on={hideNav} onClick={() => setHideNav(!hideNav)} />} />
           <Row icon={<Search size={18} color={t.primary} />} label="Show search button" sub={searchMode === "button" ? "Search icon hides bar" : "Search bar always visible"} right={<Toggle on={searchMode === "button"} onClick={() => { const next = searchMode === "button" ? "visible" : "button"; setSearchMode(next); localStorage.setItem("nextext_search_mode", next); }} />} />
           <Row icon={<Users size={18} color={t.primary} />} label="Show top bar" sub={topBarVisible ? "Visible" : "Hidden"} right={<Toggle on={topBarVisible} onClick={() => { const next = !topBarVisible; setTopBarVisible(next); localStorage.setItem("nextext_top_bar_visible", String(next)); }} />} />
@@ -2367,14 +2411,14 @@ function AppShell({ appLocked, setAppLocked }) {
           if (key === "chats") return (
             <div key="chats" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Chats">
-                <ChatListScreen myUid={myUid} userDoc={auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} />
+                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} />
               </PageErrorBoundary>
             </div>
           );
           if (key === "groups") return (
             <div key="groups" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Groups">
-                <ChatListScreen myUid={myUid} userDoc={auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="groups" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} />
+                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="groups" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} />
               </PageErrorBoundary>
             </div>
           );
@@ -2462,6 +2506,7 @@ function AppShell({ appLocked, setAppLocked }) {
           onBack={() => setScreen("list")}
           onOpenProfile={() => setScreen("contactProfile")}
           onOpenGroupInfo={openGroupInfo}
+          onOpenChat={openChat}
           showScrollDownSetting={showScrollDown}
           animatedScrollEntry={animatedScrollEntry}
           micMode={micMode}
@@ -2499,7 +2544,7 @@ function AppShell({ appLocked, setAppLocked }) {
       )}
 
       {aiSidebarOn && !storyViewerOpen && screen === "list" && (
-        <AISidebarWidget myUid={myUid} userDoc={auth.userDoc} onOpenAI={() => setScreen("aiChat")} />
+        <AISidebarWidget myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenAI={() => setScreen("aiChat")} />
       )}
 
       {showThemeSheet && (
@@ -2555,9 +2600,21 @@ function AppShell({ appLocked, setAppLocked }) {
         );
       })()}
 
-      {createPortal(repairCoverOn && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 2147483400, background: "#121B22" }} />
-      ), document.body)}
+      {createPortal(
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 2147483400, background: "#121B22",
+            // Always mounted (not conditionally) so the opaque layer is part of
+            // the WebView's initial composite. Toggling opacity 0↔1 on an
+            // existing layer forces a fresh re-composite of the whole frame
+            // (which is what re-includes the bottom bar) without ever creating
+            // a new compositor layer mid-recovery.
+            opacity: repairCoverOn ? 1 : 0,
+            pointerEvents: repairCoverOn ? "auto" : "none",
+          }}
+        />,
+        document.body
+      )}
 
       {createPortal(splashVisible && (
         <div

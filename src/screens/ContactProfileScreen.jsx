@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Ban, Flag, FileText, Camera, X } from "lucide-react";
+import { ChevronLeft, Ban, Flag, FileText, Camera, X, UserPlus } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { doc, onSnapshot, updateDoc, collection, query, orderBy } from "firebase/firestore";
 import { addDoc, serverTimestamp } from "firebase/firestore";
@@ -11,8 +11,10 @@ import { getContactDisplayName, getContactRealName, setContactNickname } from ".
 import { useGlobalSettings } from "../firebase/config-settings";
 import { useStatuses } from "../firebase/status";
 import { uploadChatFile } from "../supabase/media";
-import { isMediaExpired } from "../firebase/chats";
+import { isMediaExpired, sendContactMessage, getOrCreateDirectChat } from "../firebase/chats";
+import { useContacts } from "../firebase/contacts";
 import { AI_CONTACT_UID } from "../firebase/ai";
+import ContactSharePicker from "../components/ContactSharePicker";
 
 const LOCAL_OVERRIDE_KEY = "nextext_contact_photo_overrides";
 
@@ -89,6 +91,9 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [nickname, setNickname] = useState(() => contact?.nickname || "");
   const [savingNickname, setSavingNickname] = useState(false);
+  const [showContactShare, setShowContactShare] = useState(false);
+  const [shareSent, setShareSent] = useState(false);
+  const { contacts: myContacts } = useContacts(myUid);
   const localPhotoRef = useRef(null);
   const { items: sharedMedia, loading: mediaLoading } = useSharedMedia(myUid, otherUid, tab);
 
@@ -152,6 +157,22 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
       setLocalPhotoOverride(result.url);
     } catch { /* silent */ }
     setUploadingPhoto(false);
+  };
+
+  const shareThisContact = async (target) => {
+    setShareSent(true);
+    setTimeout(() => setShareSent(false), 2500);
+    try {
+      const targetChatId = await getOrCreateDirectChat(myUid, target.uid);
+      await sendContactMessage(targetChatId, myUid, {
+        uid: otherUid,
+        contactName: displayName,
+        contactUsername: otherUserDoc?.username || contact?.profile?.username || null,
+        contactPhotoURL: otherUserDoc?.photoURL || contact?.profile?.photoURL || null,
+      }, [target.uid]);
+    } catch (e) {
+      setError("Couldn't share contact: " + e.message);
+    }
   };
 
   const clearLocalPhotoOverride = () => {
@@ -279,6 +300,17 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
               )}
             </div>
           )}
+          {!isSelfProfile && !isAIContact && (
+            <div style={{ marginTop: 14, padding: "0 16px" }}>
+              <div
+                onClick={() => setShowContactShare(true)}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 12, border: `1px solid ${t.primary}`, background: "transparent", color: t.primary, fontSize: 14, fontWeight: 700, cursor: "pointer" }}
+              >
+                <UserPlus size={17} />
+                {shareSent ? "Contact shared ✓" : "Share Contact"}
+              </div>
+            </div>
+          )}
         </div>
         )}
 
@@ -382,6 +414,17 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
           </div>
         )}
       </div>
+      {showContactShare && (
+        <ContactSharePicker
+          t={t}
+          myUid={myUid}
+          contacts={myContacts}
+          mode="forward-to"
+          shared={{ uid: otherUid, name: displayName }}
+          onClose={() => setShowContactShare(false)}
+          onShare={shareThisContact}
+        />
+      )}
     </div>
   );
 }

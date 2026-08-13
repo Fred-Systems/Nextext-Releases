@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { doc, getDoc, setDoc, onSnapshot, collection, query, where, orderBy, getDocs, serverTimestamp, addDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, onSnapshot, collection, query, where, orderBy, getDocs, serverTimestamp } from "firebase/firestore";
 import { db } from "./config";
 
 export const AI_CONTACT_UID = "nextext-ai-system";
@@ -82,17 +82,20 @@ export function useSystemConfigHook() {
 
 // ── AI Access Requests ──
 export async function requestAIAccess(userUid, username) {
-  const ref = doc(db, "aiRequests", userUid);
-  const existing = await getDoc(ref);
-  if (existing.exists() && existing.data().status === "approved") return "already_approved";
-  await addDoc(collection(db, "aiRequests"), {
+  // Users can only *create* in aiRequests (reads are admin-only), so we check
+  // their own users doc for approval instead of reading aiRequests back.
+  const userSnap = await getDoc(doc(db, "users", userUid));
+  if (userSnap.exists() && userSnap.data().aiApproved === true) return "already_approved";
+  // Deterministic doc ID so repeated taps re-set the same pending request
+  // instead of stacking duplicate docs with random IDs.
+  await setDoc(doc(db, "aiRequests", userUid), {
     uid: userUid,
     username: username || "unknown",
     status: "pending",
     requestedAt: serverTimestamp(),
     approvedBy: null,
     approvedAt: null,
-  });
+  }, { merge: true });
   return "requested";
 }
 

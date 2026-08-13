@@ -191,6 +191,60 @@ export async function sendTextMessage(chatId, senderUid, text, otherParticipants
   }
 }
 
+// Shares a contact card into a chat. `contact` carries the shared person's
+// snapshot (uid, name, username, photo) so the recipient can message or save
+// them without the sender's contacts list.
+export async function sendContactMessage(chatId, senderUid, contact, otherParticipants, options = {}) {
+  const { replyTo = null } = options;
+  const sender = await snapshotSenderName(senderUid);
+  const preview = contact?.contactName || contact?.displayName || contact?.name || "Contact";
+  await addDoc(collection(db, "chats", chatId, "messages"), {
+    senderId: senderUid,
+    senderName: sender.senderName,
+    senderUsername: sender.senderUsername,
+    type: "contact",
+    text: null,
+    mediaURL: null,
+    mediaThumbURL: null,
+    mediaDurationSeconds: null,
+    mediaSizeBytes: null,
+    mediaExpiresAt: null,
+    mediaExpired: false,
+    mediaSavedBy: [],
+    fileName: null,
+    fileExtension: null,
+    fileSizeBytes: null,
+    gifURL: null,
+    gifSourceProvider: null,
+    scheduledFor: null,
+    isScheduled: false,
+    sentAt: serverTimestamp(),
+    deliveredTo: [],
+    readBy: [],
+    deletedForEveryone: false,
+    deletedForSelf: [],
+    editedAt: null,
+    editHistory: [],
+    editWindowExpiresAt: null,
+    disappearing: null,
+    screenshotDetected: false,
+    replyTo,
+    reactions: {},
+    poll: null,
+    statusRef: null,
+    contactUid: contact?.uid || null,
+    contactName: preview,
+    contactUsername: contact?.username || contact?.contactUsername || null,
+    contactPhotoURL: contact?.photoURL || contact?.contactPhotoURL || null,
+  });
+
+  const chatRef = doc(db, "chats", chatId);
+  await updateDoc(chatRef, {
+    lastMessage: { text: `📇 ${preview}`, senderId: senderUid, sentAt: serverTimestamp(), type: "contact" },
+  });
+  await incrementUnreadCounts(chatId, otherParticipants);
+}
+
 async function incrementUnreadCounts(chatId, otherParticipants) {
   const ref = doc(db, "chats", chatId);
   const snap = await getDoc(ref);
