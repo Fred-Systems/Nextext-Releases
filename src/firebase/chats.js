@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   collection, query, where, orderBy, onSnapshot, doc, setDoc, addDoc,
-  serverTimestamp, updateDoc, arrayUnion, arrayRemove, getDoc, getDocs, writeBatch, deleteField, deleteDoc,
+  serverTimestamp, updateDoc, arrayUnion, arrayRemove, getDoc, getDocs, writeBatch, deleteField, deleteDoc, increment,
 } from "firebase/firestore";
 import { db } from "./config";
 import { deleteChatFile } from "../supabase/media";
@@ -243,6 +243,98 @@ export async function sendContactMessage(chatId, senderUid, contact, otherPartic
     lastMessage: { text: `📇 ${preview}`, senderId: senderUid, sentAt: serverTimestamp(), type: "contact" },
   });
   await incrementUnreadCounts(chatId, otherParticipants);
+}
+
+// Bumps the forwarded-count on the ORIGINAL message every time a copy of it is
+// sent into another chat. Server rules only allow this single key to change.
+export async function incrementForwardedCount(sourceChatId, sourceMid) {
+  if (!sourceChatId || !sourceMid) return;
+  try {
+    await updateDoc(doc(db, "chats", sourceChatId, "messages", sourceMid), {
+      forwardedCount: increment(1),
+    });
+  } catch { /* rules/transient — count is best-effort */ }
+}
+
+// Forwards a copy of `sourceMsg` into targetChatId, stamped with a
+// `forwardedFrom` pointer so the receiver sees a "Forwarded" badge. Keeps every
+// type-specific field so images/videos/voice/location/contact render exactly
+// like the original. Returns true on success.
+export async function sendForwardedMessage(targetChatId, senderUid, sourceMsg, otherParticipants) {
+  const sender = await snapshotSenderName(senderUid);
+  const { type } = sourceMsg;
+
+  const payload = {
+    senderId: senderUid,
+    senderName: sender.senderName,
+    senderUsername: sender.senderUsername,
+    type,
+    text: sourceMsg.text || null,
+    mediaURL: sourceMsg.mediaURL || null,
+    mediaThumbURL: sourceMsg.mediaThumbURL || null,
+    mediaDurationSeconds: sourceMsg.mediaDurationSeconds || null,
+    mediaSizeBytes: sourceMsg.mediaSizeBytes || null,
+    mediaPath: sourceMsg.mediaPath || null,
+    mediaExpiresAt: sourceMsg.mediaExpiresAt || null,
+    mediaExpired: false,
+    mediaSavedBy: [],
+    fileName: sourceMsg.fileName || null,
+    fileExtension: sourceMsg.fileExtension || null,
+    fileSizeBytes: sourceMsg.fileSizeBytes || null,
+    gifURL: sourceMsg.gifURL || null,
+    gifSourceProvider: sourceMsg.gifSourceProvider || null,
+    scheduledFor: null,
+    isScheduled: false,
+    sentAt: serverTimestamp(),
+    deliveredTo: [],
+    readBy: [],
+    deletedForEveryone: false,
+    deletedForSelf: [],
+    editedAt: null,
+    editHistory: [],
+    editWindowExpiresAt: null,
+    disappearing: null,
+    screenshotDetected: false,
+    replyTo: null,
+    reactions: {},
+    poll: null,
+    statusRef: null,
+    // Forward stamp — the receiver uses this to render the "Forwarded" badge.
+    forwardedFrom: { mid: sourceMsg.id, chatId: sourceMsg.sourceChatId || null, at: Date.now() },
+  };
+
+  if (type === "location") {
+    payload.lat = sourceMsg.lat || null;
+    payload.lng = sourceMsg.lng || null;
+    payload.label = sourceMsg.label || null;
+    payload.accuracy = sourceMsg.accuracy || null;
+    payload.liveUntil = null; // never forward live-location continuation
+  }
+  if (type === "contact") {
+    payload.contactUid = sourceMsg.contactUid || null;
+    payload.contactName = sourceMsg.contactName || null;
+    payload.contactUsername = sourceMsg.contactUsername || null;
+    payload.contactPhotoURL = sourceMsg.contactPhotoURL || null;
+  }
+  if (sourceMsg.transcript) payload.transcript = sourceMsg.transcript;
+
+  await addDoc(collection(db, "chats", targetChatId, "messages"), payload);
+
+  let preview;
+  if (type === "text") preview = sourceMsg.text || "Message";
+  else if (type === "image") preview = "📷 Photo";
+  else if (type === "video") preview = "🎥 Video";
+  else if (type === "voice") preview = "🎤 Voice note";
+  else if (type === "file") preview = "📄 File";
+  else if (type === "location") preview = "📍 Location";
+  else if (type === "contact") preview = `📇 ${payload.contactName || "Contact"}`;
+  else preview = "Message";
+
+  await updateDoc(doc(db, "chats", targetChatId), {
+    lastMessage: { text: preview, senderId: senderUid, sentAt: serverTimestamp(), type },
+  });
+  await incrementUnreadCounts(targetChatId, otherParticipants);
+  return true;
 }
 
 async function incrementUnreadCounts(chatId, otherParticipants) {

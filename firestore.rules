@@ -157,7 +157,9 @@ service cloud.firestore {
         request.auth.uid in resource.data.participants;
 
       match /messages/{messageId} {
-        allow read: if isChatParticipant(chatId);
+        // Admins can read any chat's messages — needed for the per-user
+        // statistics view, since count queries respect the same read rules.
+        allow read: if isChatParticipant(chatId) || isAdmin();
         allow create: if isChatParticipant(chatId) && notBanned() && underDailyMessageLimit() &&
           (request.resource.data.senderId == request.auth.uid ||
            request.resource.data.senderId == 'nextext-ai-system' ||
@@ -174,6 +176,9 @@ service cloud.firestore {
           (resource.data.senderId == request.auth.uid && withinEditDeleteWindows()) ||
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['reactions', 'readBy', 'deliveredTo', 'deletedForSelf', 'poll',
+                      // forwarded-count is bumped by any participant when the
+                      // message gets forwarded to another chat
+                      'forwardedCount',
                       // voice-note transcription (additive — any participant can
                       // transcribe a note they can hear)
                       'transcript',
@@ -247,6 +252,20 @@ service cloud.firestore {
     match /aiRequests/{docId} {
       allow create: if isSignedIn();
       allow read, write, delete: if isAdmin();
+    }
+
+    // ── Group AI injection requests: a group admin asks the NexText admin to
+    // inject NexText AI into their group. The group admin (who owns the chat
+    // being requested) can create/read/cancel; the NexText admin approves or
+    // rejects (which is what actually injects/evicts the AI). ──
+    match /aiGroupRequests/{chatId} {
+      allow read: if isAdmin() || (isSignedIn() && isGroupAdmin(chatId));
+      allow create: if isSignedIn() && isGroupAdmin(chatId) &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.requestedBy == request.auth.uid &&
+        request.resource.data.chatId == chatId;
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && isGroupAdmin(chatId));
     }
 
     // ── AI injected in groups: allow the AI system UID to write messages

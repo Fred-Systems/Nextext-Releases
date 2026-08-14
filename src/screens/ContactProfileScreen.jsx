@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Ban, Flag, FileText, Camera, X, UserPlus } from "lucide-react";
+import { ChevronLeft, Ban, Flag, FileText, Camera, X, UserPlus, BarChart2 } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { doc, onSnapshot, updateDoc, collection, query, orderBy } from "firebase/firestore";
 import { addDoc, serverTimestamp } from "firebase/firestore";
@@ -15,6 +15,7 @@ import { isMediaExpired, sendContactMessage, getOrCreateDirectChat } from "../fi
 import { useContacts } from "../firebase/contacts";
 import { AI_CONTACT_UID } from "../firebase/ai";
 import ContactSharePicker from "../components/ContactSharePicker";
+import { getUserMessageStats, formatDuration, formatBytes, formatActiveTime } from "../firebase/stats";
 
 const LOCAL_OVERRIDE_KEY = "nextext_contact_photo_overrides";
 
@@ -73,10 +74,26 @@ function useSharedMedia(myUid, otherUid, tab) {
   return { items, loading };
 }
 
-export default function ContactProfileScreen({ myUid, otherUid, contact, onBack, onOpenStatus }) {
+export default function ContactProfileScreen({ myUid, otherUid, contact, onBack, onOpenStatus, isAdmin = false }) {
   const { t } = useTheme();
   const globalSettings = useGlobalSettings();
   const isSelfProfile = otherUid === myUid;
+  const [showStats, setShowStats] = useState(false);
+  const [stats, setStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState(false);
+
+  const loadStats = async () => {
+    if (!otherUid) return;
+    setStatsLoading(true);
+    setStatsError(false);
+    setStats(null);
+    try {
+      const s = await getUserMessageStats(otherUid);
+      setStats(s);
+    } catch { setStatsError(true); }
+    setStatsLoading(false);
+  };
   const otherStatuses = useStatuses(isSelfProfile ? [] : [otherUid]);
   const hasOtherActiveStatus = otherStatuses.length > 0;
   const viewedMap = getStoredViewed();
@@ -301,7 +318,7 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
             </div>
           )}
           {!isSelfProfile && !isAIContact && (
-            <div style={{ marginTop: 14, padding: "0 16px" }}>
+            <div style={{ marginTop: 14, padding: "0 16px", display: "flex", flexDirection: "column", gap: 8 }}>
               <div
                 onClick={() => setShowContactShare(true)}
                 style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 12, border: `1px solid ${t.primary}`, background: "transparent", color: t.primary, fontSize: 14, fontWeight: 700, cursor: "pointer" }}
@@ -309,6 +326,15 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
                 <UserPlus size={17} />
                 {shareSent ? "Contact shared ✓" : "Share Contact"}
               </div>
+              {isAdmin && (
+                <div
+                  onClick={() => { loadStats(); setShowStats(true); }}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 12, border: `1px solid ${t.border}`, background: t.surface, color: t.text, fontSize: 14, fontWeight: 700, cursor: "pointer" }}
+                >
+                  <BarChart2 size={17} color={t.primary} />
+                  Statistics
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -424,6 +450,79 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
           onClose={() => setShowContactShare(false)}
           onShare={shareThisContact}
         />
+      )}
+      {showStats && (
+        <div onClick={() => setShowStats(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147481500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: t.surface, borderRadius: 16, padding: 20, maxWidth: 350, width: "100%", maxHeight: "85%", overflowY: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <div style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Statistics</div>
+              <X size={20} color={t.textMuted} onClick={() => setShowStats(false)} style={{ cursor: "pointer" }} />
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 14 }}>{displayName} — messages across every chat they're in.</div>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <div style={{ flex: 1, background: t.primaryLight, borderRadius: 12, padding: "12px 10px", textAlign: "center" }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: t.primary, lineHeight: 1.1 }}>{statsLoading ? "…" : statsError ? "—" : stats?.total ?? "—"}</div>
+                <div style={{ fontSize: 11.5, color: t.textMuted, fontWeight: 600, marginTop: 3 }}>total messages</div>
+              </div>
+              <div style={{ flex: 1, background: t.bg, borderRadius: 12, padding: "12px 10px", textAlign: "center", border: `1px solid ${t.border}` }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: t.text, lineHeight: 1.1 }}>{statsLoading ? "…" : statsError ? "—" : stats?.chats ?? "—"}</div>
+                <div style={{ fontSize: 11.5, color: t.textMuted, fontWeight: 600, marginTop: 3 }}>chats</div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <div style={{ flex: 1, background: t.bg, borderRadius: 12, padding: "10px 8px", textAlign: "center", border: `1px solid ${t.border}` }}>
+                <div style={{ fontSize: 17, fontWeight: 800, color: t.primary, lineHeight: 1.1 }}>{statsLoading ? "…" : statsError ? "—" : stats?.sent ?? "—"}</div>
+                <div style={{ fontSize: 10.5, color: t.textMuted, fontWeight: 600, marginTop: 2 }}>sent</div>
+              </div>
+              <div style={{ flex: 1, background: t.bg, borderRadius: 12, padding: "10px 8px", textAlign: "center", border: `1px solid ${t.border}` }}>
+                <div style={{ fontSize: 17, fontWeight: 800, color: t.text, lineHeight: 1.1 }}>{statsLoading ? "…" : statsError ? "—" : stats?.received ?? "—"}</div>
+                <div style={{ fontSize: 10.5, color: t.textMuted, fontWeight: 600, marginTop: 2 }}>received</div>
+              </div>
+            </div>
+
+            {[["text", "Text messages"], ["image", "Photos"], ["video", "Videos"], ["voice", "Voice notes"], ["location", "Locations"], ["file", "Files"], ["contact", "Contact cards"]].map(([key, label]) => {
+              const b = stats?.perType?.[key] || { sent: 0, recv: 0 };
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 2px", borderTop: `1px solid ${t.border}` }}>
+                  <span style={{ flex: 1, fontSize: 13.5, color: t.text }}>{label}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: t.primary }}>↑{statsLoading ? "…" : statsError ? "—" : b.sent}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted }}>↓{statsLoading ? "…" : statsError ? "—" : b.recv}</span>
+                </div>
+              );
+            })}
+
+            <div style={{ fontWeight: 700, fontSize: 12, color: t.textMuted, marginTop: 10, paddingTop: 10, borderTop: `1px solid ${t.border}` }}>Media playtime (sent / received)</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 2px" }}>
+              <span style={{ flex: 1, fontSize: 13.5, color: t.text }}>Videos</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.primary }}>{statsError ? "—" : formatDuration(stats?.mediaDurationMs?.video?.sent || 0)}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted }}>/</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted }}>{statsError ? "—" : formatDuration(stats?.mediaDurationMs?.video?.recv || 0)}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 2px" }}>
+              <span style={{ flex: 1, fontSize: 13.5, color: t.text }}>Voice notes</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.primary }}>{statsError ? "—" : formatDuration(stats?.mediaDurationMs?.voice?.sent || 0)}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted }}>/</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted }}>{statsError ? "—" : formatDuration(stats?.mediaDurationMs?.voice?.recv || 0)}</span>
+            </div>
+
+            <div style={{ fontWeight: 700, fontSize: 12, color: t.textMuted, marginTop: 10, paddingTop: 10, borderTop: `1px solid ${t.border}` }}>Media data (sent / received)</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 2px" }}>
+              <span style={{ flex: 1, fontSize: 13.5, color: t.text }}>All photos, videos, notes &amp; files</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.primary }}>{statsError ? "—" : formatBytes(stats?.mediaSizeBytes?.sent || 0)}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted }}>/</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted }}>{statsError ? "—" : formatBytes(stats?.mediaSizeBytes?.recv || 0)}</span>
+            </div>
+
+            {!statsError && !statsLoading && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 8 }}>Time in app: {formatActiveTime(otherUserDoc?.activeTimeMs || 0)}</div>}
+
+            {statsError && <div style={{ fontSize: 12.5, color: "#FF3B30", marginTop: 8 }}>Couldn't load stats — check your connection.</div>}
+            <button onClick={loadStats} disabled={statsLoading} style={{ marginTop: 14, width: "100%", padding: "11px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: statsLoading ? "wait" : "pointer" }}>
+              {statsLoading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

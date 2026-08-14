@@ -1,9 +1,21 @@
 import { useState, useEffect } from "react";
-import { doc, getDoc, setDoc, onSnapshot, collection, query, where, orderBy, getDocs, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, onSnapshot, collection, query, where, orderBy, getDocs, addDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "./config";
 
 export const AI_CONTACT_UID = "nextext-ai-system";
 export const AI_CHAT_PREFIX = "ai_";
+
+// Shared identity every NexText AI persona carries, so no matter which
+// personality is active the assistant still knows what/who it is and never
+// leaks information about the developer's chess rating or handle.
+const AI_IDENTITY_BLOCK =
+  "You are NexText AI, the official AI assistant of the NexText app. " +
+  "NexText AI has multiple persona options and can summarize chats when asked. " +
+  "The developer of NexText goes by the handle Fred-Systems and was born in 2007. " +
+  "Fred-Systems is a chess player. If the user asks anything about his chess skill, " +
+  "rating, title, or chess handle, answer that Fred-Systems prefers to keep his chess " +
+  "rating and chess handle private, so you won't share any details about them besides " +
+  "that he plays chess.";
 
 export const PERSONALITIES = {
   default: { label: "Default General Assistant", icon: "🤖", systemPrompt: "You are a standard, helpful, friendly, and objective general-purpose virtual companion assistant. Be conversational, accurate, and concise." },
@@ -34,12 +46,12 @@ const AI_CONTACT_OBJ = {
     displayName: "NexText AI",
     photoURL: null,
     isAI: true,
-    about: "Your intelligent chat companion powered by Groq. I can help with questions, have fun conversations with different personalities, and analyze your chats when AI Context is enabled.",
+    about: "I'm NexText AI, the official AI assistant of NexText — powered by Groq. I can help with questions, take on multiple personas, and summarize your chats when asked.",
     capabilities: [
-      "General Q&A and research assistance",
+      "Official AI assistant of the NexText app",
       "8 unique personalities (Debater, Trump, Sarcastic, Robot, Shakespeare, Old Grump, Typical AI, Default)",
-      "Image analysis with Llama 4 Scout",
       "Chat summarization and context analysis",
+      "Image analysis with Llama 4 Scout",
       "Powered by OpenAI GPT-OSS + Llama 4 Scout via Groq",
     ],
   },
@@ -49,20 +61,40 @@ const AI_CONTACT_OBJ = {
 
 export function getAIContact() { return AI_CONTACT_OBJ; }
 export function getAIChatId(userUid) { return `${AI_CHAT_PREFIX}${userUid}`; }
-export function getSystemPrompt(personalityKey) { return PERSONALITIES[personalityKey]?.systemPrompt || PERSONALITIES.default.systemPrompt; }
+export function getSystemPrompt(personalityKey) { return `${AI_IDENTITY_BLOCK}\n\n${PERSONALITIES[personalityKey]?.systemPrompt || PERSONALITIES.default.systemPrompt}`; }
+
+// ── Groq chat model selection (admin-controlled) ──
+// The admin can pin a specific Groq chat model in the Admin Dashboard; the
+// "default toggle" switches between the pinned model and the app default.
+export const DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b";
+export const GROQ_MODEL_OPTIONS = [
+  { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B (default)" },
+  { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+  { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile" },
+  { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant" },
+  { id: "meta-llama/llama-4-scout-17b-16e-instruct", label: "Llama 4 Scout 17B" },
+  { id: "gemma2-9b-it", label: "Gemma 2 9B" },
+];
+
+// The model actually used for a request: the app default unless the admin has
+// switched the default toggle off and pinned a specific model.
+export function getEffectiveModel(config) {
+  if (config?.useDefaultModel !== false) return DEFAULT_GROQ_MODEL;
+  return config?.groqModel || DEFAULT_GROQ_MODEL;
+}
 
 const SYSTEM_CONFIG_REF = doc(db, "config", "system");
 
 export async function ensureSystemConfig() {
   const snap = await getDoc(SYSTEM_CONFIG_REF);
   if (!snap.exists()) {
-    await setDoc(SYSTEM_CONFIG_REF, { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, groqApiKey: "" });
+    await setDoc(SYSTEM_CONFIG_REF, { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true });
   }
 }
 
 export async function getSystemConfig() {
   const snap = await getDoc(SYSTEM_CONFIG_REF);
-  return snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, groqApiKey: "" };
+  return snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true };
 }
 
 export async function setSystemConfig(patch, adminUid) {
@@ -142,7 +174,7 @@ function parseRateLimitError(errText, status) {
   };
 }
 
-async function callGroq(apiKey, messages, temperature = 0.7) {
+async function callGroq(apiKey, messages, temperature = 0.7, model = DEFAULT_GROQ_MODEL) {
   const key = (apiKey || "").trim();
   if (!key) throw new Error("AI is not configured. No API key found in Firestore.");
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -152,7 +184,7 @@ async function callGroq(apiKey, messages, temperature = 0.7) {
       "Authorization": `Bearer ${key}`,
     },
     body: JSON.stringify({
-      model: "openai/gpt-oss-20b",
+      model,
       messages,
       temperature,
       max_tokens: 1024,
@@ -175,7 +207,7 @@ async function callGroq(apiKey, messages, temperature = 0.7) {
 }
 
 export async function sendAIMessage(userUid, messageText, chatHistory = []) {
-  const key = await getApiKeyFresh();
+  const config = await getSystemConfigForCall();
   const personalityKey = await getPersonalityKey(userUid);
   const messages = [
     { role: "system", content: getSystemPrompt(personalityKey) },
@@ -184,11 +216,11 @@ export async function sendAIMessage(userUid, messageText, chatHistory = []) {
       .filter((m) => m.content),
     { role: "user", content: messageText },
   ];
-  return callGroq(key, messages, 0.7);
+  return callGroq(config.key, messages, 0.7, config.model);
 }
 
 export async function sendAIContextMessage(userUid, question, chatTranscript) {
-  const key = await getApiKeyFresh();
+  const config = await getSystemConfigForCall();
   const personalityKey = await getPersonalityKey(userUid);
   const messages = [
     {
@@ -200,11 +232,12 @@ export async function sendAIContextMessage(userUid, question, chatTranscript) {
       content: `Here is the chat transcript:\n\n${chatTranscript}\n\nMy question: ${question}`,
     },
   ];
-  return callGroq(key, messages, 0.5);
+  return callGroq(config.key, messages, 0.5, config.model);
 }
 
-// Read API key fresh from Firestore on every call (no caching)
-async function getApiKeyFresh() {
+// Read API key + effective chat model fresh from Firestore on every call (no
+// caching), validating the global AI switches at the same time.
+async function getSystemConfigForCall() {
   let config;
   try {
     config = await getSystemConfig();
@@ -215,6 +248,12 @@ async function getApiKeyFresh() {
   if (config?.hideAiEverywhere) throw new Error("AI has been removed by the administrator.");
   const key = (config?.groqApiKey || "").trim();
   if (!key) throw new Error("AI is not configured. No API key found in Firestore /config/system.");
+  return { key, model: getEffectiveModel(config) };
+}
+
+// Read API key fresh from Firestore on every call (no caching)
+async function getApiKeyFresh() {
+  const { key } = await getSystemConfigForCall();
   return key;
 }
 
@@ -391,7 +430,7 @@ export function shouldTriggerGroupAI(messageText) {
 }
 
 export async function sendGroupAIMessage(userUid, chatId, messageText, chatHistory = []) {
-  const key = await getApiKeyFresh();
+  const config = await getSystemConfigForCall();
   const personalityKey = await getPersonalityKey(userUid);
   const contextMessages = chatHistory
     .slice(-20)
@@ -408,12 +447,12 @@ export async function sendGroupAIMessage(userUid, chatId, messageText, chatHisto
     ...contextMessages,
     { role: "user", content: messageText },
   ];
-  return callGroq(key, messages, 0.6);
+  return callGroq(config.key, messages, 0.6, config.model);
 }
 
 // ── Enhanced Transcript Context Summarizer ──
 export async function sendAIContextMessageWithActiveChat(userUid, question, chatTranscript, activeChatMessages = []) {
-  const key = await getApiKeyFresh();
+  const config = await getSystemConfigForCall();
   const personalityKey = await getPersonalityKey(userUid);
   let contextBlock = "";
   if (activeChatMessages && activeChatMessages.length > 0) {
@@ -433,5 +472,116 @@ export async function sendAIContextMessageWithActiveChat(userUid, question, chat
       content: `Here is the chat transcript:\n\n${chatTranscript}${contextBlock}\n\nMy question: ${question}`,
     },
   ];
-  return callGroq(key, messages, 0.5);
+  return callGroq(config.key, messages, 0.5, config.model);
+}
+
+// ── Group AI Injection Requests ──
+// A group admin asks the NexText admin to inject NexText AI into their group.
+// The request doc lives at aiGroupRequests/{chatId} with status pending /
+// approved / rejected. Admins approve from the Admin Dashboard; approving
+// adds the AI as a group participant and posts its first (intro) message.
+export async function requestGroupAI(chatId, chatName, uid, displayName) {
+  await setDoc(doc(db, "aiGroupRequests", chatId), {
+    chatId,
+    chatName: chatName || "Unnamed Group",
+    requestedBy: uid,
+    requestedByName: displayName || "unknown",
+    status: "pending",
+    requestedAt: serverTimestamp(),
+    handledBy: null,
+    handledAt: null,
+  }, { merge: true });
+}
+
+export async function cancelGroupAIRequest(chatId) {
+  await setDoc(doc(db, "aiGroupRequests", chatId), { status: "cancelled", handledAt: serverTimestamp() }, { merge: true });
+}
+
+const GROUP_AI_INTRO =
+  "👋 Hey everyone! I'm NexText AI, the official AI assistant of NexText, and I've just been added to this group. " +
+  "I'll jump in whenever a message starts with \"Hey NexText\" or ends with a question mark. Ask me anything!";
+
+export async function approveGroupAIRequest(request, adminUid) {
+  const chatId = request.chatId || request.id;
+  await updateDoc(doc(db, "aiGroupRequests", chatId), {
+    status: "approved",
+    handledBy: adminUid,
+    handledAt: serverTimestamp(),
+  });
+
+  const chatRef = doc(db, "chats", chatId);
+  const chatSnap = await getDoc(chatRef);
+  if (!chatSnap.exists()) return;
+  const participants = chatSnap.data().participants || [];
+  await updateDoc(chatRef, {
+    participants: participants.includes(AI_CONTACT_UID) ? participants : [...participants, AI_CONTACT_UID],
+    groupAIName: "NexText AI",
+    groupAIPersonality: chatSnap.data().groupAIPersonality || "default",
+    aiInjected: true,
+  });
+
+  // Post the AI's first message so it "pops up inside" the chat explaining how
+  // to talk to it. Written by the admin's client with the AI system sender id,
+  // which the message create rule already permits for group chats.
+  const msgRef = collection(db, "chats", chatId, "messages");
+  await addDoc(msgRef, {
+    senderId: AI_CONTACT_UID, senderName: "NexText AI", type: "text", text: GROUP_AI_INTRO,
+    mediaURL: null, mediaThumbURL: null, mediaDurationSeconds: null, mediaSizeBytes: null,
+    mediaExpiresAt: null, mediaExpired: false, mediaSavedBy: [],
+    fileName: null, fileExtension: null, fileSizeBytes: null,
+    gifURL: null, gifSourceProvider: null,
+    scheduledFor: null, isScheduled: false,
+    sentAt: serverTimestamp(), deliveredTo: [], readBy: [],
+    deletedForEveryone: false, deletedForSelf: [],
+    editedAt: null, editHistory: [], editWindowExpiresAt: null,
+    disappearing: null, screenshotDetected: false, replyTo: null,
+    reactions: {}, poll: null, statusRef: null,
+  });
+  await updateDoc(chatRef, {
+    lastMessage: { text: GROUP_AI_INTRO.slice(0, 80), senderId: AI_CONTACT_UID, sentAt: serverTimestamp(), type: "text" },
+  }).catch(() => {});
+}
+
+export async function rejectGroupAIRequest(request, adminUid) {
+  await updateDoc(doc(db, "aiGroupRequests", request.chatId || request.id), {
+    status: "rejected",
+    handledBy: adminUid,
+    handledAt: serverTimestamp(),
+  });
+}
+
+// Remove NexText AI from a group (called by a group admin after injection, or
+// by the NexText admin). The group doc update is allowed since group admins are
+// chat participants and only the participants field is touched.
+export async function removeGroupAI(chatId) {
+  const chatRef = doc(db, "chats", chatId);
+  const chatSnap = await getDoc(chatRef);
+  if (!chatSnap.exists()) return;
+  const participants = (chatSnap.data().participants || []).filter((u) => u !== AI_CONTACT_UID);
+  await updateDoc(chatRef, { participants });
+  await updateDoc(doc(db, "aiGroupRequests", chatId), { status: "removed", handledAt: serverTimestamp() }).catch(() => {});
+}
+
+export function useGroupAIRequestsHook() {
+  const [requests, setRequests] = useState([]);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "aiGroupRequests"), (snap) =>
+      setRequests(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      () => setRequests([])
+    );
+    return unsub;
+  }, []);
+  return requests;
+}
+
+export function useGroupAIRequestHook(chatId) {
+  const [request, setRequest] = useState(null);
+  useEffect(() => {
+    if (!chatId) return;
+    const unsub = onSnapshot(doc(db, "aiGroupRequests", chatId), (snap) => {
+      setRequest(snap.exists() ? { id: snap.id, ...snap.data() } : null);
+    }, () => setRequest(null));
+    return unsub;
+  }, [chatId]);
+  return request;
 }

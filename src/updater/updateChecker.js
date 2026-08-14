@@ -93,6 +93,25 @@ export async function getLatestApkUrl() {
   }
 }
 
+// Total downloads of the latest published APK (GitHub tracks a per-asset
+// download_count). Used on the login page; hides itself if the admin disables
+// the counter. Returns null when the count can't be fetched.
+export async function getApkDownloadCount() {
+  try {
+    const res = await fetch(`${GITHUB_API}?per_page=1`, {
+      headers: { Accept: "application/vnd.github.v3+json" },
+    });
+    if (!res.ok) return null;
+    const releases = await res.json();
+    const release = (Array.isArray(releases) ? releases : [])
+      .find((r) => !r.draft && !r.prerelease && (r.assets || []).some((a) => a.name && a.name.endsWith(".apk")));
+    const apk = (release?.assets || []).find((a) => a.name && a.name.endsWith(".apk"));
+    return typeof apk?.download_count === "number" ? apk.download_count : null;
+  } catch {
+    return null;
+  }
+}
+
 export function openDownloadUrl(url) {
   if (!url) return;
   // On Android, window.open("_system") can silently no-op (returns a truthy

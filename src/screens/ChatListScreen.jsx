@@ -179,6 +179,33 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   useEffect(() => {
     try { localStorage.setItem("nextext_contact_sort", contactSort); } catch {}
   }, [contactSort]);
+
+  const CHAT_SORT_OPTIONS = [
+    { key: "recent", label: "Most recent" },
+    { key: "unread", label: "Unread first" },
+    { key: "alpha", label: "Alphabetical" },
+    { key: "favorites", label: "Favorites first" },
+  ];
+  const [chatSort, setChatSort] = useState(() => {
+    try {
+      const v = localStorage.getItem("nextext_chat_sort");
+      return v && CHAT_SORT_OPTIONS.some((o) => o.key === v) ? v : "recent";
+    } catch { return "recent"; }
+  });
+  const [showChatSortMenu, setShowChatSortMenu] = useState(false);
+  useEffect(() => {
+    try { localStorage.setItem("nextext_chat_sort", chatSort); } catch {}
+  }, [chatSort]);
+  useEffect(() => {
+    const handler = () => {
+      try {
+        const v = localStorage.getItem("nextext_chat_sort");
+        if (v && CHAT_SORT_OPTIONS.some((o) => o.key === v)) setChatSort(v);
+      } catch {}
+    };
+    window.addEventListener("nextext-chat-sort-change", handler);
+    return () => window.removeEventListener("nextext-chat-sort-change", handler);
+  }, []);
   // Settings can change the sort while the chat list is already mounted —
   // listen for the custom event and pick up the new value.
   useEffect(() => {
@@ -325,6 +352,22 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       }
     }
     return base;
+  })();
+
+  const chatSortTime = (c) => c.lastMessage?.sentAt?.toMillis?.() || 0;
+  const sortedChats = (() => {
+    const list = [...tabFiltered];
+    switch (chatSort) {
+      case "alpha":
+        return list.sort((a, b) => (chatDisplayName(a) || "").localeCompare(chatDisplayName(b) || ""));
+      case "unread":
+        return list.sort((a, b) => (b.unreadCount?.[myUid] || 0) - (a.unreadCount?.[myUid] || 0) || chatSortTime(b) - chatSortTime(a));
+      case "favorites":
+        return list.sort((a, b) => ((b.favoritedBy || []).includes(myUid) ? 1 : 0) - ((a.favoritedBy || []).includes(myUid) ? 1 : 0) || chatSortTime(b) - chatSortTime(a));
+      case "recent":
+      default:
+        return list.sort((a, b) => chatSortTime(b) - chatSortTime(a));
+    }
   })();
 
   const openChatRow = (chat) => {
@@ -582,6 +625,24 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             </div>
           ))}
         </div>
+        <div style={{ position: "relative", flexShrink: 0 }}>
+          <button onClick={() => setShowChatSortMenu((v) => !v)} title="Sort chats" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <ArrowDownWideNarrow size={16} color={t.primary} />
+          </button>
+          {showChatSortMenu && (
+            <>
+              <div onClick={() => setShowChatSortMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 11 }} />
+              <div style={{ position: "absolute", right: 0, top: 34, zIndex: 12, background: t.surface, borderRadius: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.2)", padding: "6px 0", minWidth: 170 }}>
+                {CHAT_SORT_OPTIONS.map((o) => (
+                  <div key={o.key} onClick={() => { setChatSort(o.key); setShowChatSortMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", fontSize: 13.5, fontWeight: chatSort === o.key ? 700 : 500, color: chatSort === o.key ? t.primary : t.text, cursor: "pointer" }}>
+                    {chatSort === o.key && <span style={{ width: 14, color: t.primary }}>✓</span>}
+                    <span style={{ marginLeft: chatSort === o.key ? 0 : 22 }}>{o.label}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <div onClick={() => setShowNewListModal(true)} style={{ width: 30, height: 30, borderRadius: "50%", background: t.primary, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
           <Plus size={16} color="#fff" />
         </div>
@@ -648,7 +709,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
                 {effectiveTab === "all" ? "No chats here yet." : `No ${effectiveTab} chats.`}
               </div>
             )}
-            {tabFiltered.map(renderChatRow)}
+            {sortedChats.map(renderChatRow)}
           </>
         )}
         {aiApproved && effectiveTab === "all" && (

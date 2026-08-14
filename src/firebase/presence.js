@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { doc, onSnapshot, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, serverTimestamp, increment } from "firebase/firestore";
 import { db } from "./config";
 
 const ONLINE_THRESHOLD_MS = 60 * 1000; // treat "online" as lastSeen within the last 60s
@@ -30,6 +30,43 @@ export function usePresenceHeartbeat(myUid) {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("beforeunload", handleUnload);
+    };
+  }, [myUid]);
+}
+
+// Tracks cumulative active time spent in the app (foreground + visible) and
+// accumulates it into users/{uid}.activeTimeMs via Firestore increment() every
+// ~10s of active use, flushing the remainder on visibility change / unload.
+// Drives the "time spent in app" stat in the statistics cards.
+export function useAppUsageTracker(myUid) {
+  useEffect(() => {
+    if (!myUid) return;
+    const FLUSH_MS = 10_000;
+    let pending = 0;
+    let lastTick = Date.now();
+
+    const flush = (force) => {
+      const now = Date.now();
+      if (document.visibilityState === "visible" && !document.hidden) {
+        pending += now - lastTick;
+      }
+      lastTick = now;
+      if (pending >= FLUSH_MS || (force && pending >= 1000)) {
+        const toCommit = Math.floor(pending);
+        updateDoc(doc(db, "users", myUid), { activeTimeMs: increment(toCommit) }).catch(() => {});
+        pending -= toCommit;
+      }
+    };
+
+    const interval = setInterval(flush, FLUSH_MS);
+    const onVisibility = () => flush(false);
+    const onUnload = () => flush(true);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("beforeunload", onUnload);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("beforeunload", onUnload);
     };
   }, [myUid]);
 }

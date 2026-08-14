@@ -6,7 +6,7 @@ import { db } from "../firebase/config";
 import { AI_CONTACT_UID, PERSONALITIES } from "../firebase/ai";
 import { getOrCreateDirectChat } from "../firebase/chats";
 import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings } from "../firebase/config-settings";
-import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests } from "../firebase/ai";
+import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest } from "../firebase/ai";
 
 export default function AdminDashboard({ myUid, onBack }) {
   const { t } = useTheme();
@@ -34,6 +34,7 @@ export default function AdminDashboard({ myUid, onBack }) {
   const settings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
   const aiRequests = useAIRequestsHook();
+  const groupAIRequests = useGroupAIRequestsHook();
 
   useEffect(() => { ensureGlobalSettingsExist(); ensureSystemConfig(); }, []);
 
@@ -753,7 +754,55 @@ export default function AdminDashboard({ myUid, onBack }) {
                   {sysConfig?.tourDisabled ? "Welcome tour: DISABLED globally" : "Welcome tour: enabled"}
                 </div>
                 <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>
-                  When disabled, new users never see the first-run tour. Users can still replay it manually from Settings.
+                  When disabled, new users never see the first-run tour and the "Replay welcome tour" option is hidden from Settings.
+                </div>
+              </div>
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideForwardedCount;
+              updateGlobalSettings({ hideForwardedCount: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginTop: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideForwardedCount ? "#FF3B30" : t.primary, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideForwardedCount ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+                  {settings?.hideForwardedCount ? "Forwarded count: HIDDEN" : "Forwarded count: visible"}
+                </div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>
+                  When hidden, messages only ever show a plain "Forwarded" badge — never how many times they were forwarded.
+                </div>
+              </div>
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideDownloadCount;
+              updateGlobalSettings({ hideDownloadCount: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginTop: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideDownloadCount ? "#FF3B30" : t.primary, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideDownloadCount ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+                  {settings?.hideDownloadCount ? "APK download count: HIDDEN" : "APK download count: visible"}
+                </div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>
+                  When hidden, the login page stops showing how many times the Android APK was downloaded.
+                </div>
+              </div>
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideUserStats;
+              updateGlobalSettings({ hideUserStats: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginTop: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideUserStats ? "#FF3B30" : t.primary, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideUserStats ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+                  {settings?.hideUserStats ? "User statistics: HIDDEN" : "User statistics: visible"}
+                </div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>
+                  When hidden, the personal statistics section disappears from everyone's Settings. Admins can still see per-user stats.
                 </div>
               </div>
             </div>
@@ -803,6 +852,48 @@ export default function AdminDashboard({ myUid, onBack }) {
                 {settings?.hideTechStack ? "Tech Stack HIDDEN" : "Tech Stack Visible"}
               </span>
             </div>
+          </div>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Bot size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>NexText AI Model (Groq)</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Switch which Groq model NexText AI uses for chat. Keep the default toggle on to always use the built-in default model; turn it off to pin a specific model below.
+            </div>
+            <div onClick={() => {
+              const newVal = !sysConfig?.useDefaultModel;
+              setSystemConfig({ useDefaultModel: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.useDefaultModel !== false ? "#E5F9E7" : t.bg, cursor: "pointer", border: `1px solid ${t.border}` }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.useDefaultModel !== false ? "#28A745" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.useDefaultModel !== false ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+                {sysConfig?.useDefaultModel !== false ? "Using default model" : "Using custom model"}
+              </span>
+            </div>
+            {sysConfig?.useDefaultModel === false && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 4 }}>Pinned Groq model</div>
+                <select
+                  value={GROQ_MODEL_OPTIONS.some((o) => o.id === sysConfig?.groqModel) ? sysConfig.groqModel : GROQ_MODEL_OPTIONS[0].id}
+                  onChange={(e) => setSystemConfig({ groqModel: e.target.value, useDefaultModel: false }, myUid)}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, background: t.bg, color: t.text, cursor: "pointer" }}
+                >
+                  {GROQ_MODEL_OPTIONS.map((o) => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+                <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 6 }}>
+                  Active model: <strong>{GROQ_MODEL_OPTIONS.find((o) => o.id === sysConfig?.groqModel)?.label || sysConfig?.groqModel}</strong> — saved instantly on change.
+                </div>
+              </div>
+            )}
+            {sysConfig?.useDefaultModel !== false && (
+              <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 8 }}>
+                Active model: <strong>openai/gpt-oss-20b</strong> (default). Toggle off to pick a custom model.
+              </div>
+            )}
           </div>
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -859,6 +950,35 @@ export default function AdminDashboard({ myUid, onBack }) {
                   <CheckCircle size={14} /> Approved {r.approvedBy ? `by admin` : ""}
                 </div>
               )}
+            </div>
+          ))}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 24, marginBottom: 12 }}>
+            <Users size={18} color={t.primary} />
+            <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>Group AI Injection Requests</span>
+          </div>
+          {groupAIRequests.filter((r) => r.status === "pending").length === 0 && (
+            <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No group AI injection requests yet.</div>
+          )}
+          {groupAIRequests.filter((r) => r.status === "pending").map((r) => (
+            <div key={r.id} style={{ background: t.surface, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <div style={{ width: 36, height: 36, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Users size={16} color={t.primary} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{r.chatName || "Unnamed Group"}</div>
+                  <div style={{ fontSize: 11.5, color: t.textMuted }}>requested by {r.requestedByName} · {r.requestedAt?.toDate ? r.requestedAt.toDate().toLocaleString() : ""}</div>
+                </div>
+                <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 8, fontWeight: 700, background: "#FFF3CD", color: "#856404" }}>pending</span>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => approveGroupAIRequest(r, myUid)} style={{ flex: 1, padding: 9, borderRadius: 8, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 12.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  <CheckCircle size={14} /> Approve &amp; Inject
+                </button>
+                <button onClick={() => rejectGroupAIRequest(r, myUid)} style={{ flex: 1, padding: 9, borderRadius: 8, border: `1px solid ${t.border}`, background: t.bg, color: "#FF3B30", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+                  Reject
+                </button>
+              </div>
             </div>
           ))}
         </div>

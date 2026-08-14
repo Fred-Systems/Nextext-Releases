@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff } from "lucide-react";
+import { ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff, Forward } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import {
   useMessages, sendTextMessage, markChatRead, setTypingHeartbeat, reactToMessage,
@@ -9,6 +9,7 @@ import {
   toggleFavorite, setMute, clearMute, sendMediaMessage, toggleLocked, toggleArchive, deleteChatCompletely,
   isMediaExpired, setVoiceRecordingHeartbeat, clearVoiceRecordingStatus,
   sendLocationMessage, updateLiveLocation, sendContactMessage,
+  sendForwardedMessage, incrementForwardedCount,
 } from "../firebase/chats";
 import { getWallpaperForChat, setWallpaperForChat, fileToWallpaperDataUrl } from "../theme/wallpaper";
 import { usePresence, formatLastSeen } from "../firebase/presence";
@@ -28,6 +29,7 @@ import { useStatuses } from "../firebase/status";
 import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote } from "../firebase/ai";
 import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
 import ContactSharePicker from "../components/ContactSharePicker";
+import ForwardPicker from "../components/ForwardPicker";
 
 
 const VIEWED_KEY = "nextext_status_viewed";
@@ -465,6 +467,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [chatId, setChatId] = useState(initialChatId);
   const [input, setInput] = useState("");
   const [activeMsg, setActiveMsg] = useState(null);
+  const [forwardMsg, setForwardMsg] = useState(null);
+  const [forwardBusy, setForwardBusy] = useState(false);
   const [editingMsg, setEditingMsg] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
   const [theyTyping, setTheyTyping] = useState(false);
@@ -1072,6 +1076,38 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       previewType: activeMsg.type,
     });
     setActiveMsg(null);
+  };
+
+  const canForward = (m) => !!m && m.type !== "poll" && !m.deletedForEveryone && !(m.deletedForSelf || []).includes(myUid);
+
+  const handleForward = () => {
+    if (!activeMsg) return;
+    setForwardMsg(activeMsg);
+    setActiveMsg(null);
+  };
+
+  const handleForwardTo = async (targets) => {
+    if (!forwardMsg || !chatId || forwardBusy) return;
+    setForwardBusy(true);
+    let ok = 0;
+    let fail = 0;
+    for (const target of targets) {
+      try {
+        const targetChatId = await getOrCreateDirectChat(myUid, target.uid);
+        const source = { ...forwardMsg, sourceChatId: chatId };
+        await sendForwardedMessage(targetChatId, myUid, source, target.uid === myUid ? [] : [target.uid]);
+        await incrementForwardedCount(chatId, forwardMsg.id);
+        ok++;
+      } catch { fail++; }
+    }
+    setForwardBusy(false);
+    setForwardMsg(null);
+    if (ok > 0) {
+      setSendError(`↪️ Forwarded to ${ok} chat${ok === 1 ? "" : "s"}`);
+      setTimeout(() => setSendError(""), 2500);
+    } else if (fail > 0) {
+      setSendError("Forward failed — try again.");
+    }
   };
 
   const handleEdit = () => { if (!activeMsg) return; setEditingMsg(activeMsg); setInput(activeMsg.text || ""); setActiveMsg(null); setTimeout(autoResizeComposer, 0); };
@@ -2358,6 +2394,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   {isGroup && !isMine && !groupedWithPrev && (
                     <div onClick={(e) => { e.stopPropagation(); const memberInfo = { uid: m.senderId, name: m.senderName || memberNames[m.senderId] || "…" }; setContactCardMember(memberInfo); }} style={{ fontSize: 12, fontWeight: 700, color: t.primary, marginBottom: 2, cursor: "pointer" }}>{m.senderName || memberNames[m.senderId] || "…"}</div>
                   )}
+                  {(m.forwardedFrom || m.forwardedCount > 0) && (
+                    <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", opacity: 0.55, marginBottom: 2 }}>
+                      {m.forwardedFrom
+                        ? (m.forwardedCount > 0 && !globalSettings?.hideForwardedCount ? `Forwarded · ${m.forwardedCount}×` : "Forwarded")
+                        : (m.forwardedCount > 0 && !globalSettings?.hideForwardedCount ? `Forwarded ${m.forwardedCount} time${m.forwardedCount === 1 ? "" : "s"}` : "Forwarded")}
+                    </div>
+                  )}
                   {m.replyTo && (
                   <div style={{ background: m.senderId === myUid ? "rgba(255,255,255,0.15)" : t.primaryLight, borderLeft: `3px solid ${m.senderId === myUid ? "rgba(255,255,255,0.6)" : t.primary}`, borderRadius: 6, padding: "5px 8px", marginBottom: 6, fontSize: 12 }}>
                     <div style={{ fontWeight: 700, opacity: 0.85, fontSize: 11, marginBottom: 1 }}>
@@ -2720,6 +2763,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <span style={{ fontSize: 15, color: t.text }}>Copy text</span>
                 </div>
               )}
+              {canForward(activeMsg) && (
+                <div onClick={handleForward} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <Forward size={17} color={t.text} /><span style={{ fontSize: 15, color: t.text }}>Forward</span>
+                </div>
+              )}
               {activeMsg.senderId === myUid && activeMsg.type === "text" && canEdit && (
                 <div onClick={handleEdit} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <span style={{ fontSize: 15, color: t.text }}>Edit <span style={{ fontSize: 11.5, color: t.textMuted }}>(within 15 min)</span></span>
@@ -2746,6 +2794,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           mode="pick-contact"
           onClose={() => setShowContactShare(false)}
           onShare={(c) => { shareContactIntoChat(c); }}
+        />
+      )}
+      {forwardMsg && (
+        <ForwardPicker
+          t={t}
+          myUid={myUid}
+          contacts={convoContacts}
+          onClose={() => { if (!forwardBusy) setForwardMsg(null); }}
+          onForward={handleForwardTo}
         />
       )}
       {showSchedule && <ScheduleSendSheet t={t} onClose={() => setShowSchedule(false)} onSchedule={sendScheduled} />}

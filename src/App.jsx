@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
 import { createPortal } from "react-dom";
 import { ThemeProvider, useTheme, themes, ROTATE_INTERVALS } from "./theme/ThemeContext";
 import { useAuth } from "./firebase/useAuth";
-import { usePresenceHeartbeat } from "./firebase/presence";
+import { usePresenceHeartbeat, useAppUsageTracker } from "./firebase/presence";
 import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
 import { useContacts } from "./firebase/contacts";
 import { useChats, purgeExpiredChatMedia, markChatRead } from "./firebase/chats";
@@ -34,6 +34,7 @@ import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
 import UpdatePrompt from "./components/UpdatePrompt";
 import DownloadApkButton from "./components/DownloadApkButton";
+import UserStatsCard from "./components/UserStatsCard";
 import PageErrorBoundary from "./components/PageErrorBoundary";
 import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, openDownloadUrl, saveApkToDevice, setLastSeenRelease } from "./updater/updateChecker";
 import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
@@ -349,6 +350,26 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     try {
       localStorage.setItem("nextext_contact_sort", key);
       window.dispatchEvent(new Event("nextext-contact-sort-change"));
+    } catch {}
+  };
+
+  const CHAT_SORT_OPTIONS = [
+    { key: "recent", label: "Most recent" },
+    { key: "unread", label: "Unread first" },
+    { key: "alpha", label: "Alphabetical" },
+    { key: "favorites", label: "Favorites first" },
+  ];
+  const [chatSort, setChatSort] = useState(() => {
+    try {
+      const v = localStorage.getItem("nextext_chat_sort");
+      return v && CHAT_SORT_OPTIONS.some((o) => o.key === v) ? v : "recent";
+    } catch { return "recent"; }
+  });
+  const changeChatSort = (key) => {
+    setChatSort(key);
+    try {
+      localStorage.setItem("nextext_chat_sort", key);
+      window.dispatchEvent(new Event("nextext-chat-sort-change"));
     } catch {}
   };
 
@@ -957,6 +978,30 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </div>
           </div>
           <Row icon={<Users size={18} color={t.primary} />} label="Hide bottom navigation" sub={hideNav ? "Hidden" : "Visible"} right={<Toggle on={hideNav} onClick={() => setHideNav(!hideNav)} />} />
+          <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+            <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Sort chats</div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Ordering used in the chat list on the Chats tab.</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {CHAT_SORT_OPTIONS.map((o) => (
+                <div
+                  key={o.key}
+                  onClick={() => changeChatSort(o.key)}
+                  style={{
+                    padding: "7px 12px",
+                    borderRadius: 8,
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    background: chatSort === o.key ? t.primary : t.bg,
+                    color: chatSort === o.key ? t.bubbleMeText : t.text,
+                    border: `1px solid ${chatSort === o.key ? t.primary : t.border}`,
+                  }}
+                >
+                  {o.label}
+                </div>
+              ))}
+            </div>
+          </div>
           <Row icon={<Search size={18} color={t.primary} />} label="Show search button" sub={searchMode === "button" ? "Search icon hides bar" : "Search bar always visible"} right={<Toggle on={searchMode === "button"} onClick={() => { const next = searchMode === "button" ? "visible" : "button"; setSearchMode(next); localStorage.setItem("nextext_search_mode", next); }} />} />
           <Row icon={<Users size={18} color={t.primary} />} label="Show top bar" sub={topBarVisible ? "Visible" : "Hidden"} right={<Toggle on={topBarVisible} onClick={() => { const next = !topBarVisible; setTopBarVisible(next); localStorage.setItem("nextext_top_bar_visible", String(next)); }} />} />
         </SectionCard>
@@ -1025,8 +1070,10 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
         {/* ═══ ACCOUNT ACTIONS ═══ */}
         <SectionCard title="Account" emoji="⚙️" sectionKey="accountActions">
+          <UserStatsCard myUid={myUid} createdAt={userDoc?.createdAt} activeTimeMs={userDoc?.activeTimeMs} />
+          <div style={{ marginTop: 8 }} />
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Send Feedback" sub="Message the admin directly" onClick={() => onNavigate("feedback")} />
-          <Row icon={<Compass size={18} color={t.primary} />} label="Replay Welcome Tour" sub="See the first-run guide again" onClick={(e) => { e.stopPropagation(); onShowTour(); }} />
+          {!sysConfig?.tourDisabled && <Row icon={<Compass size={18} color={t.primary} />} label="Replay Welcome Tour" sub="See the first-run guide again" onClick={(e) => { e.stopPropagation(); onShowTour(); }} />}
           {isAdmin && <Row icon={<ShieldCheck size={18} color={t.primary} />} label="Admin Dashboard" sub="Users, reports, broadcasts" onClick={() => onNavigate("admin")} />}
 
           <div style={{ padding: "13px 0" }}>
@@ -1680,6 +1727,7 @@ function AppShell({ appLocked, setAppLocked }) {
   };
 
   usePresenceHeartbeat(myUid);
+  useAppUsageTracker(myUid);
 
   const [pendingNotifChatId, setPendingNotifChatId] = useState(null);
 
@@ -2518,6 +2566,7 @@ function AppShell({ appLocked, setAppLocked }) {
           myUid={myUid}
           otherUid={activeChat.otherUid}
           contact={activeChat.contact}
+          isAdmin={isAdmin}
           onBack={() => {
             if (activeChat.origin === "list") setScreen("list");
             else setScreen("chat");

@@ -210,11 +210,35 @@ export function useAuth() {
         // it works inside WebViews and on devices where the popup API is
         // unavailable. Resolution happens asynchronously via getRedirectResult
         // in the onAuthStateChanged effect above (see lines ~60-78).
-        await signInWithRedirect(auth, googleProvider);
-        return null;
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return null;
+        } catch (redirectErr) {
+          throw playStoreFriendlyError(redirectErr);
+        }
       }
-      throw e;
+      throw playStoreFriendlyError(e);
     }
+  }
+
+  // On devices with Play Store / Google Play Services disabled, native Google
+  // sign-in can surface as auth/argument-error (or a generic message) — convert
+  // that into the exact user-facing hint requested instead of the raw Firebase
+  // error string.
+  function playStoreFriendlyError(err) {
+    const code = err?.code || "";
+    const msg = String(err?.message || "");
+    const isPlayStoreIssue =
+      code === "auth/argument-error" ||
+      msg.includes("argument-error") ||
+      msg.toLowerCase().includes("play services") ||
+      msg.toLowerCase().includes("play store");
+    if (isPlayStoreIssue) {
+      const e = new Error("Please make sure play store is enabled on your device.");
+      e.code = "auth/argument-error";
+      return e;
+    }
+    return err;
   }
 
   async function completeGoogleSignup(username, displayName, usernameLower, phone) {

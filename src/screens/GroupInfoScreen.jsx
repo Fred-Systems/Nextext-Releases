@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ChevronLeft, Camera, Plus, MessageSquare, UserPlus, X, Info, ShieldCheck, ShieldOff } from "lucide-react";
+import { ChevronLeft, Camera, Plus, MessageSquare, UserPlus, X, Info, ShieldCheck, ShieldOff, Bot, CheckCircle, Clock } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -10,6 +10,7 @@ import {
 import { useContacts, sendContactRequest } from "../firebase/contacts";
 import { uploadChatFile } from "../supabase/media";
 import Avatar from "../components/Avatar";
+import { AI_CONTACT_UID, useGroupAIRequestHook, requestGroupAI, cancelGroupAIRequest, removeGroupAI } from "../firebase/ai";
 
 export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onOpenContactProfile }) {
   const { t } = useTheme();
@@ -23,6 +24,9 @@ export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onO
   const [showAddMember, setShowAddMember] = useState(false);
   const photoInputRef = useRef(null);
   const { contacts } = useContacts(myUid);
+  // NexText AI injection request state for this group (readable by group admins).
+  const aiRequest = useGroupAIRequestHook(chatId);
+  const [aiBusy, setAiBusy] = useState(false);
 
   // Live group document.
   useEffect(() => {
@@ -74,6 +78,29 @@ export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onO
   const isAdmin = isGroupAdmin(group, myUid);
   const myNickname = myUser?.groupNicknames?.[chatId] || "";
   const displayName = isAdmin ? (group.groupName || "Group") : (myNickname || group.groupName || "Group");
+
+  const hasAIInGroup = (group.participants || []).includes(AI_CONTACT_UID);
+
+  const doRequestAI = async () => {
+    setAiBusy(true);
+    try {
+      await requestGroupAI(chatId, group.groupName || "Group", myUid, myUser?.displayName || myUser?.username || "unknown");
+    } catch { /* silent */ }
+    setAiBusy(false);
+  };
+
+  const doCancelRequestAI = async () => {
+    setAiBusy(true);
+    try { await cancelGroupAIRequest(chatId); } catch { /* silent */ }
+    setAiBusy(false);
+  };
+
+  const doRemoveAI = async () => {
+    if (!window.confirm("Remove NexText AI from this group? It will stop replying immediately.")) return;
+    setAiBusy(true);
+    try { await removeGroupAI(chatId); } catch { /* silent */ }
+    setAiBusy(false);
+  };
 
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
@@ -240,6 +267,54 @@ export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onO
             );
           })}
         </div>
+
+        {isAdmin && (
+          <div style={{ background: t.surface, borderRadius: 14, border: `1px solid ${t.border}`, padding: 14, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <Bot size={17} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>NexText AI</span>
+              {hasAIInGroup && <span style={{ fontSize: 10.5, padding: "2px 8px", borderRadius: 8, background: "#E5F9E7", color: "#28A745", fontWeight: 700 }}>ACTIVE</span>}
+            </div>
+
+            {hasAIInGroup ? (
+              <>
+                <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 10 }}>
+                  NexText AI is live in this group. It replies whenever a message starts with <strong>"Hey NexText"</strong> or ends with a <strong>question mark</strong>.
+                </div>
+                <button onClick={doRemoveAI} disabled={aiBusy} style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: "#FFE5E5", color: "#FF3B30", fontWeight: 700, fontSize: 13, cursor: aiBusy ? "default" : "pointer" }}>
+                  {aiBusy ? "Working…" : "Remove NexText AI from group"}
+                </button>
+              </>
+            ) : aiRequest?.status === "pending" ? (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "#856404", fontWeight: 600, marginBottom: 8 }}>
+                  <Clock size={14} /> Request pending — awaiting NexText admin approval.
+                </div>
+                <button onClick={doCancelRequestAI} disabled={aiBusy} style={{ width: "100%", padding: 11, borderRadius: 10, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontWeight: 700, fontSize: 13, cursor: aiBusy ? "default" : "pointer" }}>
+                  {aiBusy ? "Working…" : "Cancel request"}
+                </button>
+              </>
+            ) : aiRequest?.status === "approved" || aiRequest?.status === "removed" ? (
+              <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5 }}>
+                {aiRequest.status === "approved"
+                  ? "NexText AI was approved for this group but isn't active yet — ask the NexText admin to check, or request it again below."
+                  : "NexText AI was removed from this group. You can request it again anytime."}
+                <button onClick={doRequestAI} disabled={aiBusy} style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: aiBusy ? "default" : "pointer", marginTop: 10 }}>
+                  {aiBusy ? "Working…" : "Request NexText AI again"}
+                </button>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 10 }}>
+                  Ask the NexText admin to add the official NexText AI assistant to this group. Once approved, it joins the chat and replies when a message starts with <strong>"Hey NexText"</strong> or ends with a <strong>question mark</strong>.
+                </div>
+                <button onClick={doRequestAI} disabled={aiBusy} style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: aiBusy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  <CheckCircle size={15} /> {aiBusy ? "Working…" : "Request NexText AI in this group"}
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         {isAdmin && (
           <div
