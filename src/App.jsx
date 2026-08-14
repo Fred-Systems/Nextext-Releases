@@ -315,7 +315,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -2512,6 +2512,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                 onLogout={() => auth.logOut()}
                 userDoc={liveUserDoc || auth.userDoc}
                 navConfig={navConfig}
+                contacts={contacts}
                 setNavConfig={setNavConfig}
                 aiSidebarOn={aiSidebarOn}
                 setAiSidebarOn={setAiSidebarOn}
