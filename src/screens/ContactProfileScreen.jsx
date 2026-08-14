@@ -280,9 +280,14 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
               <Camera size={13} color="#fff" />
             </div>
           </div>
-          <div style={{ fontWeight: 700, fontSize: 19, color: t.text }}>{displayName}</div>
+          <div style={{ fontWeight: 700, fontSize: 19, color: t.text }}>{displayName || "Unknown"}</div>
           {otherUserDoc?.customStatusText && (
             <div style={{ fontSize: 13, color: t.textMuted, marginTop: 4, fontStyle: "italic", maxWidth: 260 }}>{otherUserDoc.customStatusText}</div>
+          )}
+          {otherUserDoc?.createdAt && (
+            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>
+              NexText member since {(otherUserDoc.createdAt.toDate ? otherUserDoc.createdAt.toDate() : new Date(otherUserDoc.createdAt)).toLocaleDateString()}
+            </div>
           )}
           {localPhotoOverride && (
             <div onClick={clearLocalPhotoOverride} style={{ fontSize: 11.5, color: t.primary, cursor: "pointer", marginTop: 4, fontWeight: 600 }}>

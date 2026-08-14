@@ -99,7 +99,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isArchived, setIsArchived] = useState(false);
   const [fullscreenImage, setFullscreenImage] = useState(null);
-  const [activeMsgId, setActiveMsgId] = useState(null);
+  const [activeMessageId, setActiveMessageId] = useState(null);
   const longPressTimer = useRef(null);
   const [pendingForwardMsg, setPendingForwardMsg] = useState(null);
   const [chatPickerMode, setChatPickerMode] = useState(null); // 'forward' | 'summarize'
@@ -156,14 +156,14 @@ export default function AIChatScreen({ myUid, onBack }) {
   // Close message action menu on outside click
   useEffect(() => {
     const handler = (e) => {
-      if (activeMsgId && !e.target.closest('[style*="minWidth: 160"]') && !e.target.closest('[title="More options"]')) {
-        setActiveMsgId(null);
+      if (activeMessageId && !e.target.closest('[style*="minWidth: 160"]') && !e.target.closest('[title="More options"]')) {
+        setActiveMessageId(null);
       }
     };
     document.addEventListener("mousedown", handler);
     document.addEventListener("touchstart", handler);
     return () => { document.removeEventListener("mousedown", handler); document.removeEventListener("touchstart", handler); };
-  }, [activeMsgId]);
+  }, [activeMessageId]);
 
   useEffect(() => {
     if (!myUid) return;
@@ -274,7 +274,7 @@ export default function AIChatScreen({ myUid, onBack }) {
         document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, ta.value.length);
         document.execCommand("copy"); document.body.removeChild(ta);
       }
-      setActiveMsgId(null);
+      setActiveMessageId(null);
     } catch { /* ignore */ }
   };
 
@@ -282,7 +282,7 @@ export default function AIChatScreen({ myUid, onBack }) {
     setShowChatPicker(true);
     setChatPickerMode("forward");
     setPendingForwardMsg(msg);
-    setActiveMsgId(null);
+    setActiveMessageId(null);
     // Load all chats for forwarding
     try {
       const { getDocs, collection, query, orderBy } = await import("firebase/firestore");
@@ -326,7 +326,7 @@ export default function AIChatScreen({ myUid, onBack }) {
     // Pre-fill input with quoted message + placeholder for user's question
     const quoted = `���� Quoted message:\n"${msg.text}"\n\n��� Your question:`;
     setInput(quoted);
-    setActiveMsgId(null);
+    setActiveMessageId(null);
     // Focus the input
     setTimeout(() => { const el = document.querySelector('input[placeholder="Ask NexText AI…"]'); if (el) el.focus(); }, 50);
   };
@@ -609,7 +609,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                           {m.sentAt?.toDate ? m.sentAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                         </span>
                         <div
-                          onClick={(e) => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); setActiveMsgRect({ top: rect.top, left: rect.left, width: rect.width }); setActiveMsgId(m.id); }}
+                          onClick={(e) => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); setActiveMsgRect({ top: rect.top, left: rect.left, width: rect.width }); setActiveMessageId(m.id); }}
                           style={{ width: 28, height: 28, borderRadius: "50%", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.textMuted, flexShrink: 0 }}
                           title="More options"
                         >
@@ -617,7 +617,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                         </div>
                       </div>
                     </div>
-                    {activeMsgId === m.id && (
+                    {activeMessageId === m.id && (
                       <div style={{ position: "absolute", bottom: "100%", right: 0, marginBottom: 6, background: t.surface, borderRadius: 10, boxShadow: "0 4px 20px rgba(0,0,0,0.3)", border: `1px solid ${t.border}`, overflow: "hidden", zIndex: 100, minWidth: 160 }}>
                         <div onClick={() => copyMessageText(m.text)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", cursor: "pointer", fontSize: 13.5, color: t.text }}>
                           <Copy size={14} /> Copy
