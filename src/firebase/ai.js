@@ -88,13 +88,13 @@ const SYSTEM_CONFIG_REF = doc(db, "config", "system");
 export async function ensureSystemConfig() {
   const snap = await getDoc(SYSTEM_CONFIG_REF);
   if (!snap.exists()) {
-    await setDoc(SYSTEM_CONFIG_REF, { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true });
+    await setDoc(SYSTEM_CONFIG_REF, { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true });
   }
 }
 
 export async function getSystemConfig() {
   const snap = await getDoc(SYSTEM_CONFIG_REF);
-  return snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true };
+  return snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true };
 }
 
 export async function setSystemConfig(patch, adminUid) {
@@ -163,8 +163,8 @@ export async function setAIPersonality(userUid, personalityKey) {
 function parseRateLimitError(errText, status) {
   // Try to extract retry-after from error message or use default
   // Groq returns 429 with error message like "Rate limit reached. Try again in 60s."
-  const match = errText?.match(/try again in (\d+)s/i) || errText?.match(/retry.after.?(\d+)/i);
-  const retrySeconds = match ? parseInt(match[1], 10) : 60;
+  const match = errText?.match(/try again in ([\d.]+)s/i) || errText?.match(/retry.after.?([\d.]+)/i);
+  const retrySeconds = match ? Math.ceil(parseFloat(match[1])) : 60;
   const resetTime = new Date(Date.now() + retrySeconds * 1000);
   const resetStr = resetTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return {
@@ -209,14 +209,105 @@ async function callGroq(apiKey, messages, temperature = 0.7, model = DEFAULT_GRO
 export async function sendAIMessage(userUid, messageText, chatHistory = []) {
   const config = await getSystemConfigForCall();
   const personalityKey = await getPersonalityKey(userUid);
+  // Cap history to the last 20 messages — sending the whole unbounded chat
+  // log balloons the token cost of every request, which trips Groq's
+  // per-minute/token limits and makes "rate limit reached" fire far too early.
+  const history = (chatHistory || []).slice(-20);
   const messages = [
     { role: "system", content: getSystemPrompt(personalityKey) },
-    ...chatHistory
+    ...history
       .map((m) => ({ role: m.senderId === AI_CONTACT_UID ? "assistant" : "user", content: m.text || "" }))
       .filter((m) => m.content),
     { role: "user", content: messageText },
   ];
   return callGroq(config.key, messages, 0.7, config.model);
+}
+
+// ── Message Translation (Groq) ──
+// Broad language menu shown when the user taps "Translate" on a message. The
+// admin can hide the whole feature via the translateDisabled system switch.
+export const LANGUAGES = [
+  { code: "en", label: "English" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "it", label: "Italian" },
+  { code: "pt", label: "Portuguese" },
+  { code: "nl", label: "Dutch" },
+  { code: "ru", label: "Russian" },
+  { code: "uk", label: "Ukrainian" },
+  { code: "pl", label: "Polish" },
+  { code: "tr", label: "Turkish" },
+  { code: "ar", label: "Arabic" },
+  { code: "he", label: "Hebrew" },
+  { code: "fa", label: "Persian" },
+  { code: "hi", label: "Hindi" },
+  { code: "ur", label: "Urdu" },
+  { code: "bn", label: "Bengali" },
+  { code: "zh", label: "Chinese" },
+  { code: "ja", label: "Japanese" },
+  { code: "ko", label: "Korean" },
+  { code: "th", label: "Thai" },
+  { code: "vi", label: "Vietnamese" },
+  { code: "id", label: "Indonesian" },
+  { code: "ms", label: "Malay" },
+  { code: "sw", label: "Swahili" },
+  { code: "el", label: "Greek" },
+  { code: "sv", label: "Swedish" },
+  { code: "no", label: "Norwegian" },
+  { code: "da", label: "Danish" },
+  { code: "fi", label: "Finnish" },
+  { code: "cs", label: "Czech" },
+  { code: "ro", label: "Romanian" },
+  { code: "hu", label: "Hungarian" },
+  { code: "bg", label: "Bulgarian" },
+  { code: "hr", label: "Croatian" },
+  { code: "sr", label: "Serbian" },
+  { code: "ta", label: "Tamil" },
+  { code: "te", label: "Telugu" },
+  { code: "kn", label: "Kannada" },
+  { code: "ml", label: "Malayalam" },
+  { code: "gu", label: "Gujarati" },
+  { code: "mr", label: "Marathi" },
+  { code: "pa", label: "Punjabi" },
+  { code: "ne", label: "Nepali" },
+  { code: "si", label: "Sinhala" },
+  { code: "am", label: "Amharic" },
+  { code: "ha", label: "Hausa" },
+  { code: "yo", label: "Yoruba" },
+  { code: "ig", label: "Igbo" },
+  { code: "zu", label: "Zulu" },
+  { code: "af", label: "Afrikaans" },
+  { code: "fil", label: "Filipino" },
+  { code: "ca", label: "Catalan" },
+];
+
+export function getLanguageLabel(code) {
+  return LANGUAGES.find((l) => l.code === code)?.label || code;
+}
+
+export async function translateMessage(userUid, text, targetLang) {
+  if (!text || !text.trim()) throw new Error("Nothing to translate.");
+  let config;
+  try {
+    config = await getSystemConfig();
+  } catch (e) {
+    throw new Error("Failed to read config from Firestore: " + e.message);
+  }
+  if (config?.translateDisabled) throw new Error("Translation is currently disabled.");
+  if (config?.aiGloballyDisabled) throw new Error("AI is currently disabled by the administrator.");
+  const key = (config?.groqApiKey || "").trim();
+  if (!key) throw new Error("AI is not configured. No API key found in Firestore.");
+  const lang = LANGUAGES.find((l) => l.code === targetLang);
+  const langName = lang?.label || targetLang;
+  const messages = [
+    {
+      role: "system",
+      content: "You are a professional translator. Translate the user's message into the requested target language. Respond with ONLY the translated text — no explanations, no quotes, no notes.",
+    },
+    { role: "user", content: `Translate into ${langName}:\n\n${text}` },
+  ];
+  return callGroq(key, messages, 0.2, getEffectiveModel(config));
 }
 
 export async function sendAIContextMessage(userUid, question, chatTranscript) {

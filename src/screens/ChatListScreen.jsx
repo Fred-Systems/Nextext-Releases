@@ -156,7 +156,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const selfContact = userDoc ? {
     uid: myUid,
     profile: {
-      displayName: (userDoc.displayName || "Me") + " (You)",
+      displayName: userDoc.displayName || "Me",
       photoURL: userDoc.photoURL || null,
     },
   } : null;
@@ -630,17 +630,20 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             <ArrowDownWideNarrow size={16} color={t.primary} />
           </button>
           {showChatSortMenu && (
-            <>
-              <div onClick={() => setShowChatSortMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 11 }} />
-              <div style={{ position: "absolute", right: 0, top: 34, zIndex: 12, background: t.surface, borderRadius: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.2)", padding: "6px 0", minWidth: 170 }}>
+            <div onClick={() => setShowChatSortMenu(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+              <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 300, background: t.surface, borderRadius: 16, padding: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Sort chats</span>
+                  <X size={20} color={t.textMuted} onClick={() => setShowChatSortMenu(false)} style={{ cursor: "pointer" }} />
+                </div>
                 {CHAT_SORT_OPTIONS.map((o) => (
-                  <div key={o.key} onClick={() => { setChatSort(o.key); setShowChatSortMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", fontSize: 13.5, fontWeight: chatSort === o.key ? 700 : 500, color: chatSort === o.key ? t.primary : t.text, cursor: "pointer" }}>
+                  <div key={o.key} onClick={() => { setChatSort(o.key); setShowChatSortMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderRadius: 10, fontSize: 13.5, fontWeight: chatSort === o.key ? 700 : 500, color: chatSort === o.key ? t.primary : t.text, cursor: "pointer", background: chatSort === o.key ? t.primaryLight : "transparent" }}>
                     {chatSort === o.key && <span style={{ width: 14, color: t.primary }}>✓</span>}
                     <span style={{ marginLeft: chatSort === o.key ? 0 : 22 }}>{o.label}</span>
                   </div>
                 ))}
               </div>
-            </>
+            </div>
           )}
         </div>
         <div onClick={() => setShowNewListModal(true)} style={{ width: 30, height: 30, borderRadius: "50%", background: t.primary, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
@@ -763,17 +766,20 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
                 <ArrowDownWideNarrow size={16} color={t.primary} />
               </button>
               {showSortMenu && (
-                <>
-                  <div onClick={() => setShowSortMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 11 }} />
-                  <div style={{ position: "absolute", right: 0, top: 34, zIndex: 12, background: t.surface, borderRadius: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.2)", padding: "6px 0", minWidth: 170 }}>
+                <div onClick={() => setShowSortMenu(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+                  <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 300, background: t.surface, borderRadius: 16, padding: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Sort contacts</span>
+                      <X size={20} color={t.textMuted} onClick={() => setShowSortMenu(false)} style={{ cursor: "pointer" }} />
+                    </div>
                     {CONTACT_SORT_OPTIONS.map((o) => (
-                      <div key={o.key} onClick={() => { setContactSort(o.key); setShowSortMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", fontSize: 13.5, fontWeight: contactSort === o.key ? 700 : 500, color: contactSort === o.key ? t.primary : t.text, cursor: "pointer" }}>
+                      <div key={o.key} onClick={() => { setContactSort(o.key); setShowSortMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderRadius: 10, fontSize: 13.5, fontWeight: contactSort === o.key ? 700 : 500, color: contactSort === o.key ? t.primary : t.text, cursor: "pointer", background: contactSort === o.key ? t.primaryLight : "transparent" }}>
                         {contactSort === o.key && <span style={{ width: 14, color: t.primary }}>✓</span>}
                         <span style={{ marginLeft: contactSort === o.key ? 0 : 22 }}>{o.label}</span>
                       </div>
                     ))}
                   </div>
-                </>
+                </div>
               )}
             </div>
           </div>

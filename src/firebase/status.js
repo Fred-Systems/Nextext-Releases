@@ -85,13 +85,15 @@ export async function purgeExpiredStatuses(ownerId) {
 export function useStatuses(uids) {
   const [statuses, setStatuses] = useState([]);
   const deletingRef = useRef(new Set());
+  const safeUidsKey = (uids || []).filter(Boolean).join(",");
 
   useEffect(() => {
-    if (!uids || uids.length === 0) { setStatuses([]); return; }
+    const safeUids = safeUidsKey ? safeUidsKey.split(",").filter(Boolean) : [];
+    if (safeUids.length === 0) { setStatuses([]); return; }
 
     let useFallback = false;
     const chunks = [];
-    for (let i = 0; i < uids.length; i += 30) chunks.push(uids.slice(i, i + 30));
+    for (let i = 0; i < safeUids.length; i += 30) chunks.push(safeUids.slice(i, i + 30));
 
     function subscribeWithQuery(compound) {
       return chunks.map((chunk) => {
@@ -154,7 +156,7 @@ export function useStatuses(uids) {
       clearInterval(fallbackCheck);
       unsubs.forEach((fn) => fn());
     };
-  }, [uids?.join(",")]);
+  }, [safeUidsKey]);
 
   return statuses;
 }
@@ -162,11 +164,13 @@ export function useStatuses(uids) {
 // Returns a Set of UIDs that have at least one active status.
 export function useActiveStatusUids(uids) {
   const [active, setActive] = useState(new Set());
+  const safeUidsKey = (uids || []).filter(Boolean).join(",");
 
   useEffect(() => {
-    if (!uids || uids.length === 0) { setActive(new Set()); return; }
+    const safeUids = safeUidsKey ? safeUidsKey.split(",").filter(Boolean) : [];
+    if (safeUids.length === 0) { setActive(new Set()); return; }
     const chunks = [];
-    for (let i = 0; i < uids.length; i += 30) chunks.push(uids.slice(i, i + 30));
+    for (let i = 0; i < safeUids.length; i += 30) chunks.push(safeUids.slice(i, i + 30));
 
     let useFallback = false;
     function subscribeWithQuery(compound) {
@@ -214,7 +218,7 @@ export function useActiveStatusUids(uids) {
       clearInterval(fallbackCheck);
       unsubs.forEach((fn) => fn());
     };
-  }, [uids?.join(",")]);
+  }, [safeUidsKey]);
 
   return active;
 }

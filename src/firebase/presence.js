@@ -36,22 +36,29 @@ export function usePresenceHeartbeat(myUid) {
 
 // Tracks cumulative active time spent in the app (foreground + visible) and
 // accumulates it into users/{uid}.activeTimeMs via Firestore increment() every
-// ~10s of active use, flushing the remainder on visibility change / unload.
+// ~5s of active use, flushing the remainder on visibility change / unload.
 // Drives the "time spent in app" stat in the statistics cards.
+//
+// Important detail: "visibilitychange" fires AFTER the document is already
+// hidden, so the tracker keeps a `wasVisible` flag — the last visible chunk
+// of time (up to one flush interval) is always credited before going hidden,
+// and small sessions under the flush interval still commit on close.
 export function useAppUsageTracker(myUid) {
   useEffect(() => {
     if (!myUid) return;
-    const FLUSH_MS = 10_000;
+    const FLUSH_MS = 5_000;
     let pending = 0;
     let lastTick = Date.now();
+    let wasVisible = !document.hidden;
 
     const flush = (force) => {
       const now = Date.now();
-      if (document.visibilityState === "visible" && !document.hidden) {
-        pending += now - lastTick;
-      }
+      const isVisible = !document.hidden;
+      // Time elapsed since lastTick only counts while we were visible for it.
+      if (wasVisible) pending += now - lastTick;
       lastTick = now;
-      if (pending >= FLUSH_MS || (force && pending >= 1000)) {
+      wasVisible = isVisible;
+      if (pending >= FLUSH_MS || (force && pending >= 500)) {
         const toCommit = Math.floor(pending);
         updateDoc(doc(db, "users", myUid), { activeTimeMs: increment(toCommit) }).catch(() => {});
         pending -= toCommit;
@@ -59,13 +66,17 @@ export function useAppUsageTracker(myUid) {
     };
 
     const interval = setInterval(flush, FLUSH_MS);
-    const onVisibility = () => flush(false);
+    const onVisibility = () => flush(true);
     const onUnload = () => flush(true);
     document.addEventListener("visibilitychange", onVisibility);
+    // pagehide is more reliable than beforeunload on mobile WebViews.
+    window.addEventListener("pagehide", onUnload);
     window.addEventListener("beforeunload", onUnload);
     return () => {
+      flush(true);
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onUnload);
       window.removeEventListener("beforeunload", onUnload);
     };
   }, [myUid]);

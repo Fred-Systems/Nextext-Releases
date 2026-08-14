@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff, Forward } from "lucide-react";
+import { ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff, Forward, Languages } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import {
   useMessages, sendTextMessage, markChatRead, setTypingHeartbeat, reactToMessage,
@@ -26,7 +26,7 @@ import { getSystemInsets } from "../utils/systemInsets";
 
 const NextextNative = registerPlugin("NextextNative");
 import { useStatuses } from "../firebase/status";
-import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote } from "../firebase/ai";
+import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote, useSystemConfigHook, translateMessage, LANGUAGES, getLanguageLabel } from "../firebase/ai";
 import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
 import ContactSharePicker from "../components/ContactSharePicker";
 import ForwardPicker from "../components/ForwardPicker";
@@ -459,16 +459,22 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
   );
 }
 
-export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false, micMode, recordingBarScale = 1 }) {
+export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false, micMode, recordingBarScale = 1, userDoc }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth } = useTheme();
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
+  const sysConfig = useSystemConfigHook();
   const isGroup = !!contact?.isGroup;
   const [chatId, setChatId] = useState(initialChatId);
   const [input, setInput] = useState("");
   const [activeMsg, setActiveMsg] = useState(null);
   const [forwardMsg, setForwardMsg] = useState(null);
   const [forwardBusy, setForwardBusy] = useState(false);
+  const [translateMsg, setTranslateMsg] = useState(null);
+  const [translatingLang, setTranslatingLang] = useState("");
+  const [translations, setTranslations] = useState({});
+  const [hiddenTranslations, setHiddenTranslations] = useState({});
+  const [translationErrors, setTranslationErrors] = useState({});
   const [editingMsg, setEditingMsg] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
   const [theyTyping, setTheyTyping] = useState(false);
@@ -1066,6 +1072,24 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     navigator.clipboard?.writeText(activeMsg.text).catch(() => {});
     setActiveMsg(null);
   }, [activeMsg]);
+
+  const handleTranslateSelect = async (langCode) => {
+    const m = translateMsg || activeMsg;
+    if (!m?.text || !langCode || translatingLang) return;
+    const key = m.id;
+    setTranslatingLang(langCode);
+    setTranslationErrors((prev) => { const n = { ...prev }; delete n[key]; return n; });
+    try {
+      const result = await translateMessage(myUid, m.text, langCode);
+      setTranslations((prev) => ({ ...prev, [key]: { lang: langCode, text: result } }));
+      setHiddenTranslations((prev) => { const n = { ...prev }; delete n[key]; return n; });
+    } catch (e) {
+      setTranslationErrors((prev) => ({ ...prev, [key]: e?.message || "Translation failed — try again." }));
+    }
+    setTranslatingLang("");
+    setTranslateMsg(null);
+    setActiveMsg(null);
+  };
 
   const handleReply = () => {
     if (!activeMsg) return;
@@ -2251,6 +2275,18 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           {displayText || m.text}
           {m.editedAt && !blocked && <span style={{ fontSize: 10, opacity: 0.55, marginLeft: 4 }}>edited</span>}
           {isLinkPreviewEnabled() && !blocked && <LinkPreviewCard text={m.text} mine={m.senderId === myUid} t={t} textScale={chatTextScale} />}
+          {!blocked && translations[m.id] && !hiddenTranslations[m.id] && (
+            <div style={{ borderTop: `1px solid ${m.senderId === myUid ? "rgba(255,255,255,0.25)" : t.border}`, marginTop: 6, paddingTop: 6 }}>
+              <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35 }}>{translations[m.id].text}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                <span style={{ fontSize: 10.5, fontWeight: 700, opacity: 0.65, textTransform: "uppercase" }}>Translated · {getLanguageLabel(translations[m.id].lang)}</span>
+                <span onClick={(e) => { e.stopPropagation(); setHiddenTranslations((prev) => ({ ...prev, [m.id]: true })); }} style={{ fontSize: 11.5, fontWeight: 600, opacity: 0.8, cursor: "pointer", textDecoration: "underline" }}>Hide</span>
+              </div>
+            </div>
+          )}
+          {translationErrors[m.id] && (
+            <div style={{ fontSize: 11.5, color: "#FF3B30", marginTop: 3, lineHeight: 1.3, maxWidth: 260 }}>{translationErrors[m.id]}</div>
+          )}
         </div>
       </div>
     );
@@ -2410,7 +2446,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   </div>
                 )}
                 {renderBubble(m)}
-                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginTop: 3 }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 7, marginTop: 3 }}>
+                  {canForward(m) && (
+                    <Forward size={13} onClick={(e) => { e.stopPropagation(); setForwardMsg(m); }} style={{ cursor: "pointer", opacity: 0.6 }} />
+                  )}
                   <span style={{ fontSize: 10.5, opacity: 0.65 }}>
                     {msgDisplayDate(m) ? msgDisplayDate(m).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "sending…"}
                   </span>
@@ -2768,6 +2807,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <Forward size={17} color={t.text} /><span style={{ fontSize: 15, color: t.text }}>Forward</span>
                 </div>
               )}
+              {activeMsg.text && sysConfig?.translateDisabled !== true && (
+                <div onClick={() => { setTranslateMsg(activeMsg); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <Languages size={17} color={t.text} /><span style={{ fontSize: 15, color: t.text }}>Translate</span>
+                </div>
+              )}
               {activeMsg.senderId === myUid && activeMsg.type === "text" && canEdit && (
                 <div onClick={handleEdit} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <span style={{ fontSize: 15, color: t.text }}>Edit <span style={{ fontSize: 11.5, color: t.textMuted }}>(within 15 min)</span></span>
@@ -2785,6 +2829,27 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </div>
         );
       })()}
+      {translateMsg && (
+        <div className="nextext-overlay-backdrop" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 56, display: "flex", alignItems: "flex-end" }} onClick={() => { if (!translatingLang) { setTranslateMsg(null); setActiveMsg(null); } }}>
+          <div className="nextext-overlay-sheet" style={{ background: t.surface, width: "100%", borderRadius: "18px 18px 0 0", padding: "16px 20px 24px", maxHeight: "72%", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexShrink: 0 }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Translate to…</span>
+              <X size={20} color={t.textMuted} onClick={() => { if (!translatingLang) { setTranslateMsg(null); setActiveMsg(null); } }} style={{ cursor: "pointer" }} />
+            </div>
+            {translatingLang && (
+              <div style={{ fontSize: 13, color: t.primary, fontWeight: 600, padding: "10px 0", flexShrink: 0 }}>Translating…</div>
+            )}
+            <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
+              {LANGUAGES.map((l) => (
+                <div key={l.code} onClick={() => { if (!translatingLang) handleTranslateSelect(l.code); }} style={{ padding: "11px 4px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 10, opacity: translatingLang ? 0.5 : 1 }}>
+                  <Languages size={15} color={t.textMuted} />
+                  <span style={{ fontSize: 14.5, color: t.text, fontWeight: translatingLang === l.code ? 700 : 500 }}>{l.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       {showPoll && <PollCreateSheet t={t} onClose={() => setShowPoll(false)} onCreate={createPoll} />}
       {showContactShare && (
         <ContactSharePicker
@@ -2801,6 +2866,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           t={t}
           myUid={myUid}
           contacts={convoContacts}
+          myProfile={userDoc}
           onClose={() => { if (!forwardBusy) setForwardMsg(null); }}
           onForward={handleForwardTo}
         />

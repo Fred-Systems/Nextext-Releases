@@ -8,8 +8,9 @@ import { AI_CONTACT_UID } from "../firebase/ai";
 // Bottom-sheet picker for forwarding a message to several targets at once.
 // Lists the user's accepted contacts plus their own "My notes" self-chat.
 // `contacts` are the user's accepted contacts. onForward(targets) receives the
-// selected rows as [{ uid, displayName }].
-export default function ForwardPicker({ t, myUid, contacts, onClose, onForward }) {
+// selected rows as [{ uid, displayName }]. `myProfile` is the current user's
+// own profile ({ displayName, photoURL }) so the self row shows the real name.
+export default function ForwardPicker({ t, myUid, contacts, myProfile, onClose, onForward }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState({});
 
@@ -23,7 +24,11 @@ export default function ForwardPicker({ t, myUid, contacts, onClose, onForward }
     })
     .sort((a, b) => getContactDisplayName(a).localeCompare(getContactDisplayName(b)));
 
-  const selfRow = { uid: myUid, displayName: "My notes" };
+  const selfRow = {
+    uid: myUid,
+    displayName: `${myProfile?.displayName || "Me"} (You)`,
+    photoURL: myProfile?.photoURL || null,
+  };
   const finalRows = [selfRow, ...rows];
 
   const toggle = (uid) => {
@@ -42,6 +47,12 @@ export default function ForwardPicker({ t, myUid, contacts, onClose, onForward }
     const targets = finalRows.filter((r) => selected[r.uid]);
     try { onForward(targets); } catch { /* handled upstream */ }
   };
+
+  const rowName = (r) => {
+    if (r.uid === myUid) return r.displayName;
+    return getContactDisplayName(r);
+  };
+  const rowPhoto = (r) => r.photoURL || (r.uid === myUid ? null : r.profile?.photoURL || null);
 
   return createPortal(
     <>
@@ -75,9 +86,12 @@ export default function ForwardPicker({ t, myUid, contacts, onClose, onForward }
                 onClick={() => toggle(r.uid)}
                 style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", borderRadius: 10, cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: selected[r.uid] ? t.primaryLight : "transparent" }}
               >
-                <Avatar uid={r.uid} size={40} />
+                <Avatar uid={r.uid} name={rowName(r)} photoURL={rowPhoto(r)} size={40} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: selected[r.uid] ? 700 : 600, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.displayName}</div>
+                  <div style={{ fontSize: 14, fontWeight: selected[r.uid] ? 700 : 600, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {rowName(r)}
+                    {r.uid === myUid && <span style={{ fontSize: 11, color: t.textMuted, fontWeight: 500, marginLeft: 6 }}>My notes</span>}
+                  </div>
                 </div>
                 {selected[r.uid] && <Check size={18} color={t.primary} />}
               </div>

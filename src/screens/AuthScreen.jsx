@@ -144,7 +144,7 @@ export default function AuthScreen({ auth }) {
               {checkingUsername && <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: t.textMuted }}>checking…</span>}
               {usernameTaken && !checkingUsername && <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#FF3B30" }}>taken</span>}
             </div>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone number (optional)" inputMode="tel" style={inputStyle(t)} />
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone number (recommended)" inputMode="tel" style={inputStyle(t)} />
             <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5, padding: "0 2px" }}>
               Adding your real phone number helps friends find you automatically. Never enter a fake number — it could connect you with the wrong person.
             </div>
@@ -190,7 +190,7 @@ export default function AuthScreen({ auth }) {
               Continue with Google
             </button>
             <div style={{ fontSize: 11.5, color: t.textMuted, textAlign: "center", marginTop: 8, lineHeight: 1.5, padding: "0 10px" }}>
-              New here? Sign in with Google on the <span style={{ color: t.primary, fontWeight: 600 }}>Sign Up</span> page to create your account.
+              New here? Sign in with Google on the <span onClick={() => { setMode("signup"); setError(""); setUsernameTaken(false); }} style={{ color: t.primary, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>Sign Up</span> page to create your account.
             </div>
           </>
         )}

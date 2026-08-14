@@ -185,6 +185,13 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     // slide never leaves a parallel timeline bar sliding simultaneously.
     if (timerRef.current) clearTimeout(timerRef.current);
     progressRef.current = 0;
+    // The slide we're leaving becomes an "ahead" bar (width 0%) on the next
+    // render. Kill its transition BEFORE the width change lands so it snaps
+    // instantly instead of visibly shrinking on the previous slide.
+    if (barRef.current) {
+      barRef.current.style.transition = "none";
+      barRef.current.style.width = "100%";
+    }
     if (idx > 0) {
       setIdx((i) => i - 1);
     } else {

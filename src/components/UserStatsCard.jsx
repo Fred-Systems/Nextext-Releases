@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BarChart2, RefreshCw, MessagesSquare, Image, Film, Mic, MapPin, Paperclip, Contact, Clock, Timer, ArrowDownUp } from "lucide-react";
+import { BarChart2, RefreshCw, Share, MessagesSquare, Image, Film, Mic, MapPin, Paperclip, Contact, Clock, Timer, ArrowDownUp } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { getUserMessageStats, formatMembershipDuration, formatActiveTime, formatDuration, formatBytes } from "../firebase/stats";
@@ -24,6 +24,7 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [copiedShare, setCopiedShare] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -42,13 +43,37 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
   const active = formatActiveTime(activeTimeMs);
   const num = (v) => loading ? "…" : error ? "—" : (v ?? 0);
 
+  const shareStats = async () => {
+    if (!stats || error) return;
+    const lines = [
+      "📊 My NexText statistics",
+      `${stats.total} total messages (${stats.sent} sent / ${stats.received} received)`,
+      `${stats.chats} chats`,
+      `Member for ${duration}`,
+      `Active time: ${active}`,
+      ...ROWS.map(({ key, label }) => `${label}: ↑${stats.perType?.[key]?.sent ?? 0} ↓${stats.perType?.[key]?.recv ?? 0}`),
+    ];
+    const text = lines.join("\n");
+    try {
+      if (navigator.share) { await navigator.share({ text }); return; }
+      await navigator.clipboard.writeText(text);
+      setCopiedShare(true);
+      setTimeout(() => setCopiedShare(false), 2000);
+    } catch { /* user cancelled */ }
+  };
+
   return (
     <div style={{ background: t.surface, borderRadius: 14, padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <BarChart2 size={18} color={t.primary} />
         <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Your statistics</span>
         {!loading && !error && (
-          <span onClick={load} style={{ marginLeft: "auto", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600 }}>
+          <span onClick={shareStats} style={{ marginLeft: "auto", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, marginRight: 12 }}>
+            <Share size={13} /> {copiedShare ? "Copied!" : "Share"}
+          </span>
+        )}
+        {!loading && !error && (
+          <span onClick={load} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600 }}>
             <RefreshCw size={13} /> Refresh
           </span>
         )}

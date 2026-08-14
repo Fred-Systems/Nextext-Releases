@@ -140,7 +140,7 @@ function StatusViewerModal({ statusId, contacts, onClose, t }) {
   );
 }
 
-export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChange, initialViewStatuses, statusOrigin }) {
+export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChange, initialViewStatuses, statusOrigin, onConsumeInitialView }) {
   const { t } = useTheme();
   const { contacts } = useContacts(myUid);
   const [blockStatus, setBlockStatus] = useState(false);
@@ -233,9 +233,12 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       if (matching.length > 0) {
         setViewStoryOwner({ statuses: matching, initialIndex: 0, ownerUid });
         if (onStoryViewerChange) onStoryViewerChange(true);
+        // Consume the initial-view request so closing the story never
+        // re-triggers it (this was the source of an infinite replay loop).
+        if (onConsumeInitialView) onConsumeInitialView();
       }
     }
-  }, [initialViewStatuses, statuses, viewStoryOwner, onStoryViewerChange]);
+  }, [initialViewStatuses, statuses, viewStoryOwner, onStoryViewerChange, onConsumeInitialView]);
 
   const myStatuses = statuses.filter((s) => s.ownerId === myUid);
   const contactStatuses = statuses.filter((s) => s.ownerId !== myUid);

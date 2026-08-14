@@ -1233,6 +1233,7 @@ const TOUR_STEPS = [
   { target: "groups", tab: "groups", emoji: "👥", title: "Groups", body: "Create groups with your friends, broadcast lists, and organized conversations. The Groups tab filters your group chats." },
   { target: "settings", tab: "settings", emoji: "🔒", title: "Privacy & Settings", body: "Everything lives here: themes, privacy controls, permissions, chat locks, and parental controls. Swipe or tap the tabs below to move around." },
   { target: null, tab: null, emoji: "🤖", title: "NexText AI", body: "NexText AI is request-only — not everyone has it by default. If you want the assistant (8 personalities, image analysis, chat summaries), ask for access in Settings → NexText AI." },
+  { target: null, tab: null, emoji: "🎉", title: "You're all set!", body: "That's the tour! Need help, found a bug, or want something added? Send a message to the admin anytime from Settings → Account → Send Feedback — it goes straight to them. Have fun!" },
 ];
 
 function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
@@ -1296,7 +1297,7 @@ function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
         <div style={{ display: "flex", gap: 10 }}>
           {step > 0 && <button onClick={onPrev} style={{ padding: "11px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.25)", background: "transparent", color: "#fff", fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Back</button>}
           <button onClick={onSkip} style={{ flex: 1, padding: "11px 0", borderRadius: 12, border: "1px solid rgba(255,255,255,0.25)", background: "transparent", color: "#fff", fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Skip</button>
-          <button onClick={onNext} style={{ flex: 1.5, padding: "11px 0", borderRadius: 12, border: "none", background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>{step === total - 1 ? "Get Started" : "Next"}</button>
+          <button onClick={onNext} style={{ flex: 1.5, padding: "11px 0", borderRadius: 12, border: "none", background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>{step === total - 1 ? "Start Using NexText" : "Next"}</button>
         </div>
       </div>
     </>
@@ -1486,10 +1487,27 @@ function AppShell({ appLocked, setAppLocked }) {
   // it once the cold-start repair has run, so the Settings-trip recovery
   // happens invisibly behind the splash instead of flashing the screen.
   const [splashHold, setSplashHold] = useState(true);
+  // Hold the splash long enough for the awake-kick cold-start repair to run
+  // BEHIND it. On the auth screen (no chat interface yet) a plain 8s fallback
+  // releases it. After login/sign-up the splash is re-held until the awake-kick
+  // finishes, so the recovery's screen trip can never flash — even when the
+  // user spent minutes on the sign-up screen (the old mount-only timer would
+  // have expired long before the chat interface first appeared).
   useEffect(() => {
-    const t = setTimeout(() => setSplashHold(false), 8000);
+    if (!myUid) {
+      const t = setTimeout(() => setSplashHold(false), 8000);
+      return () => clearTimeout(t);
+    }
+    if (localStorage.getItem("nextext_splash_enabled") !== "off") {
+      setSplashFading(false);
+      setSplashVisible(true);
+    }
+    setSplashHold(true);
+    // Hard fallback so the re-held splash can never trap the user even if the
+    // awake-kick effect is deferred (e.g. by the welcome tour).
+    const t = setTimeout(() => setSplashHold(false), 12000);
     return () => clearTimeout(t);
-  }, []);
+  }, [myUid]);
   // Opaque full-screen cover shown ONLY while the Settings-trip recovery runs.
   // Unlike the splash (skippable in Settings / never shows if the user turned
   // it off), this cover is independent of any setting, so the trip is always
@@ -1642,13 +1660,26 @@ function AppShell({ appLocked, setAppLocked }) {
           // A real navigation is the only thing that reliably forces the
           // compositor to re-composite WITH the bottom bar. Run it under the
           // opaque repair cover so it can never flash — this cover works even
-          // when the splash is disabled (unlike the splash-hold).
+          // when the splash is disabled (unlike the splash-hold). The trip
+          // itself stays on the same-looking list UI (a chats <-> groups tab
+          // toggle, or list <-> status) instead of jumping to Settings, so
+          // even if the cover were somehow never painted the user would only
+          // ever see the chat list — never a Settings flash.
+          const cur = screenRef.current;
           setRepairCoverOn(true);
-          setScreen("settings");
-          await delay(50);
-          await delay(350);
-          setScreen("list");
-          setActiveNavTab("chats");
+          if (cur === "status") {
+            setScreen("list");
+            setActiveNavTab("chats");
+            await delay(50);
+            await delay(350);
+            setScreen("status");
+          } else {
+            setScreen("list");
+            setActiveNavTab((prev) => (prev === "groups" ? "chats" : "groups"));
+            await delay(50);
+            await delay(350);
+            setActiveNavTab("chats");
+          }
           setBootKick((n) => n + 1);
           await delay(120);
           setRepairCoverOn(false);
@@ -2473,7 +2504,7 @@ function AppShell({ appLocked, setAppLocked }) {
           if (key === "status") return (
             <div key="status" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Status">
-                <StatusScreen myUid={myUid} myName={auth.userDoc?.displayName || auth.userDoc?.username} onBack={() => { setScreen("list"); setActiveNavTab("chats"); setStoryViewerOpen(false); }} onStoryViewerChange={setStoryViewerOpen} initialViewStatuses={initialViewStatuses} statusOrigin={statusOrigin} />
+                <StatusScreen myUid={myUid} myName={auth.userDoc?.displayName || auth.userDoc?.username} onBack={() => { setScreen("list"); setActiveNavTab("chats"); setStoryViewerOpen(false); }} onStoryViewerChange={setStoryViewerOpen} initialViewStatuses={initialViewStatuses} statusOrigin={statusOrigin} onConsumeInitialView={() => setInitialViewStatuses(null)} />
               </PageErrorBoundary>
             </div>
           );
@@ -2551,6 +2582,7 @@ function AppShell({ appLocked, setAppLocked }) {
           otherUid={activeChat.otherUid}
           contact={activeChat.contact}
           openSettings={activeChat.openSettings}
+          userDoc={liveUserDoc || auth.userDoc}
           onBack={() => setScreen("list")}
           onOpenProfile={() => setScreen("contactProfile")}
           onOpenGroupInfo={openGroupInfo}

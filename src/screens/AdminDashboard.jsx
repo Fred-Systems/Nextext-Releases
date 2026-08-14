@@ -759,6 +759,22 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
             </div>
             <div onClick={() => {
+              const newVal = !sysConfig?.translateDisabled;
+              setSystemConfig({ translateDisabled: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginTop: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.translateDisabled ? "#FF3B30" : t.primary, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.translateDisabled ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+                  {sysConfig?.translateDisabled ? "Message translation: DISABLED" : "Message translation: enabled"}
+                </div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>
+                  When disabled, the "Translate" option is hidden from every message menu.
+                </div>
+              </div>
+            </div>
+            <div onClick={() => {
               const newVal = !settings?.hideForwardedCount;
               updateGlobalSettings({ hideForwardedCount: newVal }, myUid);
             }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginTop: 12 }}>
