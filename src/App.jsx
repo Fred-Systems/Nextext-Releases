@@ -2329,13 +2329,20 @@ function AppShell({ appLocked, setAppLocked }) {
     position: "absolute",
     top: 0,
     left: 0,
-    overflow: "hidden",
+    right: 0,
+    bottom: 0,
     fontFamily: appFont,
-    width: uiScale === 1 ? "100%" : `${(100 / uiScale).toFixed(4)}%`,
-    height: uiScale === 1 ? "100%" : `${(100 / uiScale).toFixed(4)}%`,
     paddingTop: "var(--safe-top)",
     paddingBottom: "var(--safe-bottom)",
-    ...(uiScale !== 1 ? { transform: `scale(${uiScale})`, transformOrigin: "top left" } : {}),
+    ...(uiScale !== 1 ? {
+      width: `${(100 / uiScale).toFixed(4)}%`,
+      height: `${(100 / uiScale).toFixed(4)}%`,
+      transform: `scale(${uiScale})`,
+      transformOrigin: "top left",
+    } : {
+      width: "100%",
+      height: "100%",
+    }),
   };
 
   if (auth.loading) {
@@ -2376,7 +2383,6 @@ function AppShell({ appLocked, setAppLocked }) {
           const effectiveIndex = pagerDragRef.current?.active ? pageIndex : activeIdx;
           const pageStyle = {
             position: "absolute", top: 0, bottom: 0, width: "100%",
-            overflow: "hidden",
             // Pages are positioned with plain `left` offsets (no transforms,
             // no willChange, no GPU compositor layers at rest). Promoting every
             // page to its own compositor layer via translate3d re-triggered the
