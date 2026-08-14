@@ -100,6 +100,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [isArchived, setIsArchived] = useState(false);
   const [fullscreenImage, setFullscreenImage] = useState(null);
   const [activeMsgId, setActiveMsgId] = useState(null);
+  const longPressTimer = useRef(null);
   const [pendingForwardMsg, setPendingForwardMsg] = useState(null);
   const [chatPickerMode, setChatPickerMode] = useState(null); // 'forward' | 'summarize'
   const [aiTextScale, setAiTextScale] = useState(() => {
@@ -596,7 +597,12 @@ export default function AIChatScreen({ myUid, onBack }) {
               ) : (
                 <div style={{ display: "flex", justifyContent: isMine ? "flex-end" : "flex-start", marginTop: 8 }}>
                   <div style={{ position: "relative", maxWidth: "78%" }}>
-                    <div style={{ padding: "10px 14px", borderRadius: isMine ? "14px 14px 4px 14px" : "14px 14px 14px 4px", background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText, fontSize: 14 * aiTextScale, lineHeight: 1.4, boxShadow: "0 1px 2px rgba(0,0,0,0.08)", wordBreak: "break-word", overflowWrap: "break-word", minWidth: 0 }}>
+                    <div
+                      onTouchStart={() => { longPressTimer.current = setTimeout(() => copyMessageText(m.text), 500); }}
+                      onTouchEnd={() => { clearTimeout(longPressTimer.current); }}
+                      onTouchCancel={() => { clearTimeout(longPressTimer.current); }}
+                      style={{ padding: "10px 14px", borderRadius: isMine ? "14px 14px 4px 14px" : "14px 14px 14px 4px", background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText, fontSize: 14 * aiTextScale, lineHeight: 1.4, boxShadow: "0 1px 2px rgba(0,0,0,0.08)", wordBreak: "break-word", overflowWrap: "break-word", minWidth: 0 }}
+                    >
                       {m.text}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                         <span style={{ fontSize: 10.5, opacity: 0.55 }}>

@@ -1317,6 +1317,7 @@ function AppShell({ appLocked, setAppLocked }) {
   const [recordingBarScale, setRecordingBarScale] = useState(() => { try { const v = Number(localStorage.getItem("nextext_recording_bar_scale")); return v && v >= 0.6 && v <= 1.6 ? v : 1; } catch { return 1; } });
   const [showScrollDown, setShowScrollDown] = useState(() => localStorage.getItem(SCROLL_DOWN_KEY) !== "false");
   const [animatedScrollEntry, setAnimatedScrollEntry] = useState(() => localStorage.getItem("nextext_animated_scroll_entry") === "true");
+  const [emojiAnimations, setEmojiAnimations] = useState(() => localStorage.getItem("nextext_emoji_animations") !== "off");
   const [compactList, setCompactList] = useState(() => localStorage.getItem("nextext_compact_list") === "true");
   const [showThemeSheet, setShowThemeSheet] = useState(false);
   const [activeNavTab, setActiveNavTab] = useState("chats");
@@ -2079,6 +2080,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   useEffect(() => { localStorage.setItem("nextext_swipe_animation", swipeAnimationOn ? "on" : "off"); }, [swipeAnimationOn]);
   useEffect(() => { localStorage.setItem("nextext_swipe_speed", swipeSpeed); }, [swipeSpeed]);
   useEffect(() => { localStorage.setItem("nextext_search_bar_scale", String(searchBarScale)); }, [searchBarScale]);
+  useEffect(() => { localStorage.setItem("nextext_emoji_animations", emojiAnimations ? "on" : "off"); }, [emojiAnimations]);
 
   // Re-lock app whenever the user returns to it from the background.
   // Uses Capacitor's appStateChange (fires reliably on Android WebView when the
@@ -2490,14 +2492,14 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           if (key === "chats") return (
             <div key="chats" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Chats">
-                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} />
+                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "chats"} />
               </PageErrorBoundary>
             </div>
           );
           if (key === "groups") return (
             <div key="groups" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Groups">
-                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="groups" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} />
+                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="groups" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "groups"} />
               </PageErrorBoundary>
             </div>
           );
@@ -2588,7 +2590,10 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           onOpenGroupInfo={openGroupInfo}
           onOpenChat={openChat}
           showScrollDownSetting={showScrollDown}
+          scrollDownSize={scrollDownSize}
+          scrollDownPos={scrollDownPos}
           animatedScrollEntry={animatedScrollEntry}
+          emojiAnimations={emojiAnimations}
           micMode={micMode}
           recordingBarScale={recordingBarScale}
         />

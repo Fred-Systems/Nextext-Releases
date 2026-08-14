@@ -2882,7 +2882,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             {translatingLang && (
               <div style={{ fontSize: 13, color: t.primary, fontWeight: 600, padding: "10px 0", flexShrink: 0 }}>Translating…</div>
             )}
-            <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
+            <div style={{ overflowY: "auto", flex: 1, minHeight: 0, maxHeight: "calc(72vh - 120px)" }}>
               {LANGUAGES.map((l) => (
                 <div key={l.code} onClick={() => { if (!translatingLang) handleTranslateSelect(l.code); }} style={{ padding: "11px 4px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 10, opacity: translatingLang ? 0.5 : 1 }}>
                   <Languages size={15} color={t.textMuted} />
