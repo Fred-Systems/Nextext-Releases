@@ -644,7 +644,15 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           ))}
         </div>
         <div style={{ position: "relative", flexShrink: 0 }}>
-          <button onClick={() => setShowChatSortMenu((v) => !v)} title="Sort chats" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowChatSortMenu((v) => !v); }}
+            onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); setShowChatSortMenu((v) => !v); }}
+            onPointerDown={(e) => { e.stopPropagation(); }}
+            title="Sort chats"
+            aria-label="Sort chats"
+            style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", touchAction: "manipulation" }}
+          >
             <ArrowDownWideNarrow size={16} color={t.primary} />
           </button>
           {showChatSortMenu && createPortal(
@@ -781,7 +789,15 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted, marginBottom: 8, marginTop: pendingContacts.length > 0 ? 16 : 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span>YOUR CONTACTS</span>
             <div style={{ position: "relative" }}>
-              <button onClick={() => setShowSortMenu((v) => !v)} title="Sort contacts" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowSortMenu((v) => !v); }}
+                onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); setShowSortMenu((v) => !v); }}
+                onPointerDown={(e) => { e.stopPropagation(); }}
+                title="Sort contacts"
+                aria-label="Sort contacts"
+                style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", touchAction: "manipulation" }}
+              >
                 <ArrowDownWideNarrow size={16} color={t.primary} />
               </button>
               {showSortMenu && createPortal(

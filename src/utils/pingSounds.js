@@ -63,10 +63,15 @@ export function playVoicePing() {
 
 // End-of-burst chime: a distinct, brighter completion sound played once when a
 // RUN of consecutive voice notes (2+) finishes — on top of the regular per-note
-// ping. Toggleable via the nextext_voice_end_chime setting (default on).
+// ping. The master chime toggle is `nextext_voice_end_chime`. The SEPARATE
+// "2+ streak" toggle is `nextext_voice_streak_chime`: when that one is OFF,
+// the regular per-note chime still plays but the brighter burst-complete
+// arpeggio is suppressed (so streaks end silently after the last note).
 export function playVoiceEndChime() {
   try {
     if (localStorage.getItem("nextext_voice_end_chime") === "off") return;
+    // The 2+ streak special chime is a separate, user-facing toggle.
+    if (localStorage.getItem("nextext_voice_streak_chime") === "off") return;
     pingCtx = pingCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (pingCtx.state === "suspended") pingCtx.resume().catch(() => {});
     const ac = pingCtx;

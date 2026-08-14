@@ -29,6 +29,10 @@ import { useSystemConfigHook, requestAIAccess, setAIPersonality, PERSONALITIES }
 import AppLockScreen from "./screens/AppLockScreen";
 import StatusScreen from "./screens/StatusScreen";
 import GroupInfoScreen from "./screens/GroupInfoScreen";
+import CalculatorScreen from "./screens/CalculatorScreen";
+import NotepadScreen from "./screens/NotepadScreen";
+import IconPickerScreen from "./screens/IconPickerScreen";
+import { getActiveProfile } from "./services/iconManager";
 import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead } from "./firebase/notifications";
 import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
@@ -315,7 +319,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -570,6 +574,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         <SectionCard title="Privacy & Security" emoji="🔒" sectionKey="privacy">
           <Row icon={<Shield size={18} color={t.primary} />} label="Parental Controls" sub="Manage restrictions" onClick={() => onNavigate("parental")} />
           <Row icon={<Lock size={18} color={t.primary} />} label="Privacy" sub="Last seen, read receipts, status" onClick={() => onNavigate("privacy")} />
+          <Row icon={<Palette size={18} color={t.primary} />} label="App icon & name" sub="Change launcher icon or hide as Calculator / Notes" onClick={() => onNavigate("iconPicker")} />
           <Row icon={<ShieldCheck size={18} color={t.primary} />} label="Permissions" sub="Microphone, camera, notifications, contacts" onClick={() => onNavigate("permissions")} />
 
           {/* App protection lock */}
@@ -759,7 +764,13 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Voice note chimes</span>
               <Toggle on={voiceEndChimeOn} onClick={() => { const next = !voiceEndChimeOn; setVoiceEndChimeOn(next); localStorage.setItem("nextext_voice_end_chime", next ? "on" : "off"); }} />
             </div>
-            {voiceEndChimeOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>A chime plays after every voice note, plus a brighter completion chime when a run of 2+ notes finishes.</div>}
+            {voiceEndChimeOn && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>Special "2+ voice notes in a row" chime</span>
+                <Toggle on={voiceStreakChimeOn} onClick={() => { const next = !voiceStreakChimeOn; setVoiceStreakChimeOn(next); localStorage.setItem("nextext_voice_streak_chime", next ? "on" : "off"); }} />
+              </div>
+            )}
+            {voiceEndChimeOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>A chime plays after every voice note. With the special 2+ chime on (default), a brighter completion chime plays when a streak of 2+ notes ends.</div>}
             {voiceEndChimeOn && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                 {PING_SOUNDS.map((s) => (
@@ -815,35 +826,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                     background: voicePlayerStyle === opt.id ? t.primary : t.bg,
                     color: voicePlayerStyle === opt.id ? t.bubbleMeText : t.text,
                     border: `1px solid ${voicePlayerStyle === opt.id ? t.primary : t.border}`,
-                  }}
-                >
-                  {opt.label}
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Voice note recording mode</span>
-            </div>
-            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>How the microphone button behaves when pressed.</div>
-            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-              {[
-                { id: "hold", label: "Hold to record" },
-                { id: "tap", label: "Tap to record" },
-              ].map((opt) => (
-                <div
-                  key={opt.id}
-                  onClick={() => changeMicMode(opt.id)}
-                  style={{
-                    flex: 1,
-                    padding: "7px 0",
-                    textAlign: "center",
-                    borderRadius: 8,
-                    fontSize: 12.5,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    background: micMode === opt.id ? t.primary : t.bg,
-                    color: micMode === opt.id ? t.bubbleMeText : t.text,
-                    border: `1px solid ${micMode === opt.id ? t.primary : t.border}`,
                   }}
                 >
                   {opt.label}
@@ -1356,6 +1338,17 @@ function AppShell({ appLocked, setAppLocked }) {
   const globalSettings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
   const [screen, setScreen] = useState("list");
+  // App-icon / app-name disguise gate. Reads the active profile from
+  // iconManager on every render. When the profile is a "calculator" or
+  // "notes" disguise AND `disguiseUnlocked` is still false, we render the
+  // disguise screen INSTEAD of the real app — the user has to enter their
+  // PIN (calculator) or type their keyword in a note (notes) to get past
+  // it. The disguise's onUnlock callback flips `disguiseUnlocked` to true,
+  // and from that moment on we render the regular app (so coming back into
+  // a focused WebView doesn't re-trigger the gate).
+  const [disguiseUnlocked, setDisguiseUnlocked] = useState(false);
+  const activeProfile = getActiveProfile();
+  const disguiseKind = activeProfile && (activeProfile.kind === "calculator" || activeProfile.kind === "notes") ? activeProfile.kind : null;
   const [activeChat, setActiveChat] = useState(null);
   const [activeGroup, setActiveGroup] = useState(null);
   const [uiScale, setUiScale] = useState(() => Number(localStorage.getItem(UI_SCALE_KEY)) || 1);
@@ -1402,16 +1395,13 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const [linkPreviewsOn, setLinkPreviewsOn] = useState(() => localStorage.getItem("nextext_link_previews") !== "off");
   const [pinchZoomOn, setPinchZoomOn] = useState(() => localStorage.getItem("nextext_pinch_zoom") !== "false");
   const [voiceEndChimeOn, setVoiceEndChimeOn] = useState(() => localStorage.getItem("nextext_voice_end_chime") !== "off");
+  const [voiceStreakChimeOn, setVoiceStreakChimeOn] = useState(() => localStorage.getItem("nextext_voice_streak_chime") !== "off");
   const [scrollDownSize, setScrollDownSize] = useState(() => { try { const v = Number(localStorage.getItem("nextext_scroll_down_size")); return v >= 14 && v <= 40 ? v : 22; } catch { return 22; } });
   const [scrollDownPos, setScrollDownPos] = useState(() => { try { const v = localStorage.getItem("nextext_scroll_down_pos"); return ["center", "left", "right"].includes(v) ? v : "center"; } catch { return "center"; } });
   const [barEpoch, setBarEpoch] = useState(0);
   const [pingSoundId, setPingSoundId] = useState(() => { try { return localStorage.getItem("nextext_voice_ping_sound") || "warm"; } catch { return "warm"; } });
   const [voicePlayerStyle, setVoicePlayerStyle] = useState(() => { try { return localStorage.getItem("nextext_voice_player_style") || "waveform"; } catch { return "waveform"; } });
   const [micMode, setMicMode] = useState(() => { try { return localStorage.getItem("nextext_mic_mode") || "hold"; } catch { return "hold"; } });
-  const changeMicMode = (mode) => {
-    setMicMode(mode);
-    try { localStorage.setItem("nextext_mic_mode", mode); } catch {}
-  };
   const [autoUpdateCheckOn, setAutoUpdateCheckOn] = useState(() => localStorage.getItem("nextext_auto_update_check") !== "off");
   const shellRef = useRef(null);
   const pageRefs = useRef({});
@@ -1758,6 +1748,13 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       // so nothing ever flashes. A separate 8s fallback guarantees the splash
       // can't trap the user even if this effect never reaches this point.
       setSplashHold(false);
+      // Force a fresh bar remount + boot repaint the moment the splash is
+      // released. On Android WebViews with a stuck compositor, the bar's
+      // `key={barEpoch}` might not re-attach to the new frame until the React
+      // tree repaints — bumping it here is the most reliable way to make the
+      // bar appear the instant the splash lets go of pointer events.
+      setBarEpoch((n) => n + 1);
+      setBootKick((n) => n + 1);
     }, 2200);
     return () => { cancelled = true; clearTimeout(settle); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2003,10 +2000,28 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       return;
     }
     if (splashHold) return;
-    const fadeTimer = setTimeout(() => setSplashFading(true), 300);
-    const dismissTimer = setTimeout(() => { setSplashVisible(false); }, 1000);
-    return () => { clearTimeout(fadeTimer); clearTimeout(dismissTimer); };
+    // Hard kill: even if a stalled WebView swallows the transition-end event
+    // and the dismiss timer never fires, force-unmount after 2 seconds so the
+    // overlay can never stay click-blocking indefinitely.
+    const fadeTimer = setTimeout(() => setSplashFading(true), 200);
+    const dismissTimer = setTimeout(() => { setSplashVisible(false); }, 900);
+    const hardKillTimer = setTimeout(() => { setSplashVisible(false); }, 2000);
+    return () => { clearTimeout(fadeTimer); clearTimeout(dismissTimer); clearTimeout(hardKillTimer); };
   }, [showSplash, splashHold]);
+
+  // Absolute safety net: any time the user is actively on a real screen (list /
+  // status / settings / chat / etc.) and the splash overlay is still mounted,
+  // unmount it. This catches every edge case where the timer-based dismissal
+  // failed (backgrounded app, slow WebView, transition-end dropped) and would
+  // otherwise leave a click-blocking overlay on top of the chat list AND bottom
+  // nav — the reported "everything is dead until I tap Settings" bug.
+  useEffect(() => {
+    if (!splashVisible) return;
+    const t = setTimeout(() => {
+      if (splashVisible) setSplashVisible(false);
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [splashVisible, screen]);
 
   // Auto-check for app updates once after login (delayed 5s to not block load).
   // Only runs when the "Notify me about app updates" setting is on, and skips
@@ -2495,6 +2510,26 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   }
   const isAdmin = auth.userDoc?.role === "admin" || auth.userDoc?.isAdmin === true;
 
+  // Disguise gate runs BEFORE the real app shell renders. We never mount the
+  // chat list / bottom nav / top bar while a disguise is active — so the
+  // launcher icon AND the visible UI both line up. Once the user has unlocked
+  // once, disguiseUnlocked stays true until they kill the process, which is
+  // the natural rhythm of a launcher-icon-swap disguise.
+  if (disguiseKind === "calculator" && !disguiseUnlocked) {
+    return (
+      <CalculatorScreen
+        onUnlock={() => setDisguiseUnlocked(true)}
+      />
+    );
+  }
+  if (disguiseKind === "notes" && !disguiseUnlocked) {
+    return (
+      <NotepadScreen
+        onUnlock={() => setDisguiseUnlocked(true)}
+      />
+    );
+  }
+
   return (
     <>
     <div
@@ -2609,13 +2644,12 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                 searchBarScale={searchBarScale}
                 setSearchBarScale={setSearchBarScale}
                 setLiveUserDoc={setLiveUserDoc}
-                micMode={micMode}
-                setMicMode={setMicMode}
-                changeMicMode={changeMicMode}
                 pinchZoomOn={pinchZoomOn}
                 setPinchZoomOn={setPinchZoomOn}
                 voiceEndChimeOn={voiceEndChimeOn}
                 setVoiceEndChimeOn={setVoiceEndChimeOn}
+                voiceStreakChimeOn={voiceStreakChimeOn}
+                setVoiceStreakChimeOn={setVoiceStreakChimeOn}
                 pingSoundId={pingSoundId}
                 setPingSoundId={setPingSoundId}
                 voicePlayerStyle={voicePlayerStyle}
@@ -2679,6 +2713,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       {screen === "parental" && <ParentalControlsScreen myUid={myUid} onBack={() => setScreen("settings")} />}
       {screen === "feedback" && <FeedbackScreen myUid={myUid} myUsername={auth.userDoc?.username} onBack={() => setScreen("settings")} />}
       {screen === "admin" && isAdmin && <AdminDashboard myUid={myUid} onBack={() => setScreen("settings")} />}
+      {screen === "iconPicker" && <IconPickerScreen onBack={() => setScreen("settings")} />}
       {screen === "aiChat" && (
         <AIChatScreen myUid={myUid} onBack={() => setScreen("list")} />
       )}
@@ -2777,7 +2812,16 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
             position: "fixed", inset: 0, zIndex: 999999, background: "#121B22",
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 28,
             opacity: splashFading ? 0 : 1, transition: "opacity 0.6s ease-out",
+            // Pointer-events MUST be "none" the moment fading starts. Previously
+            // it stayed "auto" until the transition finished, which on a stuck
+            // Android WebView compositor would block taps on the chat list AND
+            // bottom nav for the full 600ms — leaving the user with an app
+            // where nothing responds. Now: once the fade begins, every click
+            // passes through, so even a stalled compositor can never trap input.
             pointerEvents: splashFading ? "none" : "auto",
+            // A safety fallback so even if the React unmount never fires
+            // (WebView pause / transition-end swallowed) the overlay doesn't
+            // stay click-blocking forever. The 1s hard kill is below.
           }}
         >
           <img src="./icon.png" alt="" style={{ width: 180, height: 180, objectFit: "contain" }} />

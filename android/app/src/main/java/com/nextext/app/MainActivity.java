@@ -92,6 +92,57 @@ public class MainActivity extends BridgeActivity {
 
         // Cold start from a tapped notification → route into that chat.
         handleNotificationTap(getIntent());
+
+        // Apply saved app-icon profile on cold start. On a fresh install the
+        // MainActivity is the only enabled launcher entry, so this is a no-op.
+        // After the user picks a disguise, the alias gets enabled and the
+        // process is killed — on the next launch the launcher shows the alias
+        // entry directly, but the alias only renders properly if it stays
+        // enabled across process restarts. setComponentEnabledSetting persists
+        // through uninstall reinstalls only with the default-component setting,
+        // so we re-apply the saved profile here on every cold start as a
+        // belt-and-braces guarantee. The JS side has already written the value
+        // to a SharedPreferences file (`nextext_icon_profile`) via the bridge.
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("NexTextPrefs", MODE_PRIVATE);
+            String profile = prefs.getString("nextext_icon_profile", "default");
+            applyIconProfile(profile);
+        } catch (Exception ignored) { /* first launch with no saved profile */ }
+    }
+
+    /**
+     * Enables exactly one launcher entry — either MainActivity (the "default"
+     * profile) or one of the MainActivityAlias* activities. Mirrors the same
+     * profile table in NextextNativePlugin.setAppIcon(). Runs on a worker
+     * thread because PackageManager writes are blocking on some devices.
+     */
+    private void applyIconProfile(final String profileId) {
+        new Thread(() -> {
+            try {
+                android.content.pm.PackageManager pm = getPackageManager();
+                String ctxPkg = getPackageName();
+                String[][] profiles = new String[][] {
+                    { "default", "com.nextext.app.MainActivity" },
+                    { "icon1",   "com.nextext.app.MainActivityAlias1" },
+                    { "icon2",   "com.nextext.app.MainActivityAlias2" },
+                    { "icon3",   "com.nextext.app.MainActivityAlias3" },
+                    { "icon4",   "com.nextext.app.MainActivityAlias4" },
+                    { "icon5",   "com.nextext.app.MainActivityAlias5" },
+                    { "icon6",   "com.nextext.app.MainActivityAlias6" },
+                    { "icon7",   "com.nextext.app.MainActivityAlias7" }
+                };
+                for (String[] p : profiles) {
+                    android.content.ComponentName cn = new android.content.ComponentName(ctxPkg, p[1]);
+                    int newState = p[0].equals(profileId)
+                        ? android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                        : android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
+                    try {
+                        pm.setComponentEnabledSetting(cn, newState,
+                            android.content.pm.PackageManager.DONT_KILL_APP);
+                    } catch (Exception ignored) { /* unknown alias — skip */ }
+                }
+            } catch (Exception ignored) { /* best-effort; first launch with no prefs */ }
+        }).start();
     }
 
     @Override

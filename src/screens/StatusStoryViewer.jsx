@@ -106,15 +106,23 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   // Loop breaker + clean mount reset: reset the active index timer state to
   // zero on mount, clearing any stray timers so the first slide's filling line
   // starts from 0% with a smooth linear transition (never snaps to 100%).
+  // Also clear the completed-indices set: when the user closes and re-opens
+  // a user's story, the new run starts fresh (no "already-viewed" fill on
+  // the very first slide), and previous-viewer state doesn't leak across
+  // different story owners.
   useEffect(() => {
     completedRef.current = false;
     progressRef.current = 0;
+    initializedRef.current = false;
+    setCompletedIndices(new Set());
+    setPaused(false);
+    setShowViewers(false);
     if (timerRef.current) clearTimeout(timerRef.current);
-    if (!initializedRef.current) {
-      initializedRef.current = true;
-      setIdx(initialIndex);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (videoRef.current) { try { videoRef.current.pause(); videoRef.current.currentTime = 0; } catch { /* noop */ } }
+    if (bgAudioRef.current) { try { bgAudioRef.current.pause(); bgAudioRef.current.currentTime = 0; } catch { /* noop */ } }
+    setIdx(initialIndex);
+    initializedRef.current = true;
+  }, [ownerUid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Bounds check: if idx exceeds statuses length (statuses changed), clamp it
   useEffect(() => {

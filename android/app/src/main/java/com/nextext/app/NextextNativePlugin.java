@@ -927,6 +927,100 @@ public class NextextNativePlugin extends Plugin {
         call.resolve();
     }
 
+    @PluginMethod
+    public void setAppIcon(PluginCall call) {
+        // Toggles the launcher icon by enabling exactly one <activity-alias>
+        // (matching the user's chosen profile) and disabling every other one,
+        // INCLUDING the default MainActivity. We then kill the process so the
+        // launcher picks up the change instantly; Android does not refresh the
+        // launcher's icon until the app process is no longer running. Calling
+        // process killing on a background task avoids touching the UI thread.
+        // The chosen profile is mirrored to SharedPreferences so MainActivity
+        // can re-apply it on every cold start (setComponentEnabledSetting does
+        // not always survive an OS reboot, so we re-apply defensively).
+        final String profileId = call.getString("profileId", "default");
+        final String ctxPkg = getContext().getPackageName();
+        new Thread(() -> {
+            try {
+                android.content.pm.PackageManager pm = getContext().getPackageManager();
+                // id → component-name table. Keep this in sync with the
+                // <activity-alias> entries in AndroidManifest.xml.
+                String[][] profiles = new String[][] {
+                    { "default",  "com.nextext.app.MainActivity" },
+                    { "icon1",    "com.nextext.app.MainActivityAlias1" },
+                    { "icon2",    "com.nextext.app.MainActivityAlias2" },
+                    { "icon3",    "com.nextext.app.MainActivityAlias3" },
+                    { "icon4",    "com.nextext.app.MainActivityAlias4" },
+                    { "icon5",    "com.nextext.app.MainActivityAlias5" },
+                    { "icon6",    "com.nextext.app.MainActivityAlias6" },
+                    { "icon7",    "com.nextext.app.MainActivityAlias7" }
+                };
+                for (String[] p : profiles) {
+                    String id = p[0];
+                    String comp = p[1];
+                    android.content.ComponentName cn = new android.content.ComponentName(ctxPkg, comp);
+                    int newState = id.equals(profileId)
+                        ? android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                        : android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
+                    try {
+                        pm.setComponentEnabledSetting(cn, newState,
+                            android.content.pm.PackageManager.DONT_KILL_APP);
+                    } catch (Exception ignored) { /* unknown alias — skip */ }
+                }
+                // Persist to SharedPreferences so MainActivity.applyIconProfile
+                // can re-apply on cold start. JS-side state lives in
+                // localStorage, which the WebView might drop independently.
+                try {
+                    android.content.SharedPreferences prefs = getContext().getSharedPreferences("NexTextPrefs", android.content.Context.MODE_PRIVATE);
+                    prefs.edit().putString("nextext_icon_profile", profileId).apply();
+                } catch (Exception ignored) { /* best-effort */ }
+                JSObject ret = new JSObject();
+                ret.put("applied", true);
+                ret.put("profileId", profileId);
+                call.resolve(ret);
+                // Kill this process so the launcher re-reads the enabled state
+                // and shows the new icon. The app will be cold-started on the
+                // next tap. Without this, Android keeps the old icon until the
+                // process exits naturally.
+                try {
+                    android.os.Process.killProcess(android.os.Process.myPid());
+                } catch (Exception ignored) { /* fallback below */ }
+            } catch (final Exception e) {
+                call.reject("setAppIcon failed: " + (e.getMessage() == null ? String.valueOf(e) : e.getMessage()));
+            }
+        }).start();
+    }
+
+    @PluginMethod
+    public void getAppIconProfiles(PluginCall call) {
+        // Static list mirroring AndroidManifest.xml — exposed to JS so the
+        // Settings screen can show live previews without having to ship a
+        // hardcoded list on the JS side too.
+        org.json.JSONArray arr = new org.json.JSONArray();
+        String[][] profiles = new String[][] {
+            { "default",  "NexText",         "ic_icon1" },
+            { "icon1",    "NexText",         "ic_icon1" },
+            { "icon2",    "NexText",         "ic_icon2" },
+            { "icon3",    "NexText",         "ic_icon3" },
+            { "icon4",    "NexText",         "ic_icon4" },
+            { "icon5",    "NexText",         "ic_icon5" },
+            { "icon6",    "Calculator",      "ic_icon6" },
+            { "icon7",    "Notes",           "ic_icon7" }
+        };
+        try {
+            for (String[] p : profiles) {
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("id", p[0]);
+                o.put("label", p[1]);
+                o.put("iconPath", "/" + p[2] + ".png");
+                arr.put(o);
+            }
+        } catch (Exception ignored) { /* JSONObject only throws on NPE, impossible here */ }
+        JSObject ret = new JSObject();
+        ret.put("profiles", arr);
+        call.resolve(ret);
+    }
+
     private void stopAndReleaseRecorder() {
         stopAmplitudeTimer();
         android.media.MediaRecorder r = activeRecorder;

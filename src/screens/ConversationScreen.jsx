@@ -782,6 +782,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const onMessagesTouchStart = (e) => {
     if (!pinchEnabled() || e.touches.length !== 2) { pinchStartRef.current = null; return; }
     const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    // Smooth zoom: lock in the live scale at gesture start so each move
+    // updates smoothly relative to the *current* scale, not the start scale
+    // (avoids the old "jumps back to start scale when fingers drift" feel).
     pinchStartRef.current = { dist: d, scale: chatTextScale };
   };
 
@@ -789,8 +792,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (!pinchEnabled() || e.touches.length !== 2 || !pinchStartRef.current) return;
     const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
     if (pinchStartRef.current.dist > 0) {
-      const next = Math.min(1.6, Math.max(0.6, pinchStartRef.current.scale * (d / pinchStartRef.current.dist)));
-      if (Math.abs(next - chatTextScale) >= 0.03) setChatTextScale(Math.round(next * 20) / 20);
+      const ratio = d / pinchStartRef.current.dist;
+      // Fine-grained updates: every 1% change in distance updates the scale
+      // (0.005 step instead of the old 0.03 — that's a 6× smoother gesture).
+      const next = Math.min(1.6, Math.max(0.6, pinchStartRef.current.scale * ratio));
+      if (Math.abs(next - chatTextScale) >= 0.005) setChatTextScale(Math.round(next * 200) / 200);
     }
   };
 
@@ -1896,17 +1902,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       cancelVoiceRecording();
       return;
     }
-    if (micMode === "tap") {
-      // Tap mode: a tap on the mic keeps recording in bar mode with
-      // pause/restart/cancel and an explicit Send button.
-      setRecordingTapMode(true);
-      return;
-    }
+    // Unified behavior: BOTH gestures work at all times. A quick tap (<300ms)
+    // opens the tap-mode bar (pause / cancel / send). A longer hold releases
+    // to send immediately. The old per-mode toggle is gone — whichever the
+    // user does, it does the right thing.
     if (heldMs >= 300) {
       // Long hold -> release to send.
       stopVoiceRecording(true);
     } else {
-      // Quick tap -> keep recording in bar mode with pause/restart/cancel/send.
+      // Quick tap -> keep recording in bar mode with pause/cancel/send.
       setRecordingTapMode(true);
     }
   };
@@ -2793,7 +2797,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 onPointerUp={micPointerUp}
                 onPointerCancel={() => cancelVoiceRecording()}
                 onContextMenu={(e) => e.preventDefault()}
-                title={micMode === "tap" ? "Tap to record. Hold to record with controls." : "Hold to record, release to send. Tap to record with controls."}
+                title="Hold to record, release to send. Tap to record with controls."
                 style={{ width: Math.max(36, Math.round(42 * composerHeight)), height: Math.max(36, Math.round(42 * composerHeight)), borderRadius: "50%", background: t.primary, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, touchAction: "none", WebkitTapHighlightColor: "transparent" }}>
                 <Mic size={Math.max(16, Math.round(18 * composerHeight))} color={t.bubbleMeText} />
               </button>
