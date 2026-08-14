@@ -1366,6 +1366,7 @@ function AppShell({ appLocked, setAppLocked }) {
   const [showSplash, setShowSplash] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
   const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
   const [splashFading, setSplashFading] = useState(false);
+  const [splashHold, setSplashHold] = useState(true);
   const [aiSidebarOn, setAiSidebarOn] = useState(() => localStorage.getItem("nextext_ai_sidebar") !== "off");
   const [searchMode, setSearchMode] = useState(() => localStorage.getItem("nextext_search_mode") || "visible");
   const [topBarVisible, setTopBarVisible] = useState(() => localStorage.getItem("nextext_top_bar_visible") !== "false");
