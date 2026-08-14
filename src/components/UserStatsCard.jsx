@@ -20,7 +20,7 @@ const ROWS = [
 // every chat the user is in, membership age + total active time, plus media
 // volumes (video/voice playtime and total media size, each split sent/recv).
 // Hidden for everyone when the admin enables the `hideUserStats` setting.
-export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
+export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, contacts = [] }) {
   const { t } = useTheme();
   const globalSettings = useGlobalSettings();
   const [stats, setStats] = useState(null);
@@ -29,6 +29,7 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
   const [copiedShare, setCopiedShare] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareText, setShareText] = useState("");
+  const [shareMode, setShareMode] = useState("sheet"); // "sheet" | "contacts"
 
   const load = () => {
     setLoading(true);
@@ -96,6 +97,22 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
     }
     setShareText(text);
     setShareOpen(true);
+    setShareMode("sheet");
+  };
+
+  const shareWithContact = async (contact) => {
+    try {
+      const text = shareText;
+      if (!text) return;
+      // Send statistics as a message to the contact's chat
+      const { getOrCreateDirectChat, sendTextMessage } = await import("../firebase/chats");
+      const chatId = getOrCreateDirectChat(myUid, contact.uid);
+      await sendTextMessage(chatId, myUid, text);
+      setShareOpen(false);
+      setShareMode("sheet");
+    } catch (err) {
+      console.error("Failed to share stats with contact:", err);
+    }
   };
 
   const copyShareText = async () => {
@@ -207,21 +224,51 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
       {error && <div style={{ fontSize: 12.5, color: "#FF3B30", marginTop: 8 }}>Couldn't load stats — check your connection and try Refresh.</div>}
 
       {shareOpen && createPortal(
-        <div onClick={() => setShareOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2147482000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div onClick={() => { setShareOpen(false); setShareMode("sheet"); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2147482000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 320, background: t.surface, borderRadius: 16, padding: 18, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Share your statistics</span>
-              <X size={20} color={t.textMuted} onClick={() => setShareOpen(false)} style={{ cursor: "pointer" }} />
+              <X size={20} color={t.textMuted} onClick={() => { setShareOpen(false); setShareMode("sheet"); }} style={{ cursor: "pointer" }} />
             </div>
-            <div style={{ background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, fontSize: 12.5, color: t.text, whiteSpace: "pre-wrap", maxHeight: 260, overflowY: "auto", lineHeight: 1.6, userSelect: "text" }}>
-              {shareText}
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button onClick={() => setShareOpen(false)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Close</button>
-              <button onClick={copyShareText} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                <Copy size={14} /> {copiedShare ? "Copied!" : "Copy"}
-              </button>
-            </div>
+            {shareMode === "sheet" ? (
+              <>
+                <div style={{ background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, fontSize: 12.5, color: t.text, whiteSpace: "pre-wrap", maxHeight: 260, overflowY: "auto", lineHeight: 1.6, userSelect: "text" }}>
+                  {shareText}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <button onClick={() => { setShareOpen(false); setShareMode("sheet"); }} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Close</button>
+                  <button onClick={copyShareText} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Copy size={14} /> {copiedShare ? "Copied!" : "Copy"}
+                  </button>
+                  <button onClick={() => setShareMode("contacts")} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: t.primaryLight, color: t.primary, fontWeight: 700, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Users size={14} /> Send to contact
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 8 }}>Select a contact to send stats to:</div>
+                <div style={{ maxHeight: 260, overflowY: "auto" }}>
+                  {contacts.filter(c => c.status === "accepted").map((c) => (
+                    <div key={c.uid} onClick={() => shareWithContact(c)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, cursor: "pointer", background: t.bg, border: `1px solid ${t.border}`, marginBottom: 6 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <span style={{ fontSize: 14 }}>{c.profile?.displayName?.charAt(0) || "?"}</span>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.profile?.displayName || "Unknown"}</div>
+                        <div style={{ fontSize: 12, color: t.textMuted }}>@{c.profile?.username || c.uid.slice(0, 6)}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {contacts.filter(c => c.status === "accepted").length === 0 && (
+                    <div style={{ textAlign: "center", padding: 20, color: t.textMuted }}>No contacts available</div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <button onClick={() => setShareMode("sheet")} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Back</button>
+                </div>
+              </>
+            )}
           </div>
         </div>,
         document.body

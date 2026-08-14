@@ -1070,7 +1070,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
         {/* ═══ ACCOUNT ACTIONS ═══ */}
         <SectionCard title="Account" emoji="⚙️" sectionKey="accountActions">
-          <UserStatsCard myUid={myUid} createdAt={userDoc?.createdAt} activeTimeMs={userDoc?.activeTimeMs} />
+          <UserStatsCard myUid={myUid} createdAt={userDoc?.createdAt} activeTimeMs={userDoc?.activeTimeMs} contacts={contacts} />
           <div style={{ marginTop: 8 }} />
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Send Feedback" sub="Message the admin directly" onClick={() => onNavigate("feedback")} />
           {!sysConfig?.tourDisabled && <Row icon={<Compass size={18} color={t.primary} />} label="Replay Welcome Tour" sub="See the first-run guide again" onClick={(e) => { e.stopPropagation(); onShowTour(); }} />}
@@ -1657,34 +1657,6 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
             }
           } catch { /* best-effort */ }
         };
-        const tripRecovery = async () => {
-          // A real navigation is the only thing that reliably forces the
-          // compositor to re-composite WITH the bottom bar. Run it under the
-          // opaque repair cover so it can never flash — this cover works even
-          // when the splash is disabled (unlike the splash-hold). The trip
-          // itself stays on the same-looking list UI (a chats <-> groups tab
-          // toggle, or list <-> status) instead of jumping to Settings, so
-          // even if the cover were somehow never painted the user would only
-          // ever see the chat list — never a Settings flash.
-          const cur = screenRef.current;
-          setRepairCoverOn(true);
-          if (cur === "status") {
-            setScreen("list");
-            setActiveNavTab("chats");
-            await delay(50);
-            await delay(350);
-            setScreen("status");
-          } else {
-            setScreen("list");
-            setActiveNavTab((prev) => (prev === "groups" ? "chats" : "groups"));
-            await delay(50);
-            await delay(350);
-            setActiveNavTab("chats");
-          }
-          setBootKick((n) => n + 1);
-          await delay(120);
-          setRepairCoverOn(false);
-        };
         const onTab = ["list", "status", "settings"].includes(screenRef.current);
         const wantBar = onTab && !hideNav && !storyViewerOpenRef.current && !tourVisibleRef.current;
         const barOK = !wantBar || barOnTop();
@@ -1704,8 +1676,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           }
         } else if (wantBar && !barOK) {
           // Bar DOM exists but isn't composited on top. Try invisible repaints
-          // first; only fall back to the Settings trip (hidden under the
-          // repair cover) if they genuinely don't take.
+          // first; if they don't take, bump barEpoch/bootKick to force remount.
           let fixed = false;
           for (let attempt = 0; attempt < 2 && !fixed; attempt++) {
             forceRepaint();
@@ -1715,8 +1686,16 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           if (fixed) {
             diag = `DIAG awake bar-fixed screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=->true raf=alive invisible`;
           } else {
-            diag = `DIAG awake BARFIX screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive trip`;
-            if (!cancelled) await tripRecovery();
+            diag = `DIAG awake BARFIX screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive`;
+            if (!cancelled) {
+              setRepairCoverOn(true);
+              await delay(40);
+              forceRepaint();
+              setBarEpoch((n) => n + 1);
+              setBootKick((n) => n + 1);
+              await delay(160);
+              setRepairCoverOn(false);
+            }
           }
         } else {
           diag = `DIAG awake ok screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive`;
