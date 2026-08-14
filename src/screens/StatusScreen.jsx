@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw } from "lucide-react";
+import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic } from "lucide-react";
 import { useTheme, FONTS } from "../theme/ThemeContext";
 import { postStatus, useStatuses, viewStatus, useStatusViewers, deleteStatus } from "../firebase/status";
 import { useContacts } from "../firebase/contacts";
@@ -171,6 +171,11 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   const [bgAudioVolume, setBgAudioVolume] = useState(70);
   const [videoVolume, setVideoVolume] = useState(100);
   const [muteOriginal, setMuteOriginal] = useState(false);
+  const [voiceBlob, setVoiceBlob] = useState(null);
+  const [voiceDurationMs, setVoiceDurationMs] = useState(0);
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+  const voiceRecorderRef = useRef(null);
+  const voiceStreamRef = useRef(null);
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const [previewAudioURL, setPreviewAudioURL] = useState(null);
   const [previewVideoURL, setPreviewVideoURL] = useState(null);
@@ -312,8 +317,25 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
     setPosting(true);
     setPostError("");
     try {
+      // Handle voice-note status — a recorded audio blob with optional caption
+      // (and optional background image). Uploaded the same way chat voice
+      // notes are (Supabase `chat-media` bucket) and posted as mediaType
+      // "voice" so the viewer can play it back inline.
+      if (postMode === "media" && voiceBlob) {
+        const voiceFile = new File([voiceBlob], `status-voice-${Date.now()}.webm`, { type: voiceBlob.type || "audio/webm" });
+        const voiceResult = await uploadChatFile(`status-${myUid}`, myUid, voiceFile, { compress: false });
+        await postStatus(myUid, {
+          text: postText.trim() || null,
+          mediaURL: voiceResult.url,
+          mediaType: "voice",
+          backgroundColor: null,
+          fontFamily: null,
+          durationMs: voiceDurationMs || durationSeconds * 1000,
+          textOverlay: textOverlay.trim() || null,
+        });
+      }
       // Handle multiple images - send as separate status updates
-      if (postMode === "media" && postImages.length > 0) {
+      if (postMode === "media" && postImages.length > 0 && !voiceBlob) {
         for (let i = 0; i < postImages.length; i++) {
           const img = postImages[i];
           const file = new File([img], `status-${Date.now()}-${i}.jpg`, { type: "image/jpeg" });
@@ -332,7 +354,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       }
 
       // Handle single video or single image from postMedia
-      if (postMode === "media" && postMedia) {
+      if (postMode === "media" && postMedia && !voiceBlob) {
         const isVideo = postMediaType === "video";
         const ext = isVideo ? "mp4" : "jpg";
         const mime = isVideo ? "video/mp4" : "image/jpeg";
@@ -397,6 +419,9 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       setPostImages([]);
       setTextOverlay("");
       setBgAudioFile(null);
+      setVoiceBlob(null);
+      setVoiceDurationMs(0);
+      setIsVoiceRecording(false);
       setPostError("");
       setShowPost(false);
       setPostMode("text");
@@ -491,6 +516,53 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       cameraStreamRef.current = null;
     }
     if (cameraTimerRef.current) { clearTimeout(cameraTimerRef.current); cameraTimerRef.current = null; }
+  };
+
+  const stopVoiceRecording = () => {
+    if (voiceRecorderRef.current && voiceRecorderRef.current.state === "recording") {
+      voiceRecorderRef.current.stop();
+    }
+  };
+
+  const startVoiceRecording = async () => {
+    setPostError("");
+    if (isVoiceRecording) {
+      stopVoiceRecording();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setPostError("Voice recording isn't supported on this device.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      voiceStreamRef.current = stream;
+      const chunks = [];
+      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/ogg;codecs=opus" });
+      voiceRecorderRef.current = recorder;
+      const startTime = Date.now();
+      setIsVoiceRecording(true);
+      setVoiceBlob(null);
+      setVoiceDurationMs(0);
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = () => {
+        clearInterval(voiceRecorderRef.current?._tickInterval);
+        try { stream.getTracks().forEach((tr) => tr.stop()); } catch { /* ignore */ }
+        voiceStreamRef.current = null;
+        voiceRecorderRef.current = null;
+        setIsVoiceRecording(false);
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        setVoiceBlob(blob);
+        setVoiceDurationMs(Date.now() - startTime);
+      };
+      recorder.start();
+      voiceRecorderRef.current._tickInterval = setInterval(() => {
+        setVoiceDurationMs(Date.now() - startTime);
+      }, 200);
+    } catch (err) {
+      setIsVoiceRecording(false);
+      setPostError("Microphone access denied or unavailable.");
+    }
   };
 
   const openStory = (items, ownerUid) => {
@@ -806,7 +878,40 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
                     <Camera size={16} color={t.primary} />
                     <span style={{ fontSize: 13, fontWeight: 600, color: t.primary }}>Camera</span>
                   </div>
+                  <div onClick={() => { try { startVoiceRecording(); } catch (e) { setPostError(e?.message || "Could not start voice recording."); } }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primary, cursor: "pointer", border: `1px solid ${t.primary}` }}>
+                    <Mic size={16} color={t.bubbleMeText} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: t.bubbleMeText }}>🎙️ Voice Note</span>
+                  </div>
                 </div>
+
+                {/* Voice note preview — shown when the user has recorded audio.
+                    Lets them play it back, see the duration, and delete it
+                    before posting. Hides the photo/video preview slot so the
+                    voice note is the sole media of this status. */}
+                {(isVoiceRecording || voiceBlob) && (
+                  <div style={{ marginBottom: 12, padding: "14px 14px", boxSizing: "border-box", width: "100%", borderRadius: 12, background: t.bg, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                    <div onClick={() => { if (isVoiceRecording) stopVoiceRecording(); }} style={{ width: 38, height: 38, borderRadius: "50%", background: isVoiceRecording ? "#FF3B30" : t.primary, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, animation: isVoiceRecording ? "nextext-rec-pulse 1s ease-in-out infinite" : "none" }}>
+                      <Mic size={16} color="#fff" />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>
+                        {isVoiceRecording ? "Recording…" : (voiceBlob ? "Voice note ready" : "")}
+                      </div>
+                      <div style={{ fontSize: 12, color: t.textMuted, marginTop: 1 }}>
+                        {Math.floor((voiceDurationMs || 0) / 1000)}s{Math.floor((voiceDurationMs || 0) / 100) % 10 > 0 ? `.${Math.floor((voiceDurationMs || 0) / 100) % 10}` : ""}
+                        {voiceBlob && !isVoiceRecording && " — attach as status audio"}
+                      </div>
+                      {voiceBlob && !isVoiceRecording && (
+                        <audio controls src={URL.createObjectURL(voiceBlob)} style={{ width: "100%", marginTop: 6, height: 32 }} />
+                      )}
+                    </div>
+                    {voiceBlob && !isVoiceRecording && (
+                      <div onClick={() => { try { URL.revokeObjectURL(URL.createObjectURL(voiceBlob)); } catch { /* ignore */ } setVoiceBlob(null); setVoiceDurationMs(0); }} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,59,48,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                        <X size={15} color="#FF3B30" />
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Single video/image fallback when no multiple images */}
                 {(postMedia || postImages.length === 0) && postMedia && (

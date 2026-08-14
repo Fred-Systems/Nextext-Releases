@@ -267,9 +267,9 @@ function PhoneNumberSetting({ myUid }) {
   );
 }
 
-function SettingsRow({ icon, label, sub, onClick, t }) {
+function SettingsRow({ icon, label, sub, onClick, t, dataTour }) {
   return (
-    <div onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 0", cursor: onClick ? "pointer" : "default", borderBottom: `1px solid ${t.border}` }}>
+    <div onClick={onClick} data-tour={dataTour} style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 0", cursor: onClick ? "pointer" : "default", borderBottom: `1px solid ${t.border}` }}>
       <div style={{ width: 36, height: 36, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{icon}</div>
       <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>{label}</div>{sub && <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>{sub}</div>}</div>
     </div>
@@ -315,7 +315,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -428,8 +428,8 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     </div>
   );
 
-  const Row = ({ icon, label, sub, onClick, right }) => (
-    <div onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 0", cursor: onClick ? "pointer" : "default", borderBottom: `1px solid ${t.border}` }}>
+  const Row = ({ icon, label, sub, onClick, right, dataTour }) => (
+    <div onClick={onClick} data-tour={dataTour} style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 0", cursor: onClick ? "pointer" : "default", borderBottom: `1px solid ${t.border}` }}>
       <div style={{ width: 36, height: 36, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{icon}</div>
       <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>{label}</div>{sub && <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>{sub}</div>}</div>
       {right}
@@ -642,7 +642,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
         {/* ═══ APPEARANCE & INTERFACE ═══ */}
         <SectionCard title="Appearance & Interface" emoji="🎨" sectionKey="appearance">
-          <Row icon={<Palette size={18} color={t.primary} />} label="Theme" sub={themes[themeKey]?.name || "Default Theme"} onClick={onOpenTheme} />
+          <Row icon={<Palette size={18} color={t.primary} />} label="Theme" sub={themes[themeKey]?.name || "Default Theme"} onClick={onOpenTheme} dataTour="theme" />
           <Row icon={<ImageIcon size={18} color={t.primary} />} label="Default chat background" sub={wallpaperSaved ? "Saved ✓" : "Applies to chats without their own background"} onClick={() => wallpaperInputRef.current?.click()} />
           <input ref={wallpaperInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleGlobalWallpaper} />
 
@@ -755,7 +755,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               <Toggle on={pinchZoomOn} onClick={() => { const next = !pinchZoomOn; setPinchZoomOn(next); localStorage.setItem("nextext_pinch_zoom", next ? "true" : "false"); }} />
             </div>
             {pinchZoomOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>In any chat, pinch the message list to make text bigger or smaller.</div>}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+            <div data-tour="voice-chime" style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Voice note chimes</span>
               <Toggle on={voiceEndChimeOn} onClick={() => { const next = !voiceEndChimeOn; setVoiceEndChimeOn(next); localStorage.setItem("nextext_voice_end_chime", next ? "on" : "off"); }} />
             </div>
@@ -956,6 +956,23 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Link previews" sub={linkPreviewsOn ? "On" : "Off"} right={<Toggle on={linkPreviewsOn} onClick={() => { const next = !linkPreviewsOn; setLinkPreviewsOn(next); localStorage.setItem("nextext_link_previews", next ? "on" : "off"); }} />} />
           <Row icon={<CircleDot size={18} color={t.primary} />} label="Scroll-to-bottom button" sub={showScrollDown ? "On" : "Off"} right={<Toggle on={showScrollDown} onClick={() => setShowScrollDown(!showScrollDown)} />} />
+          {showScrollDown && (
+            <div style={{ padding: "0 0 8px 36px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>Button size</span>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: t.primary, minWidth: 40 }}>{Math.round((scrollDownSize / 22) * 100)}%</span>
+              </div>
+              <input type="range" min="14" max="40" step="1" value={scrollDownSize} onChange={(e) => setScrollDownSize(Number(e.target.value))} style={{ width: "100%", accentColor: t.primary }} />
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>Position</span>
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                {[["left", "Left"], ["center", "Center"], ["right", "Right"]].map(([key, label]) => (
+                  <div key={key} onClick={() => setScrollDownPos(key)} style={{ flex: 1, padding: "7px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: scrollDownPos === key ? t.primary : t.bg, color: scrollDownPos === key ? t.bubbleMeText : t.text, border: `1px solid ${scrollDownPos === key ? t.primary : t.border}` }}>{label}</div>
+                ))}
+              </div>
+            </div>
+          )}
           <Row icon={<CircleDot size={18} color={t.primary} />} label="Animated scroll entry" sub={animatedScrollEntry ? "Smooth jump" : "Instant mount"} right={<Toggle on={animatedScrollEntry} onClick={() => { const next = !animatedScrollEntry; setAnimatedScrollEntry(next); localStorage.setItem("nextext_animated_scroll_entry", next ? "true" : "false"); }} />} />
           <Row icon={<Users size={18} color={t.primary} />} label="Compact chat list" sub={compactList ? "Denser rows" : "Standard spacing"} right={<Toggle on={compactList} onClick={() => { const next = !compactList; setCompactList(next); localStorage.setItem("nextext_compact_list", next ? "true" : "false"); }} />} />
           <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
@@ -1232,32 +1249,38 @@ function normalizeNavConfig(input) {
 }
 
 const TOUR_STEPS = [
-  { target: null, tab: null, emoji: "👋", title: "Welcome to NexText", body: "A fast, private messaging app for you and your friends. I'll walk you through the app — tap Next to explore it live." },
-  { target: "chats", tab: "chats", emoji: "💬", title: "Chats", body: "This is your chat list. Tap a conversation to open it, or the + button to start a new chat. Long-press any chat for extra actions. Try tapping the Chats tab at the bottom." },
-  { target: "status", tab: "status", emoji: "📸", title: "Status & Media", body: "Post photo/video statuses your contacts can see for 24 hours. In any chat, the paperclip lets you share images, videos, voice notes, and files." },
-  { target: "groups", tab: "groups", emoji: "👥", title: "Groups", body: "Create groups with your friends, broadcast lists, and organized conversations. The Groups tab filters your group chats." },
-  { target: "settings", tab: "settings", emoji: "🔒", title: "Privacy & Settings", body: "Everything lives here: themes, privacy controls, permissions, chat locks, and parental controls. Swipe or tap the tabs below to move around." },
-  { target: null, tab: null, emoji: "🤖", title: "NexText AI", body: "NexText AI is request-only — not everyone has it by default. If you want the assistant (8 personalities, image analysis, chat summaries), ask for access in Settings → NexText AI." },
-  { target: null, tab: null, emoji: "🎉", title: "You're all set!", body: "That's the tour! Need help, found a bug, or want something added? Send a message to the admin anytime from Settings → Account → Send Feedback — it goes straight to them. Have fun!" },
+  { target: null, tab: null, emoji: "👋", title: "Welcome to NexText", body: "A fast, private messaging app for you and your friends. I'll walk you through the app live — tap Next to explore each screen.", arrow: null },
+  { target: "chats", tab: "chats", emoji: "💬", title: "Your chats", body: "Every direct conversation lives here. Tap any chat to open it. The filter chips let you jump between All, Unread, Favorites, Groups, Broadcast, and any custom lists you've made.", arrow: "up" },
+  { target: "chats", tab: "chats", emoji: "➕", title: "Starting a new chat", body: "Tap the green + button to create a new chat, group, broadcast list, or custom list filter. Long-press a chat for quick actions like mute, archive, favorite, and lock.", arrow: "up", selector: "[title='Sort chats']", requireTap: true, tapHint: "Tap the sort button next to the + to try it, then Next." },
+  { target: "status", tab: "status", emoji: "📸", title: "Statuses", body: "Post photo, video, text, or voice-note statuses your contacts can see for 24 hours. Tap the + here to open the Status Builder.", arrow: "up" },
+  { target: "status", tab: "status", emoji: "🎙️", title: "Status Builder", body: "Inside the Status Builder you can record a voice note, post multiple photos, type with custom fonts, or paint with the text creator. Voice notes also live in the media tab.", arrow: null, selector: "[data-tour-status-builder]", requireTap: true, tapHint: "Open the Status Builder, then come back." },
+  { target: "groups", tab: "groups", emoji: "👥", title: "Groups & broadcasts", body: "The Groups tab only shows your group conversations. From the Chats tab you can also create broadcast lists and custom lists for organized conversations.", arrow: "up" },
+  { target: "settings", tab: "settings", emoji: "🔒", title: "Privacy & settings", body: "Themes, privacy controls, permissions, app lock, locked chats, and parental controls all live in Settings. Tap Next to see the most-used sections.", arrow: "up" },
+  { target: "settings", tab: "settings", emoji: "🎨", title: "Themes & UI", body: "Inside Settings → Theme you can pick a preset, design your own colors, or auto-rotate themes on a schedule. Search bar size, recording bar size, and message box size are all customizable too.", arrow: null, selector: "[data-tour-theme]", requireTap: true, tapHint: "Tap the Theme row to preview it." },
+  { target: "settings", tab: "settings", emoji: "🔔", title: "Voice note chimes", body: "Settings → Voice note chimes lets you turn the end-of-voice-note sound on or off. You'll hear a soft ping when a voice note finishes — and a brighter chime when a streak of 2+ notes ends.", arrow: null, selector: "[data-tour-voice-chime]", requireTap: true, tapHint: "Tap the Voice note chimes row." },
+  { target: "settings", tab: "settings", emoji: "🤖", title: "NexText AI", body: "NexText AI is request-only — not everyone has it by default. From Settings → NexText AI you can ask for access. Once approved you get 6 personalities, image analysis, and chat summaries.", arrow: null },
+  { target: null, tab: null, emoji: "👤", title: "Your profile", body: "Tap your avatar at the top of the Chats tab (or open Me) to view your profile. You can change your display name and username there, and see your 'NexText member since' date.", arrow: null },
+  { target: null, tab: null, emoji: "🎉", title: "You're all set!", body: "That's the full tour. Found a bug or want a new feature? Send a message to the admin anytime from Settings → Account → Send Feedback — it goes straight to them. Have fun!", arrow: null },
 ];
 
 function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
   const s = TOUR_STEPS[step];
   const [rect, setRect] = useState(null);
   const measure = useCallback(() => {
-    if (!s?.target) { setRect(null); return; }
-    const el = document.querySelector(`[data-tour-nav="${s.target}"]`);
-    if (!el) { setRect(null); return; }
-    const r = el.getBoundingClientRect();
-    setRect({ x: r.left, y: r.top, w: r.width, h: r.height });
+    if (!s) { setRect(null); return; }
+    if (s.selector) {
+      const el = document.querySelector(s.selector);
+      if (el) { const r = el.getBoundingClientRect(); setRect({ x: r.left, y: r.top, w: r.width, h: r.height }); return; }
+    }
+    if (s.target) {
+      const el = document.querySelector(`[data-tour-nav="${s.target}"]`);
+      if (el) { const r = el.getBoundingClientRect(); setRect({ x: r.left, y: r.top, w: r.width, h: r.height }); return; }
+    }
+    setRect(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s?.target]);
+  }, [s?.target, s?.selector]);
   useEffect(() => {
     measure();
-    // Re-measure after the page settles (the tour navigates the app live, so
-    // the target's position changes as screens mount) and keep polling while
-    // the tour is open so the spotlight stays glued to the nav tab even if
-    // the user taps around.
     const t = setTimeout(measure, 380);
     const t2 = setTimeout(measure, 900);
     const poll = setInterval(measure, 600);
@@ -1268,32 +1291,49 @@ function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
   const zBackdrop = 2147483600;
   const zHole = 2147483645;
   const zCard = 2147483646;
+  const zArrow = 2147483647;
+  // Position the card so it never overlaps the spotlight.
+  let cardTop = 28, cardLeft = 14, cardRight = 14;
+  let arrow = null;
+  if (rect && s.arrow) {
+    if (s.arrow === "up") {
+      // Place the card ABOVE the spotlight with an arrow pointing down.
+      const above = rect.y - 8;
+      if (above > 240) {
+        cardTop = Math.max(28, above - 280);
+        arrow = { top: cardTop + 270, left: rect.x + rect.w / 2 - 12, rotation: 180 };
+      } else {
+        cardTop = rect.y + rect.h + 8;
+        arrow = { top: rect.y + rect.h - 4, left: rect.x + rect.w / 2 - 12, rotation: 0 };
+      }
+    }
+  }
   const cardStyle = {
-    position: "fixed", top: 28, left: 14, right: 14, zIndex: zCard,
+    position: "fixed", top: cardTop, left: cardLeft, right: cardRight, zIndex: zCard,
     background: "#121B22", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 18,
-    padding: "20px 18px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+    padding: "18px 18px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.5)", transition: "top 0.25s ease",
   };
   return (
     <>
-      {/* Dim everything except the spotlighted target.
-          The spotlight uses a huge box-shadow "hole" so the rest of the app is
-          dimmed around the target. CRITICAL: the spread must be screen-sized
-          (100vmax), NOT a giant fixed pixel value (9999px) — a ~20,000px
-          shadow layer is exactly the kind of massive paint region that stalls
-          the Android WebView compositor on cold start (app visually painted
-          but interaction-dead, bottom nav not repainted — the "dead app until
-          you tap Settings" bug). */}
       {rect ? (
         <div style={{ position: "fixed", left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex: zHole, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.72)", borderRadius: 12, pointerEvents: "none", transition: "left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease" }} />
       ) : (
         <div style={{ position: "fixed", inset: 0, zIndex: zBackdrop, background: "rgba(0,0,0,0.72)", pointerEvents: "none" }} />
+      )}
+      {arrow && (
+        <div style={{ position: "fixed", top: arrow.top, left: arrow.left, zIndex: zArrow, width: 0, height: 0, borderLeft: "12px solid transparent", borderRight: "12px solid transparent", borderTop: `16px solid #10B981`, transform: `rotate(${arrow.rotation}deg)`, pointerEvents: "none", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.5))" }} />
       )}
       <div style={cardStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
           <span style={{ fontSize: 26 }}>{s.emoji}</span>
           <span style={{ fontWeight: 800, fontSize: 18, color: "#fff" }}>{s.title}</span>
         </div>
-        <div style={{ fontSize: 13.5, color: "rgba(255,255,255,0.85)", lineHeight: 1.55, marginBottom: 16 }}>{s.body}</div>
+        <div style={{ fontSize: 13.5, color: "rgba(255,255,255,0.85)", lineHeight: 1.55, marginBottom: s.tapHint ? 10 : 16 }}>{s.body}</div>
+        {s.tapHint && (
+          <div style={{ fontSize: 12, color: "#10B981", fontWeight: 700, marginBottom: 14, padding: "8px 10px", borderRadius: 10, background: "rgba(16,185,129,0.12)", border: "1px dashed rgba(16,185,129,0.4)" }}>
+            👉 {s.tapHint}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
           {TOUR_STEPS.map((_, i) => (
             <div key={i} style={{ flex: 1, height: 4, borderRadius: 2, background: i === step ? "#10B981" : "rgba(255,255,255,0.25)", transition: "all 0.25s" }} />
@@ -1362,6 +1402,9 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const [linkPreviewsOn, setLinkPreviewsOn] = useState(() => localStorage.getItem("nextext_link_previews") !== "off");
   const [pinchZoomOn, setPinchZoomOn] = useState(() => localStorage.getItem("nextext_pinch_zoom") !== "false");
   const [voiceEndChimeOn, setVoiceEndChimeOn] = useState(() => localStorage.getItem("nextext_voice_end_chime") !== "off");
+  const [scrollDownSize, setScrollDownSize] = useState(() => { try { const v = Number(localStorage.getItem("nextext_scroll_down_size")); return v >= 14 && v <= 40 ? v : 22; } catch { return 22; } });
+  const [scrollDownPos, setScrollDownPos] = useState(() => { try { const v = localStorage.getItem("nextext_scroll_down_pos"); return ["center", "left", "right"].includes(v) ? v : "center"; } catch { return "center"; } });
+  const [barEpoch, setBarEpoch] = useState(0);
   const [pingSoundId, setPingSoundId] = useState(() => { try { return localStorage.getItem("nextext_voice_ping_sound") || "warm"; } catch { return "warm"; } });
   const [voicePlayerStyle, setVoicePlayerStyle] = useState(() => { try { return localStorage.getItem("nextext_voice_player_style") || "waveform"; } catch { return "waveform"; } });
   const [micMode, setMicMode] = useState(() => { try { return localStorage.getItem("nextext_mic_mode") || "hold"; } catch { return "hold"; } });
@@ -2065,6 +2108,17 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   useEffect(() => { localStorage.setItem("nextext_swipe_animation", swipeAnimationOn ? "on" : "off"); }, [swipeAnimationOn]);
   useEffect(() => { localStorage.setItem("nextext_swipe_speed", swipeSpeed); }, [swipeSpeed]);
   useEffect(() => { localStorage.setItem("nextext_swipe_bounce", swipeBounce ? "on" : "off"); }, [swipeBounce]);
+  // The "Edge swipe bounce" setting also controls the iOS-style rubber-band
+  // effect on vertical scroll overscroll (when you reach the top or bottom
+  // of any scrollable area and keep dragging). Same UX concept, one toggle.
+  useEffect(() => {
+    try {
+      if (swipeBounce) document.body.classList.remove("nextext-no-bounce");
+      else document.body.classList.add("nextext-no-bounce");
+    } catch { /* body may not be ready in some embeds */ }
+  }, [swipeBounce]);
+  useEffect(() => { localStorage.setItem("nextext_scroll_down_size", String(scrollDownSize)); }, [scrollDownSize]);
+  useEffect(() => { localStorage.setItem("nextext_scroll_down_pos", scrollDownPos); }, [scrollDownPos]);
   useEffect(() => { localStorage.setItem("nextext_search_bar_scale", String(searchBarScale)); }, [searchBarScale]);
   useEffect(() => { localStorage.setItem("nextext_emoji_animations", emojiAnimations ? "on" : "off"); }, [emojiAnimations]);
 
@@ -2328,11 +2382,15 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     drag.lastT = now;
     let offset = dx;
     const len = orderedTabs.length;
+    // Premium "bounce" feel: when the swipe hits an edge with swipeBounce on,
+    // pull the page a bit further past the edge (the iOS rubber-band effect)
+    // and cap so it doesn't fly off-screen. With swipeBounce off we apply
+    // simple edge resistance (35% of input) so the page never moves much.
     if (swipeBounce) {
-      if (drag.startIndex === 0 && offset > 0) offset = Math.min(offset * 0.35, 80); // edge bounce with cap
-      if (drag.startIndex === len - 1 && offset < 0) offset = Math.max(offset * 0.35, -80); // edge bounce with cap
+      if (drag.startIndex === 0 && offset > 0) offset = Math.min(offset * 0.55, 110);
+      if (drag.startIndex === len - 1 && offset < 0) offset = Math.max(offset * 0.55, -110);
     } else {
-      if (drag.startIndex === 0 && offset > 0) offset *= 0.35; // edge resistance
+      if (drag.startIndex === 0 && offset > 0) offset *= 0.35;
       if (drag.startIndex === len - 1 && offset < 0) offset *= 0.35;
     }
     drag.offset = offset;
@@ -2541,6 +2599,12 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                 setSwipeAnimationOn={setSwipeAnimationOn}
                 swipeSpeed={swipeSpeed}
                 setSwipeSpeed={setSwipeSpeed}
+                swipeBounce={swipeBounce}
+                setSwipeBounce={setSwipeBounce}
+                scrollDownSize={scrollDownSize}
+                setScrollDownSize={setScrollDownSize}
+                scrollDownPos={scrollDownPos}
+                setScrollDownPos={setScrollDownPos}
                 onShowTour={startTour}
                 searchBarScale={searchBarScale}
                 setSearchBarScale={setSearchBarScale}
@@ -2653,7 +2717,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           navTabs.unshift({ key: "chats", ...ALL_TABS.chats });
         }
         if (!navTabs.length) return null;
-        return (
+        try {
+          return (
           <div key={barEpoch} style={{ position: "absolute", bottom: 0, left: 0, right: 0, display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, transform: "translateZ(0)", paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
             {navTabs.map(({ key, icon: Icon, label }) => {
               const isActive = key === "settings" ? screen === "settings" : key === "status" ? screen === "status" : (screen === "list" && activeNavTab === key);
@@ -2673,7 +2738,20 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
               );
             })}
           </div>
-        );
+          );
+        } catch (e) {
+          // If the bar ever throws (a bad config, a missing icon), never break
+          // the rest of the app — fall back to a minimal Chats/Status/Settings
+          // bar so the user can always navigate.
+          console.error("[BottomBar fallback]", e);
+          return (
+            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
+              {[["chats", "Chats"], ["status", "Status"], ["settings", "Settings"]].map(([key, label]) => (
+                <div key={key} data-tour-nav={key} onClick={() => navigateToTab(key)} style={{ flex: 1, padding: "12px 0", textAlign: "center", color: t.text, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>{label}</div>
+              ))}
+            </div>
+          );
+        }
       })()}
 
       {createPortal(

@@ -212,12 +212,14 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
 
   const realName = isSelfProfile
     ? (otherUserDoc?.displayName || otherUserDoc?.username || getContactRealName(contact) || "Me")
-    : getContactRealName(contact);
+    : (getContactRealName(contact) || "Unknown");
   // Self profile: the passed `contact` may lack a profile (opened from a chat
   // that carried no contact doc), so prefer the live own-user doc which is
-  // always fetched below. Fixes the name showing as "Unknown".
+  // always fetched below. Fixes the name showing as "Unknown" / "?" in the
+  // avatar. Fallback chain: live doc displayName → live doc username →
+  // contact doc displayName → contact doc username → realName → "You".
   const displayName = isSelfProfile
-    ? (otherUserDoc?.displayName || otherUserDoc?.username || getContactDisplayName(contact) || "Me (You)")
+    ? (otherUserDoc?.displayName || otherUserDoc?.username || getContactDisplayName(contact) || getContactRealName(contact) || "You")
     : getContactDisplayName(contact);
   const hasNickname = contact?.nickname && contact.nickname.trim();
 
@@ -284,10 +286,12 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
           {otherUserDoc?.customStatusText && (
             <div style={{ fontSize: 13, color: t.textMuted, marginTop: 4, fontStyle: "italic", maxWidth: 260 }}>{otherUserDoc.customStatusText}</div>
           )}
-          {otherUserDoc?.createdAt && (
+          {otherUserDoc?.createdAt ? (
             <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>
               NexText member since {(otherUserDoc.createdAt.toDate ? otherUserDoc.createdAt.toDate() : new Date(otherUserDoc.createdAt)).toLocaleDateString()}
             </div>
+          ) : (
+            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>NexText member</div>
           )}
           {localPhotoOverride && (
             <div onClick={clearLocalPhotoOverride} style={{ fontSize: 11.5, color: t.primary, cursor: "pointer", marginTop: 4, fontWeight: 600 }}>

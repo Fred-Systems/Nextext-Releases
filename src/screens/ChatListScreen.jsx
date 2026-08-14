@@ -87,7 +87,16 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [showFab, setShowFab] = useState(false);
   const [showFindFriends, setShowFindFriends] = useState(false);
   const [activeTab, setActiveTab] = useState("all");
-  const effectiveTab = navTab === "groups" ? "groups" : navTab === "status" ? "all" : activeTab;
+  // Default to "all" (or "groups" on the dedicated Groups tab) but ALWAYS honor
+  // a tap on a filter chip — previously when navTab was "groups", clicking
+  // Unread/Favorites/etc. updated the highlight but didn't actually filter,
+  // because effectiveTab was unconditionally forced to "groups" (the
+  // "filter buttons do nothing" bug).
+  const effectiveTab = navTab === "status"
+    ? "all"
+    : navTab === "groups"
+      ? (activeTab === "groups" || activeTab === "all" ? "groups" : activeTab)
+      : activeTab;
   const [showArchived, setShowArchived] = useState(false);
   const [acceptError, setAcceptError] = useState("");
   const [showSearch, setShowSearch] = useState(() => searchMode === "visible");

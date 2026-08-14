@@ -100,6 +100,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [isArchived, setIsArchived] = useState(false);
   const [fullscreenImage, setFullscreenImage] = useState(null);
   const [activeMessageId, setActiveMessageId] = useState(null);
+  const [activeMsgRect, setActiveMsgRect] = useState(null);
   const longPressTimer = useRef(null);
   const [pendingForwardMsg, setPendingForwardMsg] = useState(null);
   const [chatPickerMode, setChatPickerMode] = useState(null); // 'forward' | 'summarize'
