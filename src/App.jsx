@@ -7,7 +7,7 @@ import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
 import { useContacts } from "./firebase/contacts";
 import { useChats, purgeExpiredChatMedia, markChatRead } from "./firebase/chats";
 import { setGlobalWallpaper, fileToWallpaperDataUrl } from "./theme/wallpaper";
-import { ChevronLeft, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile } from "lucide-react";
+import { ChevronLeft, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff } from "lucide-react";
 import { FONTS } from "./theme/ThemeContext";
 import Avatar from "./components/Avatar";
 import AvatarColorPicker from "./components/AvatarColorPicker";
@@ -315,7 +315,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, emojiAnimations, setEmojiAnimations, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -950,36 +950,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           </div>
 
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Link previews" sub={linkPreviewsOn ? "On" : "Off"} right={<Toggle on={linkPreviewsOn} onClick={() => { const next = !linkPreviewsOn; setLinkPreviewsOn(next); localStorage.setItem("nextext_link_previews", next ? "on" : "off"); }} />} />
-          <Row icon={<Smile size={18} color={t.primary} />} label="Emoji animations" sub={emojiAnimations ? "Big animated emoji & reactions" : "Off"} right={<Toggle on={emojiAnimations} onClick={() => setEmojiAnimations(!emojiAnimations)} />} />
           <Row icon={<CircleDot size={18} color={t.primary} />} label="Scroll-to-bottom button" sub={showScrollDown ? "On" : "Off"} right={<Toggle on={showScrollDown} onClick={() => setShowScrollDown(!showScrollDown)} />} />
-          {showScrollDown && (
-            <div style={{ padding: "8px 0 13px", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Scroll-down arrow style</div>
-              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Size and side of the jump-to-bottom button inside chats.</div>
-              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                {[{ key: "small", label: "Small", size: 18 }, { key: "medium", label: "Medium", size: 22 }, { key: "large", label: "Large", size: 28 }].map((o) => (
-                  <div
-                    key={o.key}
-                    onClick={() => setScrollDownSize(o.size)}
-                    style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: scrollDownSize === o.size ? t.primary : t.bg, color: scrollDownSize === o.size ? t.bubbleMeText : t.text, border: `1px solid ${scrollDownSize === o.size ? t.primary : t.border}` }}
-                  >
-                    {o.label}
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {[{ key: "left", label: "Left" }, { key: "center", label: "Center" }, { key: "right", label: "Right" }].map((o) => (
-                  <div
-                    key={o.key}
-                    onClick={() => setScrollDownPos(o.key)}
-                    style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: scrollDownPos === o.key ? t.primary : t.bg, color: scrollDownPos === o.key ? t.bubbleMeText : t.text, border: `1px solid ${scrollDownPos === o.key ? t.primary : t.border}` }}
-                  >
-                    {o.label}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
           <Row icon={<CircleDot size={18} color={t.primary} />} label="Animated scroll entry" sub={animatedScrollEntry ? "Smooth jump" : "Instant mount"} right={<Toggle on={animatedScrollEntry} onClick={() => { const next = !animatedScrollEntry; setAnimatedScrollEntry(next); localStorage.setItem("nextext_animated_scroll_entry", next ? "true" : "false"); }} />} />
           <Row icon={<Users size={18} color={t.primary} />} label="Compact chat list" sub={compactList ? "Denser rows" : "Standard spacing"} right={<Toggle on={compactList} onClick={() => { const next = !compactList; setCompactList(next); localStorage.setItem("nextext_compact_list", next ? "true" : "false"); }} />} />
           <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
@@ -1345,9 +1316,6 @@ function AppShell({ appLocked, setAppLocked }) {
   const [uiScale, setUiScale] = useState(() => Number(localStorage.getItem(UI_SCALE_KEY)) || 1);
   const [recordingBarScale, setRecordingBarScale] = useState(() => { try { const v = Number(localStorage.getItem("nextext_recording_bar_scale")); return v && v >= 0.6 && v <= 1.6 ? v : 1; } catch { return 1; } });
   const [showScrollDown, setShowScrollDown] = useState(() => localStorage.getItem(SCROLL_DOWN_KEY) !== "false");
-  const [scrollDownSize, setScrollDownSize] = useState(() => { try { const v = Number(localStorage.getItem("nextext_scroll_down_size")); return v >= 16 && v <= 40 ? v : 28; } catch { return 28; } });
-  const [scrollDownPos, setScrollDownPos] = useState(() => { const p = localStorage.getItem("nextext_scroll_down_pos"); return ["left", "center", "right"].includes(p) ? p : "center"; });
-  const [emojiAnimations, setEmojiAnimations] = useState(() => localStorage.getItem("nextext_emoji_animations") !== "off");
   const [animatedScrollEntry, setAnimatedScrollEntry] = useState(() => localStorage.getItem("nextext_animated_scroll_entry") === "true");
   const [compactList, setCompactList] = useState(() => localStorage.getItem("nextext_compact_list") === "true");
   const [showThemeSheet, setShowThemeSheet] = useState(false);
@@ -1364,7 +1332,7 @@ function AppShell({ appLocked, setAppLocked }) {
   });
   const [storyViewerOpen, setStoryViewerOpen] = useState(false);
   const [showSplash, setShowSplash] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
-  const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
+const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
   const [splashFading, setSplashFading] = useState(false);
   const [splashHold, setSplashHold] = useState(true);
   const [aiSidebarOn, setAiSidebarOn] = useState(() => localStorage.getItem("nextext_ai_sidebar") !== "off");
@@ -1422,8 +1390,6 @@ function AppShell({ appLocked, setAppLocked }) {
         activeGroup,
         uiScale,
         showScrollDown,
-        scrollDownSize,
-        scrollDownPos,
         animatedScrollEntry,
         compactList,
         navConfig,
@@ -1483,8 +1449,6 @@ function AppShell({ appLocked, setAppLocked }) {
       if (state.activeGroup) setActiveGroup(state.activeGroup);
       if (state.uiScale !== undefined) setUiScale(state.uiScale);
       if (state.showScrollDown !== undefined) setShowScrollDown(state.showScrollDown);
-      if (state.scrollDownSize !== undefined) setScrollDownSize(state.scrollDownSize);
-      if (state.scrollDownPos !== undefined) setScrollDownPos(state.scrollDownPos);
       if (state.animatedScrollEntry !== undefined) setAnimatedScrollEntry(state.animatedScrollEntry);
       if (state.compactList !== undefined) setCompactList(state.compactList);
       if (Array.isArray(state.navConfig)) {
@@ -1519,12 +1483,10 @@ function AppShell({ appLocked, setAppLocked }) {
   // transform or paint glitch on a pager page can't strand the app.
   const [bootKick, setBootKick] = useState(0);
   const bootLockedRef = useRef(false);
-  // Bumped during the cold-start recovery to REMOUNT the bottom nav as a
-  // brand-new DOM subtree. A remounted node gets a fresh compositor layer,
-  // which is what finally re-includes the bar when the WebView's initial
-  // composite dropped it (the "bar missing until I tap Settings" bug).
-  const [barEpoch, setBarEpoch] = useState(0);
   const [coldStartComplete, setColdStartComplete] = useState(false);
+  // While true, the in-app splash stays fully opaque. The awake-kick releases
+  // it once the cold-start repair has run, so the Settings-trip recovery
+  // happens invisibly behind the splash instead of flashing the screen.
   // Hold the splash long enough for the awake-kick cold-start repair to run
   // BEHIND it. On the auth screen (no chat interface yet) a plain 8s fallback
   // releases it. After login/sign-up the splash is re-held until the awake-kick
@@ -1546,6 +1508,11 @@ function AppShell({ appLocked, setAppLocked }) {
     const t = setTimeout(() => setSplashHold(false), 12000);
     return () => clearTimeout(t);
   }, [myUid]);
+  // Opaque full-screen cover shown ONLY while the Settings-trip recovery runs.
+  // Unlike the splash (skippable in Settings / never shows if the user turned
+  // it off), this cover is independent of any setting, so the trip is always
+  // guaranteed hidden even on devices with the splash disabled.
+  const [repairCoverOn, setRepairCoverOn] = useState(false);
   useEffect(() => {
     if (!myUid) return;
     // Run synchronously (0ms) to ensure coldStartComplete is true before
@@ -1589,9 +1556,27 @@ function AppShell({ appLocked, setAppLocked }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coldStartComplete]);
 
-// Awake-kick: remount bottom bar to force fresh compositor layer.
-  // Runs once after coldStartComplete. Does NOT do a settings trip — the
-  // barEpoch remount + pager sync are sufficient and don't flash the UI.
+  // Awake-kick watchdog. On cold starts the Android WebView compositor can
+  // stall right after the app's first frame: the bottom nav is painted out of
+  // the frame entirely (its DOM node is present, but never composited on top —
+  // the "bar missing" symptom) and only a real navigation forces a fresh
+  // composite that includes it. Only such a navigation reliably fixes it
+  // (translateZ promotion and single-task repaint nudges don't — an identical
+  // painted output legitimately never triggers a repaint). So this replicates
+  // the user's manual Settings trip, but runs it BEHIND the still-opaque
+  // splash screen: the splash is held open until the repair completes, so the
+  // user never sees the flash or a missing bar — it just appears with the bar
+  // already there.
+  //   1. Probe whether the compositor is actually alive: requestAnimationFrame
+  //      is driven by the WebView's frame scheduler, so a stalled compositor
+  //      stops servicing RAF callbacks.
+  //   2. Hit-test the bar at multiple points; if it isn't on top, try invisible
+  //      repaint kicks first (a persistent 0.1px layout change included), and
+  //      only fall back to the visible-free Settings trip if they don't take.
+  //   3. Always release the splash hold afterwards (a 6s safety fallback also
+  //      guarantees the splash can never trap the user).
+  // Deferred while the welcome tour is up (its backdrop legitimately covers the
+  // bar and re-runs when the tour ends).
   useEffect(() => {
     if (!coldStartComplete) return;
     if (showTour) return; // defer — re-runs when the tour ends
@@ -1612,30 +1597,137 @@ function AppShell({ appLocked, setAppLocked }) {
       if (cancelled) { setSplashHold(false); return; }
       let diag = "DIAG awake-skip";
       try {
+        const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+        const rafAlive = () => new Promise((resolve) => {
+          if (document.visibilityState === "hidden") { resolve(true); return; }
+          let settled = false;
+          const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+          try { requestAnimationFrame(() => done(true)); } catch { done(false); }
+          setTimeout(() => done(false), 300);
+        });
+        const barOnTop = () => {
+          try {
+            // Multi-point probe across the bar (25%/50%/75% width) so a single
+            // point landing on a tab border/gap can't cause a false negative.
+            for (const fx of [0.25, 0.5, 0.75]) {
+              const cx = Math.floor(window.innerWidth * fx);
+              const cy = Math.max(0, Math.floor(window.innerHeight - 30));
+              let node = document.elementFromPoint(cx, cy);
+              while (node && node !== document.documentElement) {
+                if (node.hasAttribute && node.hasAttribute("data-tour-nav")) return true;
+                node = node.parentElement;
+              }
+            }
+          } catch { /* best-effort */ }
+          return false;
+        };
+        // Force the bar into the compositor's frame. The PERSISTENT 0.1px
+        // change is the important part: reverted-in-one-task kicks leave the
+        // painted output identical, so the WebView correctly skips repainting
+        // an unchanged frame and the bar never gets recomposited.
+        const forceRepaint = () => {
+          const shellEl = document.getElementById("nextext-app-shell");
+          if (shellEl) {
+            try {
+              const prevTransform = shellEl.style.transform;
+              const prevTransition = shellEl.style.transition;
+              shellEl.style.transition = "none";
+              shellEl.style.transform = "scale(0.9998)";
+              shellEl.style.transformOrigin = "top left";
+              if (!/0\.1px/.test(shellEl.style.paddingBottom || "")) {
+                shellEl.style.paddingBottom = "calc(var(--safe-bottom) + 0.1px)";
+              }
+              void shellEl.offsetHeight;
+              shellEl.style.transform = prevTransform;
+              shellEl.style.transition = prevTransition;
+            } catch { /* best-effort */ }
+          }
+          try {
+            const bar = document.querySelector("[data-tour-nav]");
+            const wrap = bar?.parentElement;
+            if (wrap) {
+              const prevVis = wrap.style.visibility;
+              const prevZ = wrap.style.zIndex;
+              wrap.style.visibility = "hidden";
+              wrap.style.zIndex = "1001";
+              void wrap.offsetHeight;
+              wrap.style.visibility = prevVis;
+              wrap.style.zIndex = prevZ;
+            }
+          } catch { /* best-effort */ }
+        };
+        const tripRecovery = async () => {
+          // A real navigation is the only thing that reliably forces the
+          // compositor to re-composite WITH the bottom bar. Run it under the
+          // opaque repair cover so it can never flash — this cover works even
+          // when the splash is disabled (unlike the splash-hold). The trip
+          // itself stays on the same-looking list UI (a chats <-> groups tab
+          // toggle, or list <-> status) instead of jumping to Settings, so
+          // even if the cover were somehow never painted the user would only
+          // ever see the chat list — never a Settings flash.
+          const cur = screenRef.current;
+          setRepairCoverOn(true);
+          if (cur === "status") {
+            setScreen("list");
+            setActiveNavTab("chats");
+            await delay(50);
+            await delay(350);
+            setScreen("status");
+          } else {
+            setScreen("list");
+            setActiveNavTab((prev) => (prev === "groups" ? "chats" : "groups"));
+            await delay(50);
+            await delay(350);
+            setActiveNavTab("chats");
+          }
+          setBootKick((n) => n + 1);
+          await delay(120);
+          setRepairCoverOn(false);
+        };
         const onTab = ["list", "status", "settings"].includes(screenRef.current);
         const wantBar = onTab && !hideNav && !storyViewerOpenRef.current && !tourVisibleRef.current;
-        if (wantBar) {
-          // Ensure we're on the chat list with Chats tab
-          setStoryViewerOpen(false);
-          setScreen("list");
-          setActiveNavTab("chats");
-          // Remount the bottom nav so it is recreated as a fresh compositor layer
-          setBarEpoch((n) => n + 1);
-          setBootKick((n) => n + 1);
-          await new Promise((r) => setTimeout(r, 160));
-          // Late bumps to catch the moment splash fully lifts
-          const lateBumps = [1400, 3000];
-          lateBumps.forEach((ms) => {
-            setTimeout(() => { if (!cancelled) setBarEpoch((n) => n + 1); }, ms);
-          });
-          diag = `DIAG awake recovered screen=${screenRef.current} tab=${activeNavTab}`;
+        const barOK = !wantBar || barOnTop();
+        const rafOK = await rafAlive();
+        if (!rafOK) {
+          // Compositor is probably stalled (double-check: a single missed frame
+          // can happen while fonts/layout settle).
+          await delay(500);
+          const rafOK2 = await rafAlive();
+          if (!rafOK2) {
+            diag = `DIAG awake RECOVERED screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=dead`;
+            if (!cancelled) await tripRecovery();
+            const recovered = await rafAlive();
+            diag += ` after=${recovered ? "alive" : "STILL-DEAD"}`;
+          } else {
+            diag = `DIAG awake ok screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=slow`;
+          }
+        } else if (wantBar && !barOK) {
+          // Bar DOM exists but isn't composited on top. Try invisible repaints
+          // first; only fall back to the Settings trip (hidden under the
+          // repair cover) if they genuinely don't take.
+          let fixed = false;
+          for (let attempt = 0; attempt < 2 && !fixed; attempt++) {
+            forceRepaint();
+            await delay(200);
+            fixed = barOnTop();
+          }
+          if (fixed) {
+            diag = `DIAG awake bar-fixed screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=->true raf=alive invisible`;
+          } else {
+            diag = `DIAG awake BARFIX screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive trip`;
+            if (!cancelled) await tripRecovery();
+          }
         } else {
-          diag = `DIAG awake skip-notab screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar}`;
+          diag = `DIAG awake ok screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive`;
         }
       } catch (err) {
         diag = `DIAG awake-error ${err?.message || err}`;
       }
       try { window.__nxCapturedErrors.push(diag); } catch { /* best-effort */ }
+      // Release the splash so it fades normally — any recovery above already
+      // ran under the opaque repair cover (or behind the still-held splash),
+      // so nothing ever flashes. A separate 8s fallback guarantees the splash
+      // can't trap the user even if this effect never reaches this point.
       setSplashHold(false);
     }, 2200);
     return () => { cancelled = true; clearTimeout(settle); };
@@ -1983,9 +2075,6 @@ function AppShell({ appLocked, setAppLocked }) {
   useEffect(() => { localStorage.setItem(UI_SCALE_KEY, String(uiScale)); }, [uiScale]);
   useEffect(() => { localStorage.setItem("nextext_recording_bar_scale", String(recordingBarScale)); }, [recordingBarScale]);
   useEffect(() => { localStorage.setItem(SCROLL_DOWN_KEY, String(showScrollDown)); }, [showScrollDown]);
-  useEffect(() => { localStorage.setItem("nextext_scroll_down_size", String(scrollDownSize)); }, [scrollDownSize]);
-  useEffect(() => { localStorage.setItem("nextext_scroll_down_pos", scrollDownPos); }, [scrollDownPos]);
-  useEffect(() => { localStorage.setItem("nextext_emoji_animations", emojiAnimations ? "on" : "off"); }, [emojiAnimations]);
   useEffect(() => { localStorage.setItem("nextext_animate_on_tap", String(animateOnTap)); }, [animateOnTap]);
   useEffect(() => { localStorage.setItem("nextext_swipe_animation", swipeAnimationOn ? "on" : "off"); }, [swipeAnimationOn]);
   useEffect(() => { localStorage.setItem("nextext_swipe_speed", swipeSpeed); }, [swipeSpeed]);
@@ -2273,28 +2362,30 @@ function AppShell({ appLocked, setAppLocked }) {
     let target = drag.startIndex;
     if (drag.offset < -threshold || drag.velocity < -0.4) target = Math.min(drag.startIndex + 1, len - 1);
     else if (drag.offset > threshold || drag.velocity > 0.4) target = Math.max(drag.startIndex - 1, 0);
-    // ALWAYS snap every page to its resting position for `target` — both when
-    // switching tabs and when the release stays on the current tab. Without
-    // the same-page case, a partial swipe left the pages stranded at their
-    // mid-drag offset (the "page just moves and stays in an awkward position"
-    // bug) because the commit block below was skipped entirely.
-    const dur = swipeAnimationEnabled() ? swipeDuration() * 1000 : 0;
-    const trans = swipeAnimationEnabled() ? `left ${swipeDuration()}s ${swipeBezier()}` : "none";
-    orderedTabs.forEach((k, i) => {
-      const el = pageRefs.current[k];
-      if (el) {
-        el.style.transition = trans;
-        el.style.left = `${(i - target) * 100}%`;
-      }
-    });
-    // Always sync pageIndex so React-owned positions match the visual snap.
-    // This ensures a re-render never overwrites the snapped-back position.
-    setSnapAnimating(true);
-    if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
-    snapTimerRef.current = setTimeout(() => setSnapAnimating(false), dur || 1);
-    setPageIndex(target);
     if (target !== drag.startIndex) {
       const key = orderedTabs[target];
+      // snapAnimating makes React apply the animated transition to the index
+      // jump, so CSS animates from the last drag offset to the snapped page.
+      // There is NO deferred setTimeout nav commit here — the tab state lands
+      // immediately, so a backgrounded app or unmounted component can never
+      // strand the pager on a stale page (the old cold-start bug).
+      const dur = swipeAnimationEnabled() ? swipeDuration() * 1000 : 0;
+      const trans = swipeAnimationEnabled() ? `left ${swipeDuration()}s ${swipeBezier()}` : "none";
+      // Snap every page to its target `left` explicitly so the DOM always
+      // matches the committed tab (React's reconciliation won't touch a page
+      // whose rendered `left` is unchanged, which could otherwise leave a
+      // mid-drag inline offset stuck on the page).
+      orderedTabs.forEach((k, i) => {
+        const el = pageRefs.current[k];
+        if (el) {
+          el.style.transition = trans;
+          el.style.left = `${(i - target) * 100}%`;
+        }
+      });
+      setSnapAnimating(true);
+      if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
+      snapTimerRef.current = setTimeout(() => setSnapAnimating(false), dur || 1);
+      setPageIndex(target);
       if (key === "status") { setStatusOrigin("status"); setScreen("status"); }
       else if (key === "settings") setScreen("settings");
       else { setActiveNavTab(key); setScreen("list"); }
@@ -2329,20 +2420,13 @@ function AppShell({ appLocked, setAppLocked }) {
     position: "absolute",
     top: 0,
     left: 0,
-    right: 0,
-    bottom: 0,
+    overflow: "hidden",
     fontFamily: appFont,
+    width: uiScale === 1 ? "100%" : `${(100 / uiScale).toFixed(4)}%`,
+    height: uiScale === 1 ? "100%" : `${(100 / uiScale).toFixed(4)}%`,
     paddingTop: "var(--safe-top)",
     paddingBottom: "var(--safe-bottom)",
-    ...(uiScale !== 1 ? {
-      width: `${(100 / uiScale).toFixed(4)}%`,
-      height: `${(100 / uiScale).toFixed(4)}%`,
-      transform: `scale(${uiScale})`,
-      transformOrigin: "top left",
-    } : {
-      width: "100%",
-      height: "100%",
-    }),
+    ...(uiScale !== 1 ? { transform: `scale(${uiScale})`, transformOrigin: "top left" } : {}),
   };
 
   if (auth.loading) {
@@ -2383,6 +2467,7 @@ function AppShell({ appLocked, setAppLocked }) {
           const effectiveIndex = pagerDragRef.current?.active ? pageIndex : activeIdx;
           const pageStyle = {
             position: "absolute", top: 0, bottom: 0, width: "100%",
+            overflow: "hidden",
             // Pages are positioned with plain `left` offsets (no transforms,
             // no willChange, no GPU compositor layers at rest). Promoting every
             // page to its own compositor layer via translate3d re-triggered the
@@ -2405,14 +2490,14 @@ function AppShell({ appLocked, setAppLocked }) {
           if (key === "chats") return (
             <div key="chats" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Chats">
-                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "chats"} />
+                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} />
               </PageErrorBoundary>
             </div>
           );
           if (key === "groups") return (
             <div key="groups" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Groups">
-                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="groups" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "groups"} />
+                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="groups" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} />
               </PageErrorBoundary>
             </div>
           );
@@ -2437,12 +2522,6 @@ function AppShell({ appLocked, setAppLocked }) {
                 setRecordingBarScale={setRecordingBarScale}
                 showScrollDown={showScrollDown}
                 setShowScrollDown={setShowScrollDown}
-                scrollDownSize={scrollDownSize}
-                setScrollDownSize={setScrollDownSize}
-                scrollDownPos={scrollDownPos}
-                setScrollDownPos={setScrollDownPos}
-                emojiAnimations={emojiAnimations}
-                setEmojiAnimations={setEmojiAnimations}
                 animatedScrollEntry={animatedScrollEntry}
                 setAnimatedScrollEntry={setAnimatedScrollEntry}
                 compactList={compactList}
@@ -2509,10 +2588,7 @@ function AppShell({ appLocked, setAppLocked }) {
           onOpenGroupInfo={openGroupInfo}
           onOpenChat={openChat}
           showScrollDownSetting={showScrollDown}
-          scrollDownSize={scrollDownSize}
-          scrollDownPos={scrollDownPos}
           animatedScrollEntry={animatedScrollEntry}
-          emojiAnimations={emojiAnimations}
           micMode={micMode}
           recordingBarScale={recordingBarScale}
         />
@@ -2583,7 +2659,7 @@ function AppShell({ appLocked, setAppLocked }) {
         }
         if (!navTabs.length) return null;
         return (
-          <div key={barEpoch} style={{ position: "absolute", bottom: 0, left: 0, right: 0, display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, transform: "translateZ(0)", paddingBottom: barEpoch > 0 ? "max(0px, calc(var(--safe-bottom) + 1px))" : "max(0px, calc(var(--safe-bottom)))" }}>
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, transform: "translateZ(0)", paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
             {navTabs.map(({ key, icon: Icon, label }) => {
               const isActive = key === "settings" ? screen === "settings" : key === "status" ? screen === "status" : (screen === "list" && activeNavTab === key);
               return (
@@ -2602,8 +2678,24 @@ function AppShell({ appLocked, setAppLocked }) {
               );
             })}
           </div>
-);
+        );
       })()}
+
+      {createPortal(
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 2147483400, background: "#121B22",
+            // Always mounted (not conditionally) so the opaque layer is part of
+            // the WebView's initial composite. Toggling opacity 0↔1 on an
+            // existing layer forces a fresh re-composite of the whole frame
+            // (which is what re-includes the bottom bar) without ever creating
+            // a new compositor layer mid-recovery.
+            opacity: repairCoverOn ? 1 : 0,
+            pointerEvents: repairCoverOn ? "auto" : "none",
+          }}
+        />,
+        document.body
+      )}
 
       {createPortal(splashVisible && (
         <div
