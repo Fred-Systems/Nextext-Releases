@@ -315,7 +315,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, micMode, setMicMode, changeMicMode, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -866,6 +866,11 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               <Toggle on={swipeAnimationOn} onClick={() => setSwipeAnimationOn(!swipeAnimationOn)} />
             </div>
             {swipeAnimationOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Slide animation when swiping between tabs.</div>}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Edge swipe bounce</span>
+              <Toggle on={swipeBounce} onClick={() => setSwipeBounce(!swipeBounce)} />
+            </div>
+            {swipeBounce && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Bouncy effect when swiping past the first or last tab.</div>}
             {swipeAnimationOn && (
               <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
                 {[
@@ -1342,6 +1347,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const [animateOnTap, setAnimateOnTap] = useState(() => localStorage.getItem("nextext_animate_on_tap") === "true");
   const [swipeAnimationOn, setSwipeAnimationOn] = useState(() => localStorage.getItem("nextext_swipe_animation") !== "off");
   const [swipeSpeed, setSwipeSpeed] = useState(() => { try { return localStorage.getItem("nextext_swipe_speed") || "normal"; } catch { return "normal"; } });
+  const [swipeBounce, setSwipeBounce] = useState(() => localStorage.getItem("nextext_swipe_bounce") !== "off");
   const [searchBarScale, setSearchBarScale] = useState(() => { try { return Number(localStorage.getItem("nextext_search_bar_scale")) || 1; } catch { return 1; } });
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [showTour, setShowTour] = useState(false);
@@ -2058,6 +2064,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   useEffect(() => { localStorage.setItem("nextext_animate_on_tap", String(animateOnTap)); }, [animateOnTap]);
   useEffect(() => { localStorage.setItem("nextext_swipe_animation", swipeAnimationOn ? "on" : "off"); }, [swipeAnimationOn]);
   useEffect(() => { localStorage.setItem("nextext_swipe_speed", swipeSpeed); }, [swipeSpeed]);
+  useEffect(() => { localStorage.setItem("nextext_swipe_bounce", swipeBounce ? "on" : "off"); }, [swipeBounce]);
   useEffect(() => { localStorage.setItem("nextext_search_bar_scale", String(searchBarScale)); }, [searchBarScale]);
   useEffect(() => { localStorage.setItem("nextext_emoji_animations", emojiAnimations ? "on" : "off"); }, [emojiAnimations]);
 
@@ -2321,8 +2328,13 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     drag.lastT = now;
     let offset = dx;
     const len = orderedTabs.length;
-    if (drag.startIndex === 0 && offset > 0) offset *= 0.35; // edge resistance
-    if (drag.startIndex === len - 1 && offset < 0) offset *= 0.35;
+    if (swipeBounce) {
+      if (drag.startIndex === 0 && offset > 0) offset = Math.min(offset * 0.35, 80); // edge bounce with cap
+      if (drag.startIndex === len - 1 && offset < 0) offset = Math.max(offset * 0.35, -80); // edge bounce with cap
+    } else {
+      if (drag.startIndex === 0 && offset > 0) offset *= 0.35; // edge resistance
+      if (drag.startIndex === len - 1 && offset < 0) offset *= 0.35;
+    }
     drag.offset = offset;
     orderedTabs.forEach((key, i) => {
       const el = pageRefs.current[key];
@@ -2343,30 +2355,28 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     let target = drag.startIndex;
     if (drag.offset < -threshold || drag.velocity < -0.4) target = Math.min(drag.startIndex + 1, len - 1);
     else if (drag.offset > threshold || drag.velocity > 0.4) target = Math.max(drag.startIndex - 1, 0);
+    // ALWAYS snap every page to its resting position for `target` — both when
+    // switching tabs and when the release stays on the current tab. Without
+    // the same-page case, a partial swipe left the pages stranded at their
+    // mid-drag offset (the "page just moves and stays in an awkward position"
+    // bug) because the commit block below was skipped entirely.
+    const dur = swipeAnimationEnabled() ? swipeDuration() * 1000 : 0;
+    const trans = swipeAnimationEnabled() ? `left ${swipeDuration()}s ${swipeBezier()}` : "none";
+    orderedTabs.forEach((k, i) => {
+      const el = pageRefs.current[k];
+      if (el) {
+        el.style.transition = trans;
+        el.style.left = `${(i - target) * 100}%`;
+      }
+    });
+    // Always sync pageIndex so React-owned positions match the visual snap.
+    // This ensures a re-render never overwrites the snapped-back position.
+    setSnapAnimating(true);
+    if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
+    snapTimerRef.current = setTimeout(() => setSnapAnimating(false), dur || 1);
+    setPageIndex(target);
     if (target !== drag.startIndex) {
       const key = orderedTabs[target];
-      // snapAnimating makes React apply the animated transition to the index
-      // jump, so CSS animates from the last drag offset to the snapped page.
-      // There is NO deferred setTimeout nav commit here — the tab state lands
-      // immediately, so a backgrounded app or unmounted component can never
-      // strand the pager on a stale page (the old cold-start bug).
-      const dur = swipeAnimationEnabled() ? swipeDuration() * 1000 : 0;
-      const trans = swipeAnimationEnabled() ? `left ${swipeDuration()}s ${swipeBezier()}` : "none";
-      // Snap every page to its target `left` explicitly so the DOM always
-      // matches the committed tab (React's reconciliation won't touch a page
-      // whose rendered `left` is unchanged, which could otherwise leave a
-      // mid-drag inline offset stuck on the page).
-      orderedTabs.forEach((k, i) => {
-        const el = pageRefs.current[k];
-        if (el) {
-          el.style.transition = trans;
-          el.style.left = `${(i - target) * 100}%`;
-        }
-      });
-      setSnapAnimating(true);
-      if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
-      snapTimerRef.current = setTimeout(() => setSnapAnimating(false), dur || 1);
-      setPageIndex(target);
       if (key === "status") { setStatusOrigin("status"); setScreen("status"); }
       else if (key === "settings") setScreen("settings");
       else { setActiveNavTab(key); setScreen("list"); }
