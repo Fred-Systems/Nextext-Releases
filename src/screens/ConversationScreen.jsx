@@ -38,6 +38,29 @@ function getStoredViewed() {
 }
 
 const QUICK_REACTIONS = ["❤️", "😂", "😮", "😢", "🙏", "👍"];
+
+function isEmojiOnly(text) {
+  if (!text || !text.trim()) return false;
+  const chunks = text.trim().split(/\s+/);
+  if (chunks.length === 0 || chunks.length > 4) return false;
+  const EMO = /^\p{Extended_Pictographic}$/u;
+  for (const chunk of chunks) {
+    const core = chunk.replace(/[\uFE0F\u200D]/g, "");
+    if (!core) return false;
+    for (const ch of core) {
+      if (!EMO.test(ch) && !/^\p{Emoji_Modifier}$/u.test(ch)) return false;
+    }
+  }
+  return true;
+}
+
+function emojiAnimClass(emoji) {
+  if (/[😂🤣😹]/.test(emoji)) return "nextext-emoji-shake";
+  if (/[🥲😢😭😿]/.test(emoji)) return "nextext-emoji-tears";
+  if (/[❤💙💚💛🧡💜🖤🤍💗💖💘💝💟]/.test(emoji)) return "nextext-emoji-beat";
+  return "nextext-emoji-float";
+}
+
 const EMOJI_PICKER_SET = [
   "😀", "😂", "🥹", "😍", "😘", "😎", "🤔", "😴",
   "😭", "😡", "🥳", "😇", "🤗", "🙄", "😬", "🤯",
@@ -459,7 +482,7 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
   );
 }
 
-export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, animatedScrollEntry = false, micMode, recordingBarScale = 1, userDoc }) {
+export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, micMode, recordingBarScale = 1, userDoc, emojiAnimations = true }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth } = useTheme();
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
@@ -468,6 +491,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [chatId, setChatId] = useState(initialChatId);
   const [input, setInput] = useState("");
   const [activeMsg, setActiveMsg] = useState(null);
+  const [reactionFx, setReactionFx] = useState(null);
   const [forwardMsg, setForwardMsg] = useState(null);
   const [forwardBusy, setForwardBusy] = useState(false);
   const [translateMsg, setTranslateMsg] = useState(null);
@@ -504,6 +528,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setAttachClosing(true);
     setTimeout(() => { setAttachRendered(false); setShowAttach(false); setAttachClosing(false); }, 150);
   };
+
+  useEffect(() => {
+    if (!reactionFx) return;
+    const timer = setTimeout(() => setReactionFx(null), 1200);
+    return () => clearTimeout(timer);
+  }, [reactionFx]);
 
   useEffect(() => {
     // The gallery button stays highlighted (galleryActive) while the system
@@ -1064,6 +1094,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (!chatId || !activeMsg) return;
     try { await reactToMessage(chatId, activeMsg.id, myUid, emoji); }
     catch (e) { setSendError("Couldn't react: " + e.message); }
+    if (emojiAnimations) setReactionFx({ emoji, nonce: Date.now() });
     setActiveMsg(null);
   };
 
@@ -2263,6 +2294,18 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         {expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
+    const emojiOnly = emojiAnimations && !blocked && !m.isScheduled && isEmojiOnly(m.text);
+    if (emojiOnly) {
+      const emojiText = displayText || m.text;
+      return (
+        <div>
+          <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
+          <div className={`nextext-emoji-big ${emojiAnimClass(emojiText)}`} style={{ fontSize: Math.max(44, 62 * chatTextScale), lineHeight: 1.1, whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "none" }}>
+            {emojiText}
+          </div>
+        </div>
+      );
+    }
     return (
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
@@ -2484,13 +2527,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         </div>
 
         {showScrollDownSetting && showScrollDown && (
-          <button onClick={scrollToBottom} style={{ position: "absolute", left: "50%", bottom: 12, transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 6, padding: newMsgBadge > 0 ? "8px 16px" : "0", height: newMsgBadge > 0 ? "auto" : 36, borderRadius: newMsgBadge > 0 ? 18 : "50%", border: `1px solid ${t.border}`, background: newMsgBadge > 0 ? t.primary : t.surface, cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.18)", transition: "all 0.2s" }}>
+          <button onClick={scrollToBottom} style={{ position: "absolute", bottom: 12, left: scrollDownPos === "left" ? 12 : scrollDownPos === "right" ? undefined : "50%", right: scrollDownPos === "right" ? 12 : undefined, transform: scrollDownPos === "center" ? "translateX(-50%)" : "none", display: "flex", alignItems: "center", justifyContent: "center", padding: newMsgBadge > 0 ? "8px 16px" : "0", height: newMsgBadge > 0 ? "auto" : Math.max(36, Math.round(scrollDownSize + 14)), borderRadius: newMsgBadge > 0 ? 18 : "50%", border: `1px solid ${t.border}`, background: newMsgBadge > 0 ? t.primary : t.surface, cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.18)", transition: "all 0.2s", minWidth: Math.max(36, Math.round(scrollDownSize + 14)) }}>
             {newMsgBadge > 0 ? (
               <>
                 <span style={{ fontSize: 12.5, fontWeight: 700, color: "#fff" }}>{newMsgBadge} new message{newMsgBadge > 1 ? "s" : ""} 👇</span>
               </>
             ) : (
-              <ArrowDown size={17} color={t.primary} />
+              <ArrowDown size={scrollDownSize} color={t.primary} strokeWidth={2.4} />
             )}
           </button>
         )}
@@ -3033,6 +3076,16 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               </button>
             </div>
             {sendError && <div style={{ color: "#FF6B6B", fontSize: 12, marginTop: 6, textAlign: "center" }}>{sendError}</div>}
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {reactionFx && createPortal(
+        <div style={{ position: "fixed", left: 0, right: 0, bottom: "35%", zIndex: 2147481500, display: "flex", justifyContent: "center", alignItems: "center", pointerEvents: "none" }}>
+          <div key={reactionFx.nonce} className="nextext-react-burst">
+            <div className="nextext-react-ring" />
+            <div className="nextext-react-emoji">{reactionFx.emoji}</div>
           </div>
         </div>,
         document.body

@@ -208,10 +208,17 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
     setSavingNickname(false);
   };
 
-  const effectivePhotoURL = localPhotoOverride || contact?.profile?.photoURL;
+  const effectivePhotoURL = localPhotoOverride || (isSelfProfile ? (otherUserDoc?.photoURL || contact?.profile?.photoURL) : contact?.profile?.photoURL);
 
-  const realName = getContactRealName(contact);
-  const displayName = getContactDisplayName(contact);
+  const realName = isSelfProfile
+    ? (otherUserDoc?.displayName || otherUserDoc?.username || getContactRealName(contact) || "Me")
+    : getContactRealName(contact);
+  // Self profile: the passed `contact` may lack a profile (opened from a chat
+  // that carried no contact doc), so prefer the live own-user doc which is
+  // always fetched below. Fixes the name showing as "Unknown".
+  const displayName = isSelfProfile
+    ? (otherUserDoc?.displayName || otherUserDoc?.username || getContactDisplayName(contact) || "Me (You)")
+    : getContactDisplayName(contact);
   const hasNickname = contact?.nickname && contact.nickname.trim();
 
   const safeBack = () => { try { onBack?.(); } catch { /* navigation guard */ } };

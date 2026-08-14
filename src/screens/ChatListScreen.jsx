@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { useChats, toggleArchive, toggleFavorite, toggleLocked, deleteChatCompletely } from "../firebase/chats";
@@ -77,7 +78,7 @@ function ChatRowMeta({ myUid, otherUid, chatId, t, compact, isGroup }) {
   return <div style={{ fontSize: compact ? 11 : 12, color: t.textMuted, marginTop: compact ? 0 : 1 }}>{statusText}</div>;
 }
 
-export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroupInfo, onOpenSettings, hideNav, navTab, compactList, searchMode = "visible", topBarVisible = true, searchBarScale = 1 }) {
+export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroupInfo, onOpenSettings, hideNav, navTab, compactList, searchMode = "visible", topBarVisible = true, searchBarScale = 1, isActiveTab = true }) {
   const { t } = useTheme();
   const { chats } = useChats(myUid);
   const { contacts } = useContacts(myUid);
@@ -218,6 +219,14 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     window.addEventListener("nextext-contact-sort-change", handler);
     return () => window.removeEventListener("nextext-contact-sort-change", handler);
   }, []);
+  // Close sort menus when this tab is no longer active (prevents menus from
+  // sticking into other pages like Status or Settings when swiping).
+  useEffect(() => {
+    if (!isActiveTab) {
+      setShowChatSortMenu(false);
+      setShowSortMenu(false);
+    }
+  }, [isActiveTab]);
 
   // "Popular" ranks by total messages exchanged per direct chat. Counts come
   // from a cheap server-side aggregation, refreshed each time this sort is
@@ -629,7 +638,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           <button onClick={() => setShowChatSortMenu((v) => !v)} title="Sort chats" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
             <ArrowDownWideNarrow size={16} color={t.primary} />
           </button>
-          {showChatSortMenu && (
+          {showChatSortMenu && createPortal(
             <div onClick={() => setShowChatSortMenu(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
               <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 300, background: t.surface, borderRadius: 16, padding: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -643,7 +652,8 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
                   </div>
                 ))}
               </div>
-            </div>
+            </div>,
+            document.body
           )}
         </div>
         <div onClick={() => setShowNewListModal(true)} style={{ width: 30, height: 30, borderRadius: "50%", background: t.primary, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
@@ -765,7 +775,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               <button onClick={() => setShowSortMenu((v) => !v)} title="Sort contacts" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                 <ArrowDownWideNarrow size={16} color={t.primary} />
               </button>
-              {showSortMenu && (
+              {showSortMenu && createPortal(
                 <div onClick={() => setShowSortMenu(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
                   <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 300, background: t.surface, borderRadius: 16, padding: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -779,7 +789,8 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
                       </div>
                     ))}
                   </div>
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           </div>

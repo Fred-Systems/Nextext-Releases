@@ -7,17 +7,17 @@ import { db } from "./config";
 
 // Get the display name for a contact: nickname if set, otherwise real name from profile
 export function getContactDisplayName(contact) {
-  if (!contact) return "Unknown";
+  if (!contact) return null;
   // If contact has a nickname set, use it
   if (contact.nickname && contact.nickname.trim()) return contact.nickname.trim();
   // Otherwise fall back to profile displayName or username
-  return contact.profile?.displayName || contact.profile?.username || "Unknown";
+  return contact.profile?.displayName || contact.profile?.username || null;
 }
 
 // Get the real name (from profile) for a contact, ignoring nickname
 export function getContactRealName(contact) {
-  if (!contact) return "Unknown";
-  return contact.profile?.displayName || contact.profile?.username || "Unknown";
+  if (!contact) return null;
+  return contact.profile?.displayName || contact.profile?.username || null;
 }
 
 // Search users by username prefix — powers "add contact" and admin search.

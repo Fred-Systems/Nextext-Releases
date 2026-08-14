@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ChevronLeft, Send, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive } from "lucide-react";
+import { ChevronLeft, Send, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive, Copy, Forward, MessageSquare } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -99,6 +99,9 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isArchived, setIsArchived] = useState(false);
   const [fullscreenImage, setFullscreenImage] = useState(null);
+  const [activeMsgId, setActiveMsgId] = useState(null);
+  const [pendingForwardMsg, setPendingForwardMsg] = useState(null);
+  const [chatPickerMode, setChatPickerMode] = useState(null); // 'forward' | 'summarize'
   const [aiTextScale, setAiTextScale] = useState(() => {
     try { return Math.min(1.6, Math.max(0.6, Number(localStorage.getItem("nextext_ai_text_scale")) || 1)); } catch { return 1; }
   });
@@ -148,6 +151,18 @@ export default function AIChatScreen({ myUid, onBack }) {
     const unsub = onSnapshot(doc(db, "users", myUid), (snap) => setUserDoc(snap.data()));
     return unsub;
   }, [myUid]);
+
+  // Close message action menu on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (activeMsgId && !e.target.closest('[style*="minWidth: 160"]') && !e.target.closest('[title="More options"]')) {
+        setActiveMsgId(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("touchstart", handler);
+    return () => { document.removeEventListener("mousedown", handler); document.removeEventListener("touchstart", handler); };
+  }, [activeMsgId]);
 
   useEffect(() => {
     if (!myUid) return;
@@ -247,6 +262,74 @@ export default function AIChatScreen({ myUid, onBack }) {
     await updateDoc(doc(db, "chats", chatId), { lastMessage: null }).catch(() => {});
   };
 
+  // ── Message actions: copy, forward, ask AI ──────────────────────────
+  const copyMessageText = async (text) => {
+    try {
+      if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); }
+      else {
+        const ta = document.createElement("textarea");
+        ta.value = text; ta.setAttribute("readonly", "");
+        ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, ta.value.length);
+        document.execCommand("copy"); document.body.removeChild(ta);
+      }
+      setActiveMsgId(null);
+    } catch { /* ignore */ }
+  };
+
+  const forwardMessage = async (msg) => {
+    setShowChatPicker(true);
+    setChatPickerMode("forward");
+    setPendingForwardMsg(msg);
+    setActiveMsgId(null);
+    // Load all chats for forwarding
+    try {
+      const { getDocs, collection, query, orderBy } = await import("firebase/firestore");
+      const { db } = await import("../firebase/config");
+      const snap = await getDocs(query(collection(db, "chats"), orderBy("lastMessage.sentAt", "desc")));
+      const chats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setAllChats(chats);
+      // Load contact names for display
+      const names = {};
+      for (const c of chats) {
+        if (c.type === "direct") {
+          const otherUid = (c.participants || []).find((p) => p !== myUid);
+          if (otherUid) {
+            const userSnap = await getDoc(doc(db, "users", otherUid));
+            if (userSnap.exists()) names[otherUid] = userSnap.data().displayName || userSnap.data().username || otherUid.slice(0, 6);
+          }
+        } else if (c.type === "group") {
+          names[c.id] = c.name || "Group";
+        }
+      }
+      setContactNames(names);
+    } catch { /* ignore */ }
+  };
+
+  const handleForwardConfirm = async (targetChatId) => {
+    const msg = pendingForwardMsg;
+    if (!msg || !targetChatId) return;
+    try {
+      await addDoc(collection(db, "chats", targetChatId, "messages"), buildMsg({
+        senderId: myUid, type: "text", text: msg.text,
+      }));
+      await updateDoc(doc(db, "chats", targetChatId), {
+        lastMessage: { text: msg.text.slice(0, 80) + (msg.text.length > 80 ? "…" : ""), senderId: myUid, sentAt: serverTimestamp(), type: "text" },
+      }).catch(() => {});
+    } catch { /* ignore */ }
+    setPendingForwardMsg(null);
+    setShowChatPicker(false);
+  };
+
+  const askAIAboutMessage = (msg) => {
+    // Pre-fill input with quoted message + placeholder for user's question
+    const quoted = `���� Quoted message:\n"${msg.text}"\n\n��� Your question:`;
+    setInput(quoted);
+    setActiveMsgId(null);
+    // Focus the input
+    setTimeout(() => { const el = document.querySelector('input[placeholder="Ask NexText AI…"]'); if (el) el.focus(); }, 50);
+  };
+
   const handleImageAnalysis = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -306,6 +389,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const openChatPicker = async () => {
     setShowSettings(false);
     setShowChatPicker(true);
+    setChatPickerMode("summarize");
     try {
       const chatsQuery = query(collection(db, "chats"), where("participants", "array-contains", myUid));
       const snap = await getDocs(chatsQuery);
@@ -511,11 +595,37 @@ export default function AIChatScreen({ myUid, onBack }) {
                 })()
               ) : (
                 <div style={{ display: "flex", justifyContent: isMine ? "flex-end" : "flex-start", marginTop: 8 }}>
-                  <div style={{ maxWidth: "78%", padding: "10px 14px", borderRadius: isMine ? "14px 14px 4px 14px" : "14px 14px 14px 4px", background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText, fontSize: 14 * aiTextScale, lineHeight: 1.4, boxShadow: "0 1px 2px rgba(0,0,0,0.08)", wordBreak: "break-word", overflowWrap: "break-word", minWidth: 0 }}>
-                    {m.text}
-                    <div style={{ fontSize: 10.5, opacity: 0.55, marginTop: 4, textAlign: "right" }}>
-                      {m.sentAt?.toDate ? m.sentAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                  <div style={{ position: "relative", maxWidth: "78%" }}>
+                    <div style={{ padding: "10px 14px", borderRadius: isMine ? "14px 14px 4px 14px" : "14px 14px 14px 4px", background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText, fontSize: 14 * aiTextScale, lineHeight: 1.4, boxShadow: "0 1px 2px rgba(0,0,0,0.08)", wordBreak: "break-word", overflowWrap: "break-word", minWidth: 0 }}>
+                      {m.text}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                        <span style={{ fontSize: 10.5, opacity: 0.55 }}>
+                          {m.sentAt?.toDate ? m.sentAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                        </span>
+                        <div
+                          onClick={(e) => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); setActiveMsgRect({ top: rect.top, left: rect.left, width: rect.width }); setActiveMsgId(m.id); }}
+                          style={{ width: 28, height: 28, borderRadius: "50%", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.textMuted, flexShrink: 0 }}
+                          title="More options"
+                        >
+                          <MoreVertical size={14} />
+                        </div>
+                      </div>
                     </div>
+                    {activeMsgId === m.id && (
+                      <div style={{ position: "absolute", bottom: "100%", right: 0, marginBottom: 6, background: t.surface, borderRadius: 10, boxShadow: "0 4px 20px rgba(0,0,0,0.3)", border: `1px solid ${t.border}`, overflow: "hidden", zIndex: 100, minWidth: 160 }}>
+                        <div onClick={() => copyMessageText(m.text)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", cursor: "pointer", fontSize: 13.5, color: t.text }}>
+                          <Copy size={14} /> Copy
+                        </div>
+                        <div style={{ height: 1, background: t.border }} />
+                        <div onClick={() => forwardMessage(m)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", cursor: "pointer", fontSize: 13.5, color: t.text }}>
+                          <Forward size={14} /> Forward
+                        </div>
+                        <div style={{ height: 1, background: t.border }} />
+                        <div onClick={() => askAIAboutMessage(m)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", cursor: "pointer", fontSize: 13.5, color: t.primary, fontWeight: 600 }}>
+                          <MessageSquare size={14} /> Ask AI
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -567,19 +677,24 @@ export default function AIChatScreen({ myUid, onBack }) {
       {showChatPicker && (
         <div style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 50, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 12px", background: t.surface, borderBottom: `1px solid ${t.border}` }}>
-            <X size={22} color={t.text} onClick={() => { setShowChatPicker(false); setAllChats([]); }} style={{ cursor: "pointer" }} />
-            <span style={{ color: t.text, fontWeight: 700, fontSize: 16 }}>Select Chat to Summarize</span>
+            <X size={22} color={t.text} onClick={() => { setShowChatPicker(false); setAllChats([]); setChatPickerMode(null); }} style={{ cursor: "pointer" }} />
+            <span style={{ color: t.text, fontWeight: 700, fontSize: 16 }}>
+              {chatPickerMode === "forward" ? "Select Chat to Forward To" : "Select Chat to Summarize"}
+            </span>
           </div>
           <div style={{ flex: 1, overflowY: "auto" }}>
             {allChats.length === 0 && (
               <div style={{ padding: 30, textAlign: "center", color: t.textMuted, fontSize: 13.5 }}>
-                No chats available to summarize.
+                {chatPickerMode === "forward" ? "No chats available to forward to." : "No chats available to summarize."}
               </div>
             )}
             {allChats.map((c) => {
               const otherUid = (c.participants || []).find((p) => p !== myUid);
+              const onClick = chatPickerMode === "forward"
+                ? () => handleForwardConfirm(c.id)
+                : () => handleSummarizeExternalChat(c);
               return (
-                <div key={c.id} onClick={() => handleSummarizeExternalChat(c)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
+                <div key={c.id} onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
                   <div style={{ width: 42, height: 42, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <Users size={20} color={t.primary} />
                   </div>

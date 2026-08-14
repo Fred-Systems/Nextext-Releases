@@ -15,7 +15,17 @@ const AI_IDENTITY_BLOCK =
   "Fred-Systems is a chess player. If the user asks anything about his chess skill, " +
   "rating, title, or chess handle, answer that Fred-Systems prefers to keep his chess " +
   "rating and chess handle private, so you won't share any details about them besides " +
-  "that he plays chess.";
+  "that he plays chess.\n\n" +
+  "You operate within the NexText messaging app — a fully-featured, privacy-focused " +
+  "mobile messenger with: 1-on-1 and group chats, 24-hour status/Stories, voice notes, " +
+  "media sharing (photos, videos, files), end-to-end encryption for media, disappearing " +
+  "messages, message reactions, translations, message search, chat locking, archiving, " +
+  "broadcast lists, custom wallpapers, 15+ theme presets with auto-rotation, adjustable " +
+  "text scaling, parental controls, app lock, and extensive customization settings. " +
+  "AI features (chat with AI, chat summarization, persona switching, image analysis) " +
+  "are available on request — users must be granted AI access by an admin. " +
+  "You are the in-app AI assistant; you do not have direct access to the user's private " +
+  "data unless they explicitly share it with you (e.g., by asking you to summarize a chat).";
 
 export const PERSONALITIES = {
   default: { label: "Default General Assistant", icon: "🤖", systemPrompt: "You are a standard, helpful, friendly, and objective general-purpose virtual companion assistant. Be conversational, accurate, and concise." },
@@ -280,6 +290,33 @@ export const LANGUAGES = [
   { code: "af", label: "Afrikaans" },
   { code: "fil", label: "Filipino" },
   { code: "ca", label: "Catalan" },
+  { code: "yi", label: "Yiddish" },
+  { code: "arc", label: "Aramaic" },
+  { code: "sk", label: "Slovak" },
+  { code: "sl", label: "Slovenian" },
+  { code: "lt", label: "Lithuanian" },
+  { code: "lv", label: "Latvian" },
+  { code: "et", label: "Estonian" },
+  { code: "sq", label: "Albanian" },
+  { code: "mk", label: "Macedonian" },
+  { code: "is", label: "Icelandic" },
+  { code: "ga", label: "Irish" },
+  { code: "cy", label: "Welsh" },
+  { code: "gl", label: "Galician" },
+  { code: "eu", label: "Basque" },
+  { code: "ka", label: "Georgian" },
+  { code: "hy", label: "Armenian" },
+  { code: "az", label: "Azerbaijani" },
+  { code: "kk", label: "Kazakh" },
+  { code: "uz", label: "Uzbek" },
+  { code: "mn", label: "Mongolian" },
+  { code: "lo", label: "Lao" },
+  { code: "km", label: "Khmer" },
+  { code: "my", label: "Burmese" },
+  { code: "so", label: "Somali" },
+  { code: "ht", label: "Haitian Creole" },
+  { code: "jv", label: "Javanese" },
+  { code: "lb", label: "Luxembourgish" },
 ];
 
 export function getLanguageLabel(code) {

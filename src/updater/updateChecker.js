@@ -93,20 +93,35 @@ export async function getLatestApkUrl() {
   }
 }
 
-// Total downloads of the latest published APK (GitHub tracks a per-asset
-// download_count). Used on the login page; hides itself if the admin disables
-// the counter. Returns null when the count can't be fetched.
+// Total downloads of ALL published APK releases, summed across every version
+// (GitHub tracks a per-asset download_count). Used on the login page; hides
+// itself if the admin disables the counter. Returns null when the count can't
+// be fetched. The API caps pages at 100 releases; paginate until empty.
 export async function getApkDownloadCount() {
   try {
-    const res = await fetch(`${GITHUB_API}?per_page=1`, {
-      headers: { Accept: "application/vnd.github.v3+json" },
-    });
-    if (!res.ok) return null;
-    const releases = await res.json();
-    const release = (Array.isArray(releases) ? releases : [])
-      .find((r) => !r.draft && !r.prerelease && (r.assets || []).some((a) => a.name && a.name.endsWith(".apk")));
-    const apk = (release?.assets || []).find((a) => a.name && a.name.endsWith(".apk"));
-    return typeof apk?.download_count === "number" ? apk.download_count : null;
+    let page = 1;
+    let total = 0;
+    let seenAny = false;
+    for (let pages = 0; pages < 5; pages++) {
+      const res = await fetch(`${GITHUB_API}?per_page=100&page=${page}`, {
+        headers: { Accept: "application/vnd.github.v3+json" },
+      });
+      if (!res.ok) return seenAny ? total : null;
+      const releases = await res.json();
+      if (!Array.isArray(releases) || releases.length === 0) break;
+      for (const r of releases) {
+        if (r.draft || r.prerelease) continue;
+        for (const a of r.assets || []) {
+          if (a.name && a.name.endsWith(".apk") && typeof a.download_count === "number") {
+            total += a.download_count;
+            seenAny = true;
+          }
+        }
+      }
+      if (releases.length < 100) break;
+      page++;
+    }
+    return seenAny ? total : null;
   } catch {
     return null;
   }

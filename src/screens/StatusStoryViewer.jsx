@@ -71,6 +71,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const [sending, setSending] = useState(false);
   const [replySent, setReplySent] = useState(false);
   const [extraProfiles, setExtraProfiles] = useState({});
+  const [completedIndices, setCompletedIndices] = useState(new Set());
   const touchStartRef = useRef({ x: 0, y: 0 });
 
   const fullUnmount = useCallback(() => {
@@ -120,6 +121,14 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     if (statuses.length > 0 && idx >= statuses.length) {
       setIdx(statuses.length - 1);
     }
+    // Prune completed indices that are now out of bounds
+    setCompletedIndices((prev) => {
+      const next = new Set(prev);
+      for (const i of next) {
+        if (i >= statuses.length) next.delete(i);
+      }
+      return next;
+    });
   }, [statuses.length, idx]);
 
   const viewers = useStatusViewers(current?.id);
@@ -171,10 +180,21 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
         barRef.current.style.transition = "none";
         barRef.current.style.width = "100%";
       }
+      // Mark current index as completed
+      setCompletedIndices((prev) => {
+        const next = new Set(prev);
+        next.add(idx);
+        return next;
+      });
       setIdx((i) => i + 1);
       progressRef.current = 0;
     } else {
       completedRef.current = true;
+      setCompletedIndices((prev) => {
+        const next = new Set(prev);
+        next.add(idx);
+        return next;
+      });
       if (onViewStory) onViewStory();
       onClose();
     }
@@ -187,11 +207,18 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     progressRef.current = 0;
     // The slide we're leaving becomes an "ahead" bar (width 0%) on the next
     // render. Kill its transition BEFORE the width change lands so it snaps
-    // instantly instead of visibly shrinking on the previous slide.
+    // instantly to EMPTY (0%) on the previous slide — going back means those
+    // slides are unviewed again, so their bars must read empty, never filled.
     if (barRef.current) {
       barRef.current.style.transition = "none";
-      barRef.current.style.width = "100%";
+      barRef.current.style.width = "0%";
     }
+    // Unmark current index as completed (we didn't finish it)
+    setCompletedIndices((prev) => {
+      const next = new Set(prev);
+      next.delete(idx);
+      return next;
+    });
     if (idx > 0) {
       setIdx((i) => i - 1);
     } else {
@@ -351,7 +378,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       <div style={{ display: "flex", gap: 3, padding: "10px 12px 0", position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, overflow: "hidden" }}>
         {statuses.map((s, i) => (
           <div key={s.id} style={{ flex: 1, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.3)", overflow: "hidden" }}>
-            {i < idx ? (
+            {completedIndices.has(i) ? (
               <div style={{ height: "100%", borderRadius: 2, background: "#00A884", width: "100%" }} />
             ) : i === idx ? (
               <div ref={barRef} style={{ height: "100%", borderRadius: 2, background: "#00A884", width: "0%" }} />

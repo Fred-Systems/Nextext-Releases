@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { X, Copy } from "lucide-react";
 import { BarChart2, RefreshCw, Share, MessagesSquare, Image, Film, Mic, MapPin, Paperclip, Contact, Clock, Timer, ArrowDownUp } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { useGlobalSettings } from "../firebase/config-settings";
@@ -25,6 +27,8 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [copiedShare, setCopiedShare] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareText, setShareText] = useState("");
 
   const load = () => {
     setLoading(true);
@@ -43,8 +47,27 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
   const active = formatActiveTime(activeTimeMs);
   const num = (v) => loading ? "…" : error ? "—" : (v ?? 0);
 
-  const shareStats = async () => {
-    if (!stats || error) return;
+  // Copy helper that works even where navigator.clipboard is unavailable
+  // (non-secure WebView contexts): falls back to a hidden textarea + the
+  // legacy document.execCommand("copy") path.
+  const copyText = async (text) => {
+    try {
+      if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return; }
+    } catch { /* fall through */ }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  };
+
+  const buildShareText = () => {
+    if (!stats || error) return "";
     const lines = [
       "📊 My NexText statistics",
       `${stats.total} total messages (${stats.sent} sent / ${stats.received} received)`,
@@ -53,13 +76,34 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
       `Active time: ${active}`,
       ...ROWS.map(({ key, label }) => `${label}: ↑${stats.perType?.[key]?.sent ?? 0} ↓${stats.perType?.[key]?.recv ?? 0}`),
     ];
-    const text = lines.join("\n");
+    return lines.join("\n");
+  };
+
+  const shareStats = async () => {
+    if (!stats || error) return;
+    const text = buildShareText();
+    if (!text) return;
+    // In WebView / non-secure contexts, navigator.share often exists but fails.
+    // Skip straight to the in-app sheet which always works and has a Copy button.
+    const isWebView = /wv|webview/i.test(navigator.userAgent) || window.matchMedia("(display-mode: standalone)").matches;
+    if (!isWebView && navigator.share) {
+      try {
+        await navigator.share({ text });
+        return;
+      } catch (err) {
+        if (err?.name === "AbortError") return; // user cancelled
+      }
+    }
+    setShareText(text);
+    setShareOpen(true);
+  };
+
+  const copyShareText = async () => {
     try {
-      if (navigator.share) { await navigator.share({ text }); return; }
-      await navigator.clipboard.writeText(text);
+      await copyText(shareText);
       setCopiedShare(true);
       setTimeout(() => setCopiedShare(false), 2000);
-    } catch { /* user cancelled */ }
+    } catch { /* ignore */ }
   };
 
   return (
@@ -68,14 +112,14 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
         <BarChart2 size={18} color={t.primary} />
         <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Your statistics</span>
         {!loading && !error && (
-          <span onClick={shareStats} style={{ marginLeft: "auto", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, marginRight: 12 }}>
+          <button onClick={shareStats} style={{ marginLeft: "auto", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, marginRight: 12, background: "none", border: "none", padding: 0 }}>
             <Share size={13} /> {copiedShare ? "Copied!" : "Share"}
-          </span>
+          </button>
         )}
         {!loading && !error && (
-          <span onClick={load} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600 }}>
+          <button onClick={load} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, background: "none", border: "none", padding: 0 }}>
             <RefreshCw size={13} /> Refresh
-          </span>
+          </button>
         )}
       </div>
 
@@ -161,6 +205,27 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0 }) {
       </div>
 
       {error && <div style={{ fontSize: 12.5, color: "#FF3B30", marginTop: 8 }}>Couldn't load stats — check your connection and try Refresh.</div>}
+
+      {shareOpen && createPortal(
+        <div onClick={() => setShareOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2147482000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 320, background: t.surface, borderRadius: 16, padding: 18, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Share your statistics</span>
+              <X size={20} color={t.textMuted} onClick={() => setShareOpen(false)} style={{ cursor: "pointer" }} />
+            </div>
+            <div style={{ background: t.bg, border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, fontSize: 12.5, color: t.text, whiteSpace: "pre-wrap", maxHeight: 260, overflowY: "auto", lineHeight: 1.6, userSelect: "text" }}>
+              {shareText}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button onClick={() => setShareOpen(false)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Close</button>
+              <button onClick={copyShareText} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <Copy size={14} /> {copiedShare ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
