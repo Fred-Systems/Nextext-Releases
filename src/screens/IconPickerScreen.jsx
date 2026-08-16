@@ -36,6 +36,14 @@ export default function IconPickerScreen({ onBack }) {
   // If a preview image fails to load we fall back to an emoji/letter so the
   // tile is never blank.
   const [failed, setFailed] = useState({});
+  // Block interaction for the first moment after mount: tapping the Settings
+  // row that opened this screen produces a synthesized click ~300ms later that
+  // would otherwise land on a tile and accidentally pick an icon.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setArmed(true), 350);
+    return () => clearTimeout(id);
+  }, []);
 
   // If the user backgrounds and re-enters the app, the icon profile is
   // already saved in localStorage (and on the native side) so this effect
@@ -57,7 +65,7 @@ export default function IconPickerScreen({ onBack }) {
   };
 
   return (
-    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "#121B22", color: "#fff" }}>
+    <div style={{ position: "absolute", inset: 0, zIndex: 40, display: "flex", flexDirection: "column", background: "#121B22", color: "#fff", pointerEvents: armed ? "auto" : "none" }}>
       <div style={{ display: "flex", alignItems: "center", padding: "14px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
         <button onClick={onBack} aria-label="Back" style={{ background: "transparent", border: "none", color: "#fff", padding: 6, marginRight: 6, cursor: "pointer" }}>
           <ArrowLeft size={20} />

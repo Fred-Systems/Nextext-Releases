@@ -99,6 +99,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isArchived, setIsArchived] = useState(false);
   const [fullscreenImage, setFullscreenImage] = useState(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState(null);
   const [activeMsgRect, setActiveMsgRect] = useState(null);
   const longPressTimer = useRef(null);
@@ -245,9 +246,9 @@ export default function AIChatScreen({ myUid, onBack }) {
   };
 
   const clearChat = async () => {
-    if (!window.confirm("Clear all AI messages? This cannot be undone.")) return;
-    setMessages([]);
+    setShowClearConfirm(false);
     setShowSettings(false);
+    setMessages([]);
     setFullscreenImage(null);
     try {
       const snap = await getDocs(collection(db, "chats", chatId, "messages"));
@@ -508,7 +509,7 @@ export default function AIChatScreen({ myUid, onBack }) {
               <Users size={15} color={t.primary} />
               <span style={{ fontSize: 14, color: t.primary }}>Summarize External Chat history</span>
             </div>
-            <div onClick={clearChat} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+            <div onClick={() => { setShowSettings(false); setShowClearConfirm(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
               <Trash2 size={16} color="#FF3B30" />
               <span style={{ fontSize: 14, color: "#FF3B30" }}>Clear chat</span>
             </div>
@@ -761,6 +762,21 @@ export default function AIChatScreen({ myUid, onBack }) {
         <div onClick={() => setFullscreenImage(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <X size={26} color="#fff" onClick={() => setFullscreenImage(null)} style={{ position: "absolute", top: 18, right: 18, cursor: "pointer" }} />
           <img src={fullscreenImage} alt="Fullscreen" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 12, objectFit: "contain" }} />
+        </div>
+      )}
+
+      {/* In-app confirm for clearing the AI chat (window.confirm is disabled
+          inside the Capacitor WebView, so we use our own dialog). */}
+      {showClearConfirm && (
+        <div onClick={() => setShowClearConfirm(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 300, background: t.surface, borderRadius: 16, padding: 18, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+            <div style={{ fontWeight: 700, fontSize: 16, color: t.text, marginBottom: 8 }}>Clear AI chat?</div>
+            <div style={{ fontSize: 13.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 16 }}>This permanently deletes all messages in this AI conversation. This cannot be undone.</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setShowClearConfirm(false)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Cancel</button>
+              <button onClick={clearChat} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: "#FF3B30", color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>Clear</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

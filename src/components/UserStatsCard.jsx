@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Copy, Users } from "lucide-react";
 import { BarChart2, RefreshCw, Share, MessagesSquare, Image, Film, Mic, MapPin, Paperclip, Contact, Clock, Timer, ArrowDownUp } from "lucide-react";
@@ -30,11 +30,11 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
   const [shareOpen, setShareOpen] = useState(false);
   const [shareText, setShareText] = useState("");
   const [shareMode, setShareMode] = useState("sheet"); // "sheet" | "contacts"
-  // On touch devices the synthetic click fired ~300ms after touchend can land
-  // on the freshly-mounted centered backdrop (which sits under the finger) and
-  // immediately close the sheet. Ignore backdrop closes within this window of
-  // opening so the sheet actually appears.
-  const openedAtRef = useRef(0);
+  // On touch devices the synthesized click fired ~300ms after touchend can land
+  // on the freshly-mounted centered sheet (which sits under the finger) and
+  // immediately close it. Block pointer events on the sheet for a short window
+  // after opening so the stray tap is swallowed, then it becomes interactive.
+  const [shareArmed, setShareArmed] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -106,9 +106,10 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
     // dead. Now it always opens.
     const text = buildShareText();
     setShareText(text);
-    setShareOpen(true);
     setShareMode("sheet");
-    openedAtRef.current = Date.now();
+    setShareOpen(true);
+    setShareArmed(false);
+    setTimeout(() => setShareArmed(true), 500);
   };
 
   const shareWithContact = async (contact) => {
@@ -235,7 +236,7 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
       {error && <div style={{ fontSize: 12.5, color: "#FF3B30", marginTop: 8 }}>Couldn't load stats — check your connection and try Refresh.</div>}
 
       {shareOpen && createPortal(
-        <div onClick={() => { if (Date.now() - openedAtRef.current < 400) return; setShareOpen(false); setShareMode("sheet"); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2147482000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div onClick={() => { setShareOpen(false); setShareMode("sheet"); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2147482000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, pointerEvents: shareArmed ? "auto" : "none" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 320, background: t.surface, borderRadius: 16, padding: 18, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Share your statistics</span>
