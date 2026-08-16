@@ -626,6 +626,11 @@ export async function toggleLocked(chatId, myUid, currentlyLocked) {
     [`lockedBy.${myUid}`]: currentlyLocked ? deleteField() : true,
   });
 }
+export async function togglePinned(chatId, myUid, currentlyPinned) {
+  await updateDoc(doc(db, "chats", chatId), {
+    pinnedBy: currentlyPinned ? arrayRemove(myUid) : arrayUnion(myUid),
+  });
+}
 export async function deleteChatForUser(chatId, myUid) {
   await updateDoc(doc(db, "chats", chatId), {
     archivedBy: arrayRemove(myUid),

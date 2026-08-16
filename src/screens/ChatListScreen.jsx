@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow } from "lucide-react";
+import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow, Pin } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
-import { useChats, toggleArchive, toggleFavorite, toggleLocked, deleteChatCompletely } from "../firebase/chats";
+import { useChats, toggleArchive, toggleFavorite, toggleLocked, togglePinned, deleteChatCompletely } from "../firebase/chats";
 import { useContacts, searchUsersByUsername, sendContactRequest, acceptContactRequest, getContactDisplayName } from "../firebase/contacts";
 import { sendMediaMessage, getOrCreateDirectChat } from "../firebase/chats";
 import { usePresence, formatLastSeen } from "../firebase/presence";
@@ -373,18 +373,20 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   })();
 
   const chatSortTime = (c) => c.lastMessage?.sentAt?.toMillis?.() || 0;
+  // Pinned chats always sort to the top, regardless of the chosen sort mode.
+  const pinCmp = (a, b) => ((b.pinnedBy || []).includes(myUid) ? 1 : 0) - ((a.pinnedBy || []).includes(myUid) ? 1 : 0);
   const sortedChats = (() => {
     const list = [...tabFiltered];
     switch (chatSort) {
       case "alpha":
-        return list.sort((a, b) => (chatDisplayName(a) || "").localeCompare(chatDisplayName(b) || ""));
+        return list.sort((a, b) => pinCmp(a, b) || (chatDisplayName(a) || "").localeCompare(chatDisplayName(b) || ""));
       case "unread":
-        return list.sort((a, b) => (b.unreadCount?.[myUid] || 0) - (a.unreadCount?.[myUid] || 0) || chatSortTime(b) - chatSortTime(a));
+        return list.sort((a, b) => pinCmp(a, b) || (b.unreadCount?.[myUid] || 0) - (a.unreadCount?.[myUid] || 0) || chatSortTime(b) - chatSortTime(a));
       case "favorites":
-        return list.sort((a, b) => ((b.favoritedBy || []).includes(myUid) ? 1 : 0) - ((a.favoritedBy || []).includes(myUid) ? 1 : 0) || chatSortTime(b) - chatSortTime(a));
+        return list.sort((a, b) => pinCmp(a, b) || ((b.favoritedBy || []).includes(myUid) ? 1 : 0) - ((a.favoritedBy || []).includes(myUid) ? 1 : 0) || chatSortTime(b) - chatSortTime(a));
       case "recent":
       default:
-        return list.sort((a, b) => chatSortTime(b) - chatSortTime(a));
+        return list.sort((a, b) => pinCmp(a, b) || chatSortTime(b) - chatSortTime(a));
     }
   })();
 
@@ -587,6 +589,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: compactList ? 1 : 3, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, flex: 1 }}>
             <span style={{ fontWeight: 700, color: t.text, fontSize: nameSize, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{chatDisplayName(c)}</span>
+            {(c.pinnedBy || []).includes(myUid) && <Pin size={12} color={t.accent} style={{ flexShrink: 0 }} />}
             {(c.favoritedBy || []).includes(myUid) && <Star size={12} fill={t.accent} color={t.accent} style={{ flexShrink: 0 }} />}
             {isMutedNow(c) && <BellOff size={12} color={t.textMuted} style={{ flexShrink: 0 }} />}
           </div>
@@ -989,6 +992,10 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             <div onClick={() => { setMenuError(""); toggleFavorite(contextMenuChat.id, myUid, (contextMenuChat.favoritedBy || []).includes(myUid)).catch((e) => setMenuError(e?.message || "Couldn't favorite chat.")); setContextMenuChat(null); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
               <Star size={17} fill={(contextMenuChat.favoritedBy || []).includes(myUid) ? t.accent : "none"} color={(contextMenuChat.favoritedBy || []).includes(myUid) ? t.accent : t.text} />
               <span style={{ fontSize: 14.5, color: t.text }}>{(contextMenuChat.favoritedBy || []).includes(myUid) ? "Unfavorite" : "Favorite"}</span>
+            </div>
+            <div onClick={() => { setMenuError(""); togglePinned(contextMenuChat.id, myUid, (contextMenuChat.pinnedBy || []).includes(myUid)).catch((e) => setMenuError(e?.message || "Couldn't pin chat.")); setContextMenuChat(null); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+              <Pin size={17} color={(contextMenuChat.pinnedBy || []).includes(myUid) ? t.accent : t.text} />
+              <span style={{ fontSize: 14.5, color: (contextMenuChat.pinnedBy || []).includes(myUid) ? t.accent : t.text }}>{(contextMenuChat.pinnedBy || []).includes(myUid) ? "Unpin chat" : "Pin chat"}</span>
             </div>
             <div onClick={() => { if (window.confirm("Delete this chat permanently?")) { deleteChatCompletely(contextMenuChat.id).catch(() => {}); } setContextMenuChat(null); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
               <Trash2 size={17} color="#FF3B30" />

@@ -100,7 +100,7 @@ export function formatBytes(bytes) {
 // Total time the user has spent actively using the app (activeTimeMs is
 // accumulated client-side by the presence/usage heartbeat). Large values are
 // collapsed into words so the line never clogs (e.g. "about 2 hours").
-export function formatActiveTime(ms) {
+export function formatActiveTime(ms, showSeconds = false) {
   if (!ms || ms <= 0) return "No tracked time yet";
   const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
   const days = Math.floor(ms / DAY);
@@ -111,7 +111,8 @@ export function formatActiveTime(ms) {
   if (days) parts.push(`${days} day${days === 1 ? "" : "s"}`);
   if (hours) parts.push(`${hours} hour${hours === 1 ? "" : "s"}`);
   if (minutes) parts.push(`${minutes} minute${minutes === 1 ? "" : "s"}`);
-  if (!days && !hours && seconds) parts.push(`${seconds} second${seconds === 1 ? "" : "s"}`);
+  if (showSeconds) parts.push(`${seconds} second${seconds === 1 ? "" : "s"}`);
+  else if (!days && !hours && seconds) parts.push(`${seconds} second${seconds === 1 ? "" : "s"}`);
   const joined = parts.join(", ");
   return joined || "Just a moment";
 }

@@ -33,6 +33,9 @@ const PROFILE_BLURBS = {
 export default function IconPickerScreen({ onBack }) {
   const [activeId, setActiveId] = useState(getActiveProfileId);
   const [pendingId, setPendingId] = useState(null);
+  // If a preview image fails to load we fall back to an emoji/letter so the
+  // tile is never blank.
+  const [failed, setFailed] = useState({});
 
   // If the user backgrounds and re-enters the app, the icon profile is
   // already saved in localStorage (and on the native side) so this effect
@@ -99,11 +102,18 @@ export default function IconPickerScreen({ onBack }) {
                   background: "#000",
                   display: "flex", alignItems: "center", justifyContent: "center",
                 }}>
-                  <img
-                    src={p.iconPath}
-                    alt={p.label}
-                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                  />
+                  {failed[p.id] ? (
+                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34 }}>
+                      {p.kind === "calculator" ? "🧮" : p.kind === "notes" ? "📝" : "N"}
+                    </div>
+                  ) : (
+                    <img
+                      src={p.iconPath}
+                      alt={p.label}
+                      onError={() => setFailed((f) => ({ ...f, [p.id]: true }))}
+                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                    />
+                  )}
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{p.label}</div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", lineHeight: 1.35, minHeight: 30 }}>

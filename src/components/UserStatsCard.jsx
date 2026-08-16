@@ -54,7 +54,7 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
 
   const duration = formatMembershipDuration(createdAt);
   const liveActiveMs = activeTimeMs + (liveTick * 1000);
-  const active = formatActiveTime(error ? 0 : liveActiveMs);
+  const active = formatActiveTime(error ? 0 : liveActiveMs, true);
   const num = (v) => loading ? "…" : error ? "—" : (v ?? 0);
 
   // Copy helper that works even where navigator.clipboard is unavailable
@@ -77,38 +77,29 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
   };
 
   const buildShareText = () => {
-    if (!stats || error) return "";
-    const lines = [
-      "📊 My NexText statistics",
-      `${stats.total} total messages (${stats.sent} sent / ${stats.received} received)`,
-      `${stats.chats} chats`,
-      `Member for ${duration}`,
-      `Active time: ${active}`,
-      ...ROWS.map(({ key, label }) => `${label}: ↑${stats.perType?.[key]?.sent ?? 0} ↓${stats.perType?.[key]?.recv ?? 0}`),
-    ];
+    const lines = ["📊 My NexText statistics"];
+    lines.push(`Member for ${duration}`);
+    lines.push(`Active time: ${active}`);
+    // Per-type message counts are a nice-to-have; if they failed to load we
+    // still share the always-available membership + active-time figures.
+    if (stats && !error) {
+      lines.push(`${stats.total} total messages (${stats.sent} sent / ${stats.received} received)`);
+      lines.push(`${stats.chats} chats`);
+      ROWS.forEach(({ key, label }) => {
+        lines.push(`${label}: ↑${stats.perType?.[key]?.sent ?? 0} ↓${stats.perType?.[key]?.recv ?? 0}`);
+      });
+    }
     return lines.join("\n");
   };
 
-  const shareStats = async () => {
-    if (!stats || error) return;
+  const shareStats = () => {
+    // Always open the in-app share sheet (it has Copy + Send-to-contact and
+    // works everywhere, including inside the Capacitor WebView where
+    // navigator.share is unreliable). Previously this early-returned when the
+    // per-chat message stats failed to load — but those stats are independent
+    // of the active-time figure the card already shows, so the button appeared
+    // dead. Now it always opens.
     const text = buildShareText();
-    if (!text) return;
-    // In WebView / non-secure contexts, navigator.share often exists but fails
-    // or is blocked. Try it only when we're clearly NOT in a WebView; on any
-    // failure (or in a WebView) fall through to the always-working in-app
-    // sheet. Previously a rejected share() with a non-AbortError (e.g.
-    // NotAllowedError inside a Capacitor WebView) left the user with nothing
-    // happening — now it always opens the sheet.
-    const isWebView = /wv|webview/i.test(navigator.userAgent) || window.matchMedia("(display-mode: standalone)").matches;
-    if (!isWebView && navigator.share) {
-      try {
-        await navigator.share({ text });
-        return;
-      } catch (err) {
-        if (err?.name === "AbortError") return; // user genuinely cancelled
-        // Any other error (not allowed, no handler) → show the in-app sheet.
-      }
-    }
     setShareText(text);
     setShareOpen(true);
     setShareMode("sheet");
