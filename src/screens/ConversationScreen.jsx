@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff, Forward, Languages } from "lucide-react";
+import {   ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Bot, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff, Forward, Languages } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import {
   useMessages, sendTextMessage, markChatRead, setTypingHeartbeat, reactToMessage,
@@ -30,6 +30,7 @@ import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoi
 import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
 import ContactSharePicker from "../components/ContactSharePicker";
 import ForwardPicker from "../components/ForwardPicker";
+import AskAIPanel from "../components/AskAIPanel";
 
 
 const VIEWED_KEY = "nextext_status_viewed";
@@ -487,10 +488,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
+  const aiApproved = userDoc?.aiApproved && !sysConfig?.aiGloballyDisabled && !sysConfig?.hideAiEverywhere && userDoc?.restrictions?.blockAI !== true;
   const isGroup = !!contact?.isGroup;
   const [chatId, setChatId] = useState(initialChatId);
   const [input, setInput] = useState("");
   const [activeMsg, setActiveMsg] = useState(null);
+  const [askAI, setAskAI] = useState(null);
   const [reactionFx, setReactionFx] = useState(null);
   const [forwardMsg, setForwardMsg] = useState(null);
   const [forwardBusy, setForwardBusy] = useState(false);
@@ -1173,6 +1176,26 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   const handleEdit = () => { if (!activeMsg) return; setEditingMsg(activeMsg); setInput(activeMsg.text || ""); setActiveMsg(null); setTimeout(autoResizeComposer, 0); };
+
+  // Open the inline "Ask AI about this message" panel. Build the context the
+  // AI will see: the tapped message plus up to 10 before and 10 after.
+  const openAskAI = (msg) => {
+    const idx = messages.findIndex((m) => m.id === msg.id);
+    let ctx;
+    if (idx === -1) {
+      ctx = [{ id: msg.id, senderId: msg.senderId, text: msg.text || "[message]" }];
+    } else {
+      const start = Math.max(0, idx - 10);
+      const end = Math.min(messages.length, idx + 11);
+      ctx = messages.slice(start, end).map((m) => ({
+        id: m.id,
+        senderId: m.senderId,
+        text: m.text || (m.type === "image" ? "[image]" : m.type === "voice" ? "[voice note]" : m.type === "location" ? "[location]" : m.type === "contact" ? "[contact card]" : m.type === "poll" ? "[poll]" : "[media]"),
+      }));
+    }
+    setAskAI({ context: ctx });
+    setActiveMsg(null);
+  };
   const handleDeleteSelf = async () => { if (!chatId || !activeMsg) return; try { await deleteMessageForSelf(chatId, activeMsg.id, myUid); } catch (e) { setSendError("Couldn't delete: " + (e.message || "server rejected the write")); } setActiveMsg(null); };
   const handleDeleteEveryone = async () => { if (!chatId || !activeMsg) return; try { await deleteMessageForEveryone(chatId, activeMsg.id); } catch (e) { setSendError("Couldn't delete for everyone: " + (e.message || "server rejected the write")); } setActiveMsg(null); };
 
@@ -2860,6 +2883,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <Languages size={17} color={t.text} /><span style={{ fontSize: 15, color: t.text }}>Translate</span>
                 </div>
               )}
+              {aiApproved && activeMsg.text && (
+                <div onClick={() => openAskAI(activeMsg)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <Bot size={17} color={t.primary} /><span style={{ fontSize: 15, color: t.primary }}>Ask AI about this</span>
+                </div>
+              )}
               {activeMsg.senderId === myUid && activeMsg.type === "text" && canEdit && (
                 <div onClick={handleEdit} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <span style={{ fontSize: 15, color: t.text }}>Edit <span style={{ fontSize: 11.5, color: t.textMuted }}>(within 15 min)</span></span>
@@ -2917,6 +2945,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           myProfile={userDoc}
           onClose={() => { if (!forwardBusy) setForwardMsg(null); }}
           onForward={handleForwardTo}
+        />
+      )}
+      {askAI && (
+        <AskAIPanel
+          myUid={myUid}
+          otherName={contact?.profile?.displayName || contact?.displayName || "Them"}
+          contextMessages={askAI.context}
+          onClose={() => setAskAI(null)}
         />
       )}
       {showSchedule && <ScheduleSendSheet t={t} onClose={() => setShowSchedule(false)} onSchedule={sendScheduled} />}
