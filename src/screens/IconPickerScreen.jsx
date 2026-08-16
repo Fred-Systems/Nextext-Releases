@@ -97,21 +97,29 @@ export default function IconPickerScreen({ onBack }) {
                 }}
               >
                 <div style={{
+                  position: "relative",
                   width: 72, height: 72, borderRadius: 16, overflow: "hidden",
                   boxShadow: "0 4px 12px rgba(0,0,0,0.45)",
-                  background: "#000",
-                  display: "flex", alignItems: "center", justifyContent: "center",
                 }}>
-                  {failed[p.id] ? (
-                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34 }}>
-                      {p.kind === "calculator" ? "🧮" : p.kind === "notes" ? "📝" : "N"}
-                    </div>
-                  ) : (
+                  {/* Always-visible base preview so a tile can never look blank,
+                      even if the real icon image is missing or fails to load. */}
+                  <div style={{
+                    position: "absolute", inset: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 32,
+                    background: p.kind === "calculator" ? "#1C1C1E" : p.kind === "notes" ? "#FFF8E1" : "#10B981",
+                    color: p.kind === "calculator" || p.kind === "notes" ? "#FFD60A" : "#fff",
+                  }}>
+                    {p.kind === "calculator" ? "🧮" : p.kind === "notes" ? "📝" : "N"}
+                  </div>
+                  {/* Real launcher icon overlaid on top; hidden if it errors so
+                      the base preview shows through. */}
+                  {!failed[p.id] && (
                     <img
                       src={p.iconPath}
                       alt={p.label}
                       onError={() => setFailed((f) => ({ ...f, [p.id]: true }))}
-                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                     />
                   )}
                 </div>
