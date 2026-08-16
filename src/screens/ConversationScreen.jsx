@@ -502,6 +502,37 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [translations, setTranslations] = useState({});
   const [hiddenTranslations, setHiddenTranslations] = useState({});
   const [translationErrors, setTranslationErrors] = useState({});
+  // User-configurable translation language order (popular languages on top).
+  // Persisted on the user doc as translationLangOrder (array of codes).
+  const [langOrder, setLangOrder] = useState(() => {
+    const saved = userDoc?.translationLangOrder;
+    if (Array.isArray(saved) && saved.length) {
+      const known = new Set(LANGUAGES.map((l) => l.code));
+      const filtered = saved.filter((c) => known.has(c));
+      const extra = LANGUAGES.map((l) => l.code).filter((c) => !filtered.includes(c));
+      return [...filtered, ...extra];
+    }
+    return LANGUAGES.map((l) => l.code);
+  });
+  const [reorderMode, setReorderMode] = useState(false);
+  const [reorderDraft, setReorderDraft] = useState(langOrder);
+  const orderedLangs = (reorderMode ? reorderDraft : langOrder)
+    .map((code) => LANGUAGES.find((l) => l.code === code))
+    .filter(Boolean);
+  const moveLang = (idx, dir) => {
+    setReorderDraft((prev) => {
+      const next = [...prev];
+      const j = idx + dir;
+      if (j < 0 || j >= next.length) return prev;
+      [next[idx], next[j]] = [next[j], next[idx]];
+      return next;
+    });
+  };
+  const saveLangOrder = async () => {
+    setLangOrder(reorderDraft);
+    setReorderMode(false);
+    try { await updateDoc(doc(db, "users", myUid), { translationLangOrder: reorderDraft }); } catch { /* best-effort */ }
+  };
   const [editingMsg, setEditingMsg] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
   const [theyTyping, setTheyTyping] = useState(false);
@@ -845,6 +876,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const pinchStartRef = useRef(null);
   const prevMessageCount = useRef(0);
   const typingClearTimer = useRef(null);
+  const typingHeartbeatTimer = useRef(null);
+  const composerResizeTimer = useRef(null);
   const voiceRecordingClearTimer = useRef(null);
   const readTimer = useRef(null);
   const { messages: rawMessages } = useMessages(chatId, myUid);
@@ -1024,8 +1057,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const autoResizeComposer = () => {
     const el = composerRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.max(el.scrollHeight, 26 + composerHeight * 14)}px`;
+    if (composerResizeTimer.current) cancelAnimationFrame(composerResizeTimer.current);
+    composerResizeTimer.current = requestAnimationFrame(() => {
+      el.style.height = "auto";
+      el.style.height = `${Math.max(el.scrollHeight, 26 + composerHeight * 14)}px`;
+    });
   };
 
   useEffect(() => {
@@ -1035,7 +1071,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const handleInputChange = (val) => {
     setInput(val);
     autoResizeComposer();
-    if (chatId) setTypingHeartbeat(chatId, myUid);
+    if (chatId) {
+      if (typingHeartbeatTimer.current) clearTimeout(typingHeartbeatTimer.current);
+      typingHeartbeatTimer.current = setTimeout(() => setTypingHeartbeat(chatId, myUid), 800);
+    }
   };
 
   const send = async () => {
@@ -1684,8 +1723,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     // is treated as a cancel rather than a broken note being uploaded.
     const elapsedMs = recordStartTsRef.current ? Date.now() - recordStartTsRef.current : 0;
     recordStartTsRef.current = null;
-    const { blob, wasNative } = await stopRecorder();
+    // Reset recording UI state IMMEDIATELY so user can start another recording
+    // without waiting for the recorder to fully stop.
     resetRecordingUi();
+    const { blob, wasNative } = await stopRecorder();
     if (!send) return;
     // Parental controls may have been enabled while the note was being
     // recorded — drop it rather than uploading + failing the Firestore write.
@@ -1722,8 +1763,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     const finalDuration = recordSeconds;
     const elapsedMs = recordStartTsRef.current ? Date.now() - recordStartTsRef.current : 0;
     recordStartTsRef.current = null;
-    const { blob, wasNative } = await stopRecorder();
+    // Reset recording UI state IMMEDIATELY so user can start another recording.
     resetRecordingUi();
+    const { blob, wasNative } = await stopRecorder();
     if (elapsedMs < 500) {
       setSendError("The recording was too short to keep — try holding the mic a little longer.");
       return;
@@ -2521,6 +2563,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   {canForward(m) && (
                     <Forward size={13} onClick={(e) => { e.stopPropagation(); setForwardMsg(m); }} style={{ cursor: "pointer", opacity: 0.6 }} />
                   )}
+                  {!m.deletedForEveryone && (
+                    <MoreVertical size={13} onClick={(e) => { e.stopPropagation(); setActiveMsg(m); }} style={{ cursor: "pointer", opacity: 0.6 }} />
+                  )}
                   <span style={{ fontSize: 10.5, opacity: 0.65 }}>
                     {msgDisplayDate(m) ? msgDisplayDate(m).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "sending…"}
                   </span>
@@ -2909,17 +2954,34 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         <div className="nextext-overlay-backdrop" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 56, display: "flex", alignItems: "flex-end" }} onClick={() => { if (!translatingLang) { setTranslateMsg(null); setActiveMsg(null); } }}>
           <div className="nextext-overlay-sheet" style={{ background: t.surface, width: "100%", borderRadius: "18px 18px 0 0", padding: "16px 20px 24px", maxHeight: "72%", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexShrink: 0 }}>
-              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Translate to…</span>
-              <X size={20} color={t.textMuted} onClick={() => { if (!translatingLang) { setTranslateMsg(null); setActiveMsg(null); } }} style={{ cursor: "pointer" }} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>{reorderMode ? "Reorder languages" : "Translate to…"}</span>
+              {reorderMode ? (
+                <span onClick={() => saveLangOrder()} style={{ cursor: "pointer", fontSize: 14, fontWeight: 700, color: t.primary }}>Done</span>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <span onClick={() => { setReorderDraft(langOrder); setReorderMode(true); }} style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: t.primary }}>Reorder</span>
+                  <X size={20} color={t.textMuted} onClick={() => { if (!translatingLang) { setTranslateMsg(null); setActiveMsg(null); } }} style={{ cursor: "pointer" }} />
+                </div>
+              )}
             </div>
             {translatingLang && (
               <div style={{ fontSize: 13, color: t.primary, fontWeight: 600, padding: "10px 0", flexShrink: 0 }}>Translating…</div>
             )}
             <div style={{ overflowY: "auto", flex: 1, minHeight: 0, maxHeight: "calc(72vh - 120px)" }}>
-              {LANGUAGES.map((l) => (
-                <div key={l.code} onClick={() => { if (!translatingLang) handleTranslateSelect(l.code); }} style={{ padding: "11px 4px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 10, opacity: translatingLang ? 0.5 : 1 }}>
-                  <Languages size={15} color={t.textMuted} />
-                  <span style={{ fontSize: 14.5, color: t.text, fontWeight: translatingLang === l.code ? 700 : 500 }}>{l.label}</span>
+              {orderedLangs.map((l, idx) => (
+                <div key={l.code} style={{ padding: "11px 4px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 10, opacity: translatingLang ? 0.5 : 1 }}>
+                  {reorderMode ? (
+                    <>
+                      <span style={{ fontSize: 14.5, color: t.text, fontWeight: 500, flex: 1, cursor: "default" }}>{l.label}</span>
+                      <span onClick={() => moveLang(idx, -1)} style={{ cursor: "pointer", padding: "4px 8px", color: t.textMuted, userSelect: "none" }}>▲</span>
+                      <span onClick={() => moveLang(idx, 1)} style={{ cursor: "pointer", padding: "4px 8px", color: t.textMuted, userSelect: "none" }}>▼</span>
+                    </>
+                  ) : (
+                    <>
+                      <Languages size={15} color={t.textMuted} />
+                      <span onClick={() => { if (!translatingLang) handleTranslateSelect(l.code); }} style={{ fontSize: 14.5, color: t.text, fontWeight: translatingLang === l.code ? 700 : 500, cursor: "pointer", flex: 1 }}>{l.label}</span>
+                    </>
+                  )}
                 </div>
               ))}
             </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { ThemeProvider, useTheme, themes, ROTATE_INTERVALS } from "./theme/ThemeContext";
 import { useAuth } from "./firebase/useAuth";
@@ -32,7 +32,7 @@ import GroupInfoScreen from "./screens/GroupInfoScreen";
 import CalculatorScreen from "./screens/CalculatorScreen";
 import NotepadScreen from "./screens/NotepadScreen";
 import IconPickerScreen from "./screens/IconPickerScreen";
-import { getActiveProfile } from "./services/iconManager";
+import { getActiveProfileId, syncNativeProfile, ICON_PROFILES } from "./services/iconManager";
 import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead } from "./firebase/notifications";
 import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
@@ -1383,7 +1383,41 @@ function AppShell({ appLocked, setAppLocked }) {
   // and from that moment on we render the regular app (so coming back into
   // a focused WebView doesn't re-trigger the gate).
   const [disguiseUnlocked, setDisguiseUnlocked] = useState(false);
-  const activeProfile = getActiveProfile();
+  // Size the shell to the VISUAL viewport height (window.innerHeight), not the
+  // CSS `100%` chain. On Android the `<html>/<body>` `height:100%` resolves to
+  // the layout viewport, which is taller than the visible area once the
+  // on-screen navigation bar is accounted for — pushing anything pinned to
+  // `bottom: 0` (the bottom nav bar) below the fold on first paint. Tapping
+  // Settings later forced a reflow that "fixed" it; sizing to innerHeight makes
+  // it correct from the very first frame.
+  const [appHeight, setAppHeight] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 0));
+  useEffect(() => {
+    const update = () => setAppHeight(window.innerHeight || 0);
+    update();
+    window.addEventListener("resize", update);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", update);
+      window.visualViewport.addEventListener("scroll", update);
+    }
+    return () => {
+      window.removeEventListener("resize", update);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener("resize", update);
+        window.visualViewport.removeEventListener("scroll", update);
+      }
+    };
+  }, []);
+  // The active icon profile drives the disguise gate. localStorage is the
+  // fast path, but it can be dropped independently of native storage, so we
+  // reconcile against the native SharedPreferences value on every cold start.
+  const [iconProfileId, setIconProfileId] = useState(() => getActiveProfileId());
+  useEffect(() => {
+    let cancelled = false;
+    syncNativeProfile().then((id) => { if (!cancelled) setIconProfileId(id); }).catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const activeProfile = ICON_PROFILES.find((p) => p.id === iconProfileId) || ICON_PROFILES[0];
   const disguiseKind = activeProfile && (activeProfile.kind === "calculator" || activeProfile.kind === "notes") ? activeProfile.kind : null;
   const [activeChat, setActiveChat] = useState(null);
   const [activeGroup, setActiveGroup] = useState(null);
@@ -1445,13 +1479,9 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const shellRef = useRef(null);
   const pageRefs = useRef({});
   const pagerDragRef = useRef(null);
-  // True for the brief snap window after a swipe ends, so React applies the
-  // animated transition while the transform jumps to the target index (CSS
-  // animates from the last drag position). Avoids the old setTimeout-deferred
-  // nav commit that could be dropped on unmount/background and strand the
-  // pager on a stale page.
   const [snapAnimating, setSnapAnimating] = useState(false);
   const snapTimerRef = useRef(null);
+  const pagerSyncedRef = useRef(false);
 
   // ── App state persistence ──────────────────────────────────────────
   // Persists navigation state to localStorage so relaunching the app
@@ -1557,12 +1587,14 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // are corrected. Guarantees the app always lands on the chat list with the
   // bottom nav visible — the reported "bottom bar missing / dead group row
   // until I tap Settings" cold start. Only fires once per user session.
-  // Also forces a fresh re-render of the pager (mirroring the manual "tap
-  // Settings" navigation that the user confirmed fixes it) so a stale inline
-  // transform or paint glitch on a pager page can't strand the app.
-  const [bootKick, setBootKick] = useState(0);
-  const bootLockedRef = useRef(false);
   const [coldStartComplete, setColdStartComplete] = useState(false);
+  // Forces a one-time remount of the shell subtree AFTER the first painted
+  // frame. On some Android WebViews the bottom-nav + pager drop out of the very
+  // first composite (invisible + non-interactive) until a real re-render
+  // happens (e.g. a Settings round-trip "fixes" it). Keying the shell by this
+  // flag reproduces that second composite deterministically, without requiring
+  // user interaction.
+  const [coldStartReady, setColdStartReady] = useState(false);
   // While true, the in-app splash stays fully opaque. The awake-kick releases
   // it once the cold-start repair has run, so the Settings-trip recovery
   // happens invisibly behind the splash instead of flashing the screen.
@@ -1601,9 +1633,15 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
         if (["list", "status", "settings"].includes(prev)) return prev;
         return "list";
       });
-      setActiveNavTab((prev) => (TAB_KEYS.includes(prev) ? prev : "chats"));
-      setBootKick((n) => n + 1);
+      // Always land on the Chats tab on a cold start (the user expects the
+      // bottom bar + chat list ready immediately, not a restored Groups tab).
+      setActiveNavTab("chats");
       setColdStartComplete(true);
+      // After the first composite has settled, force a remount so the bottom
+      // nav + pager are guaranteed a second paint (fixes the cold-start "dead
+      // bar" / stuck-swipe). A short delay (not just double-rAF) makes sure
+      // this happens AFTER the first frame, not during it.
+      setTimeout(() => setColdStartReady(true), 350);
     }, 0);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1754,7 +1792,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           }
         } else if (wantBar && !barOK) {
           // Bar DOM exists but isn't composited on top. Try invisible repaints
-          // first; if they don't take, bump barEpoch/bootKick to force remount.
+          // first; if they don't take, bump barEpoch to force remount.
           let fixed = false;
           for (let attempt = 0; attempt < 2 && !fixed; attempt++) {
             forceRepaint();
@@ -1770,7 +1808,6 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
               await delay(40);
               forceRepaint();
               setBarEpoch((n) => n + 1);
-              setBootKick((n) => n + 1);
               await delay(160);
               setRepairCoverOn(false);
             }
@@ -1787,13 +1824,12 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       // so nothing ever flashes. A separate 8s fallback guarantees the splash
       // can't trap the user even if this effect never reaches this point.
       setSplashHold(false);
-      // Force a fresh bar remount + boot repaint the moment the splash is
+      // Force a fresh bar remount the moment the splash is
       // released. On Android WebViews with a stuck compositor, the bar's
       // `key={barEpoch}` might not re-attach to the new frame until the React
       // tree repaints — bumping it here is the most reliable way to make the
       // bar appear the instant the splash lets go of pointer events.
       setBarEpoch((n) => n + 1);
-      setBootKick((n) => n + 1);
     }, 2200);
     return () => { cancelled = true; clearTimeout(settle); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2287,7 +2323,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // Route into a chat when the user taps a notification (or a background
   // payload arrived while the app was closed). Waits for the chat list to load
   // on cold start, then drops the request if the chat can't be found.
-  // On cold start, we don't auto-open the chat until the bootKick has run
+  // On cold start, we don't auto-open the chat until coldStartComplete is true
   // (so the bottom nav is guaranteed visible). After cold start, open immediately.
   useEffect(() => {
     if (!pendingNotifChatId) return;
@@ -2336,50 +2372,31 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
   // Sync the pager position whenever the active tab changes via bottom bar,
   // top-bar buttons, or programmatic navigation (e.g. opening a status).
-  // All tabs stay mounted as direct shell children (positioned via `transform`),
+  // All tabs stay mounted as direct shell children (positioned via `left`),
   // so a failed mount can never silently blank the pages.
   useEffect(() => {
     if (currentTabIndex === -1) return;
-    if (!pagerDragRef.current?.active) setPageIndex(currentTabIndex);
+    if (!pagerDragRef.current?.active && !pagerSyncedRef.current) {
+      setPageIndex(currentTabIndex);
+      pagerSyncedRef.current = true;
+    } else if (!pagerDragRef.current?.active) {
+      setPageIndex(currentTabIndex);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTabKey, screen, orderedTabs.join(",")]);
 
-  // Cold-start pager resync. The user reported the chat list + bottom bar are
-  // missing/dead until they manually tap the Settings gear (a re-render). The
-  // reliable trigger is a fresh re-render that re-applies each page's
-  // transform; this layout effect replicates that automatically by snapping
-  // any stale inline transform (left by a swipe) back to the derived active
-  // index before paint. Driven by bootKick (bumped by the safety net shortly
-  // after sign-in) so it runs once on real cold starts.
-  useLayoutEffect(() => {
-    if (bootKick === 0) return;
-    if (bootLockedRef.current) return;
-    bootLockedRef.current = true;
-    setActiveNavTab("chats");
-    const target = currentTabIndex >= 0 ? currentTabIndex : 0;
-    orderedTabs.forEach((key, i) => {
-      const el = pageRefs.current[key];
-      if (el) {
-        el.style.transition = "none";
-        el.style.left = `${(i - target) * 100}%`;
-      }
-    });
-    setPageIndex(target);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bootKick]);
-
-  // Cold-start pager lock: runs inside the pager sync effect when orderedTabs
-  // is first populated (after navConfig restore). Forces activeNavTab="chats"
-  // and snaps the Chats page to origin. Uses a ref to run only once.
-  // This is the primary cold-start fix; bootKick layoutEffect is the fallback.
+  // Cold-start pager lock: runs when orderedTabs is first populated after
+  // navConfig restore. Forces activeNavTab="chats" and snaps the Chats page
+  // to origin. Uses a ref to run only once per session.
   useEffect(() => {
-    if (!myUid || bootLockedRef.current) return;
+    if (!myUid) return;
     if (orderedTabs.length === 0) return;
+    if (pagerSyncedRef.current) return;
     const target = orderedTabs.indexOf("chats");
     if (target === -1) return;
-    bootLockedRef.current = true;
     setActiveNavTab("chats");
     setPageIndex(target);
+    pagerSyncedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderedTabs.join(","), myUid]);
 
@@ -2527,34 +2544,16 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     overflow: "hidden",
     fontFamily: appFont,
     width: uiScale === 1 ? "100%" : `${(100 / uiScale).toFixed(4)}%`,
-    height: uiScale === 1 ? "100%" : `${(100 / uiScale).toFixed(4)}%`,
+    height: uiScale === 1 ? (appHeight > 0 ? `${appHeight}px` : "100%") : `${(100 / uiScale).toFixed(4)}%`,
     paddingTop: "var(--safe-top)",
     paddingBottom: "var(--safe-bottom)",
     ...(uiScale !== 1 ? { transform: `scale(${uiScale})`, transformOrigin: "top left" } : {}),
   };
 
-  if (auth.loading) {
-    return <div style={{ ...containerStyle, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0B141A" }}>
-      <img src="./icon.png" alt="" style={{ width: 100, height: 100, objectFit: "contain", marginBottom: 20 }} onError={(e) => { e.target.style.display = "none"; }} />
-      <div style={{ width: 40, height: 40, border: "4px solid rgba(16, 185, 129, 0.25)", borderTopColor: "#10B981", borderRadius: "50%", animation: "nextext-spin 0.9s linear infinite", marginBottom: 16 }} />
-      <span style={{ color: "#fff", fontSize: 20, fontWeight: 700 }}>Loading…</span>
-      <span style={{ color: "rgba(255,255,255,0.8)", fontSize: 14, marginTop: 8 }}>Connecting to server</span>
-      <style>{`@keyframes nextext-spin { to { transform: rotate(360deg); } }`}</style>
-    </div>;
-  }
-  if (!auth.user) {
-    return <div style={containerStyle}><AuthScreen auth={auth} /></div>;
-  }
-  if (auth.userDoc?.profileComplete === false) {
-    return <div style={containerStyle}><CompleteProfileScreen auth={auth} /></div>;
-  }
-  const isAdmin = auth.userDoc?.role === "admin" || auth.userDoc?.isAdmin === true;
-
-  // Disguise gate runs BEFORE the real app shell renders. We never mount the
-  // chat list / bottom nav / top bar while a disguise is active — so the
-  // launcher icon AND the visible UI both line up. Once the user has unlocked
-  // once, disguiseUnlocked stays true until they kill the process, which is
-  // the natural rhythm of a launcher-icon-swap disguise.
+  // Disguise gate runs BEFORE the auth/loading screen so a Calculator/Notes
+  // launcher opens straight into the disguise — never flashing "Connecting to
+  // server". The profile is read synchronously from native storage, so this is
+  // correct on the very first paint.
   if (disguiseKind === "calculator" && !disguiseUnlocked) {
     return (
       <CalculatorScreen
@@ -2570,9 +2569,26 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     );
   }
 
+  if (auth.loading) {
+    return <div style={{ ...containerStyle, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0B141A" }}>
+      <img src={activeProfile.iconPath} alt="" style={{ width: 100, height: 100, objectFit: "contain", marginBottom: 20 }} onError={(e) => { e.target.style.display = "none"; }} />
+      <div style={{ width: 40, height: 40, border: "4px solid rgba(16, 185, 129, 0.25)", borderTopColor: "#10B981", borderRadius: "50%", animation: "nextext-spin 0.9s linear infinite", marginBottom: 16 }} />
+      <span style={{ color: "#fff", fontSize: 20, fontWeight: 700 }}>{activeProfile.label}</span>
+      <style>{`@keyframes nextext-spin { to { transform: rotate(360deg); } }`}</style>
+    </div>;
+  }
+  if (!auth.user) {
+    return <div style={containerStyle}><AuthScreen auth={auth} /></div>;
+  }
+  if (auth.userDoc?.profileComplete === false) {
+    return <div style={containerStyle}><CompleteProfileScreen auth={auth} /></div>;
+  }
+  const isAdmin = auth.userDoc?.role === "admin" || auth.userDoc?.isAdmin === true;
+
   return (
     <>
     <div
+      key={coldStartReady ? "ready" : "cold"}
       ref={shellRef}
       id="nextext-app-shell"
       style={{ ...containerStyle }}
@@ -2755,7 +2771,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       {screen === "parental" && <ParentalControlsScreen myUid={myUid} onBack={() => setScreen("settings")} />}
       {screen === "feedback" && <FeedbackScreen myUid={myUid} myUsername={auth.userDoc?.username} onBack={() => setScreen("settings")} />}
       {screen === "admin" && isAdmin && <AdminDashboard myUid={myUid} onBack={() => setScreen("settings")} />}
-      {screen === "iconPicker" && <IconPickerScreen onBack={() => setScreen("settings")} />}
+      {screen === "iconPicker" && <IconPickerScreen onBack={() => setScreen("settings")} restrictions={auth.userDoc?.restrictions} />}
       {screen === "aiChat" && (
         <AIChatScreen myUid={myUid} onBack={() => setScreen("list")} />
       )}
@@ -2796,7 +2812,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
         if (!navTabs.length) return null;
         try {
           return (
-          <div key={barEpoch} style={{ position: "absolute", bottom: 0, left: 0, right: 0, display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, transform: "translateZ(0)", paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
+          <div key={barEpoch} style={{ position: "fixed", bottom: 0, left: 0, right: 0, display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, transform: "translateZ(0)", paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
             {navTabs.map(({ key, icon: Icon, label }) => {
               const isActive = key === "settings" ? screen === "settings" : key === "status" ? screen === "status" : (screen === "list" && activeNavTab === key);
               return (
@@ -2870,7 +2886,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
             // stay click-blocking forever. The 1s hard kill is below.
           }}
         >
-          <img src="./icon.png" alt="" style={{ width: 180, height: 180, objectFit: "contain" }} />
+           <img src={activeProfile.iconPath} alt="" style={{ width: 180, height: 180, objectFit: "contain" }} />
+           <div style={{ fontSize: 24, fontWeight: 800, color: "#fff", marginTop: -10, letterSpacing: 0.3 }}>{activeProfile.label}</div>
           <div
             style={{
               width: 34, height: 34,

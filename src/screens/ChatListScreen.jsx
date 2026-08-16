@@ -186,6 +186,11 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     } catch { return "recent"; }
   });
   const [showSortMenu, setShowSortMenu] = useState(false);
+  // Guard refs so the Android WebView tap (onTouchEnd) doesn't double-fire
+  // with the synthetic onClick. Without this, the menu opens and immediately
+  // closes on some Android WebView builds.
+  const sortTouchRef = useRef(0);
+  const chatSortTouchRef = useRef(0);
   useEffect(() => {
     try { localStorage.setItem("nextext_contact_sort", contactSort); } catch {}
   }, [contactSort]);
@@ -635,7 +640,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", overflowX: "auto", borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
         <div style={{ display: "flex", gap: 8, flex: 1, overflowX: "auto" }}>
           {[["all", "All"], ["unread", "Unread"], ["favorites", "Favorites"], ["groups", "Groups"], ["broadcast", "Broadcast"], ...customLists.map((l) => [`custom_${l.id}`, l.name])].map(([key, label]) => (
             <div key={key} onClick={() => setActiveTab(key)} style={{ padding: "6px 14px", borderRadius: 16, background: activeTab === key ? t.primary : t.primaryLight, color: activeTab === key ? t.bubbleMeText : t.primary, fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
@@ -649,9 +654,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         <div style={{ position: "relative", flexShrink: 0 }}>
           <button
             type="button"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowChatSortMenu((v) => !v); }}
-            onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); setShowChatSortMenu((v) => !v); }}
-            onPointerDown={(e) => { e.stopPropagation(); }}
+            onClick={(e) => { if (chatSortTouchRef.current) return; const now = Date.now(); if (now - chatSortTouchRef.current < 300) return; chatSortTouchRef.current = now; setShowChatSortMenu((v) => !v); }}
             title="Sort chats"
             aria-label="Sort chats"
             style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", touchAction: "manipulation" }}
@@ -794,9 +797,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             <div style={{ position: "relative" }}>
               <button
                 type="button"
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowSortMenu((v) => !v); }}
-                onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); setShowSortMenu((v) => !v); }}
-                onPointerDown={(e) => { e.stopPropagation(); }}
+                onClick={(e) => { if (sortTouchRef.current) return; const now = Date.now(); if (now - sortTouchRef.current < 300) return; sortTouchRef.current = now; setShowSortMenu((v) => !v); }}
                 title="Sort contacts"
                 aria-label="Sort contacts"
                 style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", touchAction: "manipulation" }}
