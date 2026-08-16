@@ -7,7 +7,7 @@ import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
 import { useContacts } from "./firebase/contacts";
 import { useChats, purgeExpiredChatMedia, markChatRead } from "./firebase/chats";
 import { setGlobalWallpaper, fileToWallpaperDataUrl } from "./theme/wallpaper";
-import { ChevronLeft, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff } from "lucide-react";
+import { ChevronLeft, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile } from "lucide-react";
 import { FONTS } from "./theme/ThemeContext";
 import Avatar from "./components/Avatar";
 import AvatarColorPicker from "./components/AvatarColorPicker";
@@ -319,7 +319,7 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -953,10 +953,18 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                   <div key={key} onClick={() => setScrollDownPos(key)} style={{ flex: 1, padding: "7px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: scrollDownPos === key ? t.primary : t.bg, color: scrollDownPos === key ? t.bubbleMeText : t.text, border: `1px solid ${scrollDownPos === key ? t.primary : t.border}` }}>{label}</div>
                 ))}
               </div>
+              <button
+                type="button"
+                onClick={() => { setScrollDownSize(22); setScrollDownPos("center"); }}
+                style={{ marginTop: 10, display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600, color: t.primary, background: "transparent", border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}
+              >
+                <RotateCcw size={13} /> Reset to default
+              </button>
             </div>
           )}
           <Row icon={<CircleDot size={18} color={t.primary} />} label="Animated scroll entry" sub={animatedScrollEntry ? "Smooth jump" : "Instant mount"} right={<Toggle on={animatedScrollEntry} onClick={() => { const next = !animatedScrollEntry; setAnimatedScrollEntry(next); localStorage.setItem("nextext_animated_scroll_entry", next ? "true" : "false"); }} />} />
           <Row icon={<Users size={18} color={t.primary} />} label="Compact chat list" sub={compactList ? "Denser rows" : "Standard spacing"} right={<Toggle on={compactList} onClick={() => { const next = !compactList; setCompactList(next); localStorage.setItem("nextext_compact_list", next ? "true" : "false"); }} />} />
+          <Row icon={<Smile size={18} color={t.primary} />} label="Large emoji-only messages" sub={emojiBigOn ? "Emoji-only messages shown big" : "Same size as text"} right={<Toggle on={emojiBigOn} onClick={() => { const next = !emojiBigOn; setEmojiBigOn(next); localStorage.setItem("nextext_emoji_big", next ? "on" : "off"); }} />} />
           <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
             <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Sort contacts</div>
             <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Ordering used in the contact list on the Chats tab.</div>
@@ -1248,6 +1256,12 @@ const TOUR_STEPS = [
 function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
   const s = TOUR_STEPS[step];
   const [rect, setRect] = useState(null);
+  // Minimized mode: drop the dark backdrop + card so the user can actually
+  // DO what the tour asks (tap the real control, open a screen, etc.), but
+  // KEEP the arrow pointing at the current target so they still know what to
+  // interact with. A small floating "Resume tour" pill brings the full tour
+  // back. Toggling does not change the step, so progress is never lost.
+  const [minimized, setMinimized] = useState(false);
   const measure = useCallback(() => {
     if (!s) { setRect(null); return; }
     if (s.selector) {
@@ -1297,18 +1311,39 @@ function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
   };
   return (
     <>
-      {rect ? (
-        <div style={{ position: "fixed", left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex: zHole, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.72)", borderRadius: 12, pointerEvents: "none", transition: "left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease" }} />
-      ) : (
-        <div style={{ position: "fixed", inset: 0, zIndex: zBackdrop, background: "rgba(0,0,0,0.72)", pointerEvents: "none" }} />
+      {!minimized && (
+        rect ? (
+          <div style={{ position: "fixed", left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex: zHole, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.72)", borderRadius: 12, pointerEvents: "none", transition: "left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease" }} />
+        ) : (
+          <div style={{ position: "fixed", inset: 0, zIndex: zBackdrop, background: "rgba(0,0,0,0.72)", pointerEvents: "none" }} />
+        )
       )}
       {arrow && (
         <div style={{ position: "fixed", top: arrow.top, left: arrow.left, zIndex: zArrow, width: 0, height: 0, borderLeft: "12px solid transparent", borderRight: "12px solid transparent", borderTop: `16px solid #10B981`, transform: `rotate(${arrow.rotation}deg)`, pointerEvents: "none", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.5))" }} />
       )}
+      {minimized ? (
+        // Minimized: just the arrow (above) + a floating resume pill so the
+        // user can complete the step and come back. No dark backdrop, so the
+        // app underneath is fully interactive.
+        <button
+          onClick={() => setMinimized(false)}
+          style={{ position: "fixed", bottom: "calc(env(safe-area-inset-bottom) + 18px)", left: "50%", transform: "translateX(-50%)", zIndex: zArrow, display: "flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 99, border: "none", background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", boxShadow: "0 8px 24px rgba(0,0,0,0.45)" }}
+        >
+          ▸ Resume tour ({step + 1}/{total})
+        </button>
+      ) : (
       <div style={cardStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
           <span style={{ fontSize: 26 }}>{s.emoji}</span>
           <span style={{ fontWeight: 800, fontSize: 18, color: "#fff" }}>{s.title}</span>
+          <button
+            onClick={() => setMinimized(true)}
+            title="Minimize tour"
+            aria-label="Minimize tour"
+            style={{ marginLeft: "auto", background: "transparent", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 8, color: "#fff", fontSize: 12, fontWeight: 700, padding: "4px 8px", cursor: "pointer" }}
+          >
+            – Minimize
+          </button>
         </div>
         <div style={{ fontSize: 13.5, color: "rgba(255,255,255,0.85)", lineHeight: 1.55, marginBottom: s.tapHint ? 10 : 16 }}>{s.body}</div>
         {s.tapHint && (
@@ -1327,6 +1362,7 @@ function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
           <button onClick={onNext} style={{ flex: 1.5, padding: "11px 0", borderRadius: 12, border: "none", background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>{step === total - 1 ? "Start Using NexText" : "Next"}</button>
         </div>
       </div>
+      )}
     </>
   );
 }
@@ -1356,6 +1392,10 @@ function AppShell({ appLocked, setAppLocked }) {
   const [showScrollDown, setShowScrollDown] = useState(() => localStorage.getItem(SCROLL_DOWN_KEY) !== "false");
   const [animatedScrollEntry, setAnimatedScrollEntry] = useState(() => localStorage.getItem("nextext_animated_scroll_entry") === "true");
   const [emojiAnimations, setEmojiAnimations] = useState(() => localStorage.getItem("nextext_emoji_animations") !== "off");
+  // Emoji-only messages render large by default (a long-standing NexText feel).
+  // This toggle lets the user revert to normal-sized text for emoji-only
+  // messages. Default ON.
+  const [emojiBigOn, setEmojiBigOn] = useState(() => localStorage.getItem("nextext_emoji_big") !== "off");
   const [compactList, setCompactList] = useState(() => localStorage.getItem("nextext_compact_list") === "true");
   const [showThemeSheet, setShowThemeSheet] = useState(false);
   const [activeNavTab, setActiveNavTab] = useState("chats");
@@ -1401,7 +1441,6 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const [barEpoch, setBarEpoch] = useState(0);
   const [pingSoundId, setPingSoundId] = useState(() => { try { return localStorage.getItem("nextext_voice_ping_sound") || "warm"; } catch { return "warm"; } });
   const [voicePlayerStyle, setVoicePlayerStyle] = useState(() => { try { return localStorage.getItem("nextext_voice_player_style") || "waveform"; } catch { return "waveform"; } });
-  const [micMode, setMicMode] = useState(() => { try { return localStorage.getItem("nextext_mic_mode") || "hold"; } catch { return "hold"; } });
   const [autoUpdateCheckOn, setAutoUpdateCheckOn] = useState(() => localStorage.getItem("nextext_auto_update_check") !== "off");
   const shellRef = useRef(null);
   const pageRefs = useRef({});
@@ -2136,6 +2175,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   useEffect(() => { localStorage.setItem("nextext_scroll_down_pos", scrollDownPos); }, [scrollDownPos]);
   useEffect(() => { localStorage.setItem("nextext_search_bar_scale", String(searchBarScale)); }, [searchBarScale]);
   useEffect(() => { localStorage.setItem("nextext_emoji_animations", emojiAnimations ? "on" : "off"); }, [emojiAnimations]);
+  useEffect(() => { localStorage.setItem("nextext_emoji_big", emojiBigOn ? "on" : "off"); }, [emojiBigOn]);
 
   // Re-lock app whenever the user returns to it from the background.
   // Uses Capacitor's appStateChange (fires reliably on Android WebView when the
@@ -2650,6 +2690,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                 setVoiceEndChimeOn={setVoiceEndChimeOn}
                 voiceStreakChimeOn={voiceStreakChimeOn}
                 setVoiceStreakChimeOn={setVoiceStreakChimeOn}
+                emojiBigOn={emojiBigOn}
+                setEmojiBigOn={setEmojiBigOn}
                 pingSoundId={pingSoundId}
                 setPingSoundId={setPingSoundId}
                 voicePlayerStyle={voicePlayerStyle}
@@ -2682,7 +2724,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           scrollDownPos={scrollDownPos}
           animatedScrollEntry={animatedScrollEntry}
           emojiAnimations={emojiAnimations}
-          micMode={micMode}
+          emojiBigOn={emojiBigOn}
           recordingBarScale={recordingBarScale}
         />
       )}
@@ -2790,18 +2832,22 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       })()}
 
       {createPortal(
-        <div
-          style={{
-            position: "fixed", inset: 0, zIndex: 2147483400, background: "#121B22",
-            // Always mounted (not conditionally) so the opaque layer is part of
-            // the WebView's initial composite. Toggling opacity 0↔1 on an
-            // existing layer forces a fresh re-composite of the whole frame
-            // (which is what re-includes the bottom bar) without ever creating
-            // a new compositor layer mid-recovery.
-            opacity: repairCoverOn ? 1 : 0,
-            pointerEvents: repairCoverOn ? "auto" : "none",
-          }}
-        />,
+        repairCoverOn ? (
+          <div
+            style={{
+              position: "fixed", inset: 0, zIndex: 2147483400, background: "#121B22",
+              // Mounted ONLY while a recovery is in flight. Historically this
+              // layer was kept always-mounted at opacity 0 so it stayed part of
+              // the WebView's composite, but an always-present full-screen layer
+              // (even at opacity 0) is a latent input trap: if its pointer-events
+              // ever lags a state flip the whole app goes dead. Mounting it only
+              // when repairCoverOn is true removes that risk entirely.
+              opacity: 1,
+              pointerEvents: "auto",
+            }}
+            role="presentation"
+          />
+        ) : null,
         document.body
       )}
 

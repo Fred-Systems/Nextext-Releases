@@ -18,11 +18,11 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { getCalculatorPin, setCalculatorPin, hasCustomCalculatorPin, getActiveProfile } from "../services/iconManager";
 
 const BUTTONS = [
-  ["AC", "+/-", "%", "÷"],
-  ["7",  "8",    "9", "×"],
-  ["4",  "5",    "6", "−"],
-  ["1",  "2",    "3", "+"],
-  ["0",  ".",    "⌫", "="],
+  ["C",  "+/-", "%", "÷"],
+  ["7",  "8",   "9", "×"],
+  ["4",  "5",   "6", "−"],
+  ["1",  "2",   "3", "+"],
+  ["0",  ".",   "⌫", "="],
 ];
 
 // Tokenise a user-typed expression like "12+3.4×(5−1)" into a stream of
@@ -163,7 +163,7 @@ export default function CalculatorScreen({ onUnlock }) {
 
   const press = useCallback((label) => {
     setExpression((prev) => {
-      if (label === "AC") { setJustEvaluated(false); return ""; }
+      if (label === "AC" || label === "C") { setJustEvaluated(false); return ""; }
       if (label === "⌫") {
         if (justEvaluated) { setJustEvaluated(false); return ""; }
         return prev.slice(0, -1);
@@ -269,7 +269,7 @@ export default function CalculatorScreen({ onUnlock }) {
 
   const buttonFor = (label) => {
     const isOp = "+-×÷−".includes(label) || label === "=";
-    const isMod = label === "AC" || label === "+/-" || label === "%";
+    const isMod = label === "AC" || label === "C" || label === "+/-" || label === "%";
     const isFn = label === "⌫";
     const bgCol = isOp ? btnBgOp : isMod || isFn ? btnBgAlt : btnBg;
     return { bg: bgCol, fg: isOp ? "#FFFFFF" : btnText };

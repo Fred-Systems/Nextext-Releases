@@ -42,10 +42,19 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
 
   useEffect(() => { if (myUid) { setLoading(true); setError(false); setStats(null); getUserMessageStats(myUid).then((s) => { setStats(s); setLoading(false); }).catch(() => { setError(true); setLoading(false); }); } }, [myUid]);
 
+  // Live ticking "Time spent in app" counter — declared as hooks BEFORE any
+  // early return so the hook call order stays stable across renders.
+  const [liveTick, setLiveTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setLiveTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   if (globalSettings?.hideUserStats) return null;
 
   const duration = formatMembershipDuration(createdAt);
-  const active = formatActiveTime(activeTimeMs);
+  const liveActiveMs = activeTimeMs + (liveTick * 1000);
+  const active = formatActiveTime(error ? 0 : liveActiveMs);
   const num = (v) => loading ? "…" : error ? "—" : (v ?? 0);
 
   // Copy helper that works even where navigator.clipboard is unavailable
@@ -84,15 +93,20 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
     if (!stats || error) return;
     const text = buildShareText();
     if (!text) return;
-    // In WebView / non-secure contexts, navigator.share often exists but fails.
-    // Skip straight to the in-app sheet which always works and has a Copy button.
+    // In WebView / non-secure contexts, navigator.share often exists but fails
+    // or is blocked. Try it only when we're clearly NOT in a WebView; on any
+    // failure (or in a WebView) fall through to the always-working in-app
+    // sheet. Previously a rejected share() with a non-AbortError (e.g.
+    // NotAllowedError inside a Capacitor WebView) left the user with nothing
+    // happening — now it always opens the sheet.
     const isWebView = /wv|webview/i.test(navigator.userAgent) || window.matchMedia("(display-mode: standalone)").matches;
     if (!isWebView && navigator.share) {
       try {
         await navigator.share({ text });
         return;
       } catch (err) {
-        if (err?.name === "AbortError") return; // user cancelled
+        if (err?.name === "AbortError") return; // user genuinely cancelled
+        // Any other error (not allowed, no handler) → show the in-app sheet.
       }
     }
     setShareText(text);

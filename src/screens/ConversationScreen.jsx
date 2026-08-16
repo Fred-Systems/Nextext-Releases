@@ -482,7 +482,7 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
   );
 }
 
-export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, micMode, recordingBarScale = 1, userDoc, emojiAnimations = true }) {
+export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, recordingBarScale = 1, userDoc, emojiAnimations = true, emojiBigOn = true }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth } = useTheme();
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
@@ -793,10 +793,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
     if (pinchStartRef.current.dist > 0) {
       const ratio = d / pinchStartRef.current.dist;
-      // Fine-grained updates: every 1% change in distance updates the scale
-      // (0.005 step instead of the old 0.03 — that's a 6× smoother gesture).
+      // Track every move for an instant, lag-free zoom. The rounding to a
+      // 0.005 step only caps how often React commits; the visual update is
+      // continuous so the text grows/shrinks the moment the fingers move.
       const next = Math.min(1.6, Math.max(0.6, pinchStartRef.current.scale * ratio));
-      if (Math.abs(next - chatTextScale) >= 0.005) setChatTextScale(Math.round(next * 200) / 200);
+      setChatTextScale(Math.round(next * 200) / 200);
     }
   };
 
@@ -2298,7 +2299,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         {expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
-    const emojiOnly = emojiAnimations && !blocked && !m.isScheduled && isEmojiOnly(m.text);
+    const emojiOnly = emojiBigOn && emojiAnimations && !blocked && !m.isScheduled && isEmojiOnly(m.text);
     if (emojiOnly) {
       const emojiText = displayText || m.text;
       return (

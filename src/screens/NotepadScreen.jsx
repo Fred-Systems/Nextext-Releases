@@ -51,18 +51,39 @@ export default function NotepadScreen({ onUnlock }) {
   // for 600ms — otherwise hitting "o" in a long note would briefly unlock on
   // any word that started with "o", which feels broken. Coalescing edits
   // keeps the unlock from triggering mid-stream.
+  //
+  // On unlock we SCRUB the keyword out of the saved note. Otherwise the word
+  // stays in the note text and the very next cold start would auto-unlock the
+  // moment the (keyword-containing) note loads — defeating the disguise.
+  // Stripping it means the notepad genuinely behaves like a notes app and the
+  // user has to type the keyword again to re-open NexText.
   useEffect(() => {
     if (!text) return;
     const kw = getNotepadKeyword();
     if (!kw) return;
+    let re;
     try {
       const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const re = new RegExp(`(?:^|\\W)${escaped}(?:$|\\W)`, "i");
+      re = new RegExp(`(?:^|\\W)${escaped}(?:$|\\W)`, "i");
       if (!re.test(text)) return;
     } catch {
       if (!text.toLowerCase().includes(kw.toLowerCase())) return;
+      re = null;
     }
     const t = setTimeout(() => {
+      try {
+        const scrubbed = re
+          ? text.replace(re, (m) => m.replace(new RegExp(kw, "i"), "").trim())
+          : text.replace(new RegExp(kw, "gi"), "");
+        const cleaned = scrubbed.replace(/\s{2,}/g, " ").trim();
+        try {
+          localStorage.setItem(NOTES_KEY, cleaned);
+          const wc = (cleaned.match(/\S+/g) || []).length;
+          localStorage.setItem(WORD_COUNT_KEY, String(wc));
+          lastSavedRef.current = cleaned;
+        } catch { /* best-effort */ }
+        setText(cleaned);
+      } catch { /* best-effort */ }
       try { unlockRef.current && unlockRef.current(); } catch { /* best-effort */ }
     }, 600);
     return () => clearTimeout(t);
