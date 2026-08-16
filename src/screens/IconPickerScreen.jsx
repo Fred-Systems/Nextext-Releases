@@ -57,7 +57,7 @@ export default function IconPickerScreen({ onBack }) {
   };
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#121B22", color: "#fff", minHeight: 0 }}>
+    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "#121B22", color: "#fff" }}>
       <div style={{ display: "flex", alignItems: "center", padding: "14px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
         <button onClick={onBack} aria-label="Back" style={{ background: "transparent", border: "none", color: "#fff", padding: 6, marginRight: 6, cursor: "pointer" }}>
           <ArrowLeft size={20} />
