@@ -76,6 +76,27 @@ export default function FindFriendsScreen({ myUid, onBack }) {
     }
   };
 
+  // Reliable clipboard copy with an execCommand fallback — navigator.clipboard
+  // is frequently unavailable/blocked inside the Android (Capacitor) WebView.
+  const copyInviteText = async (text) => {
+    try {
+      if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+    } catch { /* fall through */ }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch { return false; }
+  };
+
   const handleShare = async (name, phone) => {
     setShareStatus("");
     const link = `https://nextext.app/invite?r=${encodeURIComponent(myUid || "")}`;
@@ -96,26 +117,28 @@ export default function FindFriendsScreen({ myUid, onBack }) {
       if (apk) apkLine = `\nDownload the latest Android app here: ${apk}`;
     }
     const text = `Hey${name ? " " + name : ""}! Let's chat on NexText — a fast, private messaging app. Sign up here: ${link}${apkLine}`;
-    // navigator.share is unreliable inside Android WebViews — it often exists
-    // but rejects immediately, which the old code silently swallowed (the
-    // "Invite button does nothing" report). Try it, but on any failure other
-    // than the user cancelling, fall through to the clipboard/SMS paths.
-    if (navigator.share) {
+    // navigator.share works well in desktop/web browsers but is unreliable
+    // inside the Android (Capacitor) WebView on Android 11 — it often exists
+    // yet rejects or does nothing. So on Android we skip it and reliably copy
+    // the invite to the clipboard (with an execCommand fallback), then tell the
+    // user to paste it. On non-Android we still prefer the native share sheet.
+    const isAndroid = /android/i.test(navigator.userAgent || "");
+    if (navigator.share && !isAndroid) {
       try {
         await navigator.share({ text });
         setInvited((s) => [...s, phone]);
         return;
       } catch (e) {
         if (e?.name === "AbortError" || e?.name === "ShareCanceledError") return; // user cancelled
-        // fall through to clipboard/SMS below
+        // fall through to clipboard below
       }
     }
-    try {
-      await navigator.clipboard.writeText(text);
+    const copied = await copyInviteText(text);
+    if (copied) {
       setInvited((s) => [...s, phone]);
-      setShareStatus(`Invite link for ${name || "your friend"} copied — send it to them!`);
-    } catch {
-      window.open(`sms:${phone}?body=${encodeURIComponent(text)}`, "_system");
+      setShareStatus(`Invite copied${name ? " for " + name : ""} — paste it into a message!`);
+    } else {
+      setShareStatus(`Couldn't copy automatically. Invite link: ${link}`);
     }
   };
 

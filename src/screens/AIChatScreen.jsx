@@ -102,6 +102,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState(null);
   const [activeMsgRect, setActiveMsgRect] = useState(null);
+  const messageMenuRef = useRef(null);
   const longPressTimer = useRef(null);
   const [pendingForwardMsg, setPendingForwardMsg] = useState(null);
   const [chatPickerMode, setChatPickerMode] = useState(null); // 'forward' | 'summarize'
@@ -155,10 +156,14 @@ export default function AIChatScreen({ myUid, onBack }) {
     return unsub;
   }, [myUid]);
 
-  // Close message action menu on outside click
+  // Close message action menu on outside click. We test against the live menu
+  // element via a ref rather than a CSS selector — the previous selector
+  // (style*="minWidth: 160") never matched because React serializes inline
+  // styles to "min-width: 160px", so taps inside the menu were treated as
+  // "outside" and closed it before the option's onClick could run.
   useEffect(() => {
     const handler = (e) => {
-      if (activeMessageId && !e.target.closest('[style*="minWidth: 160"]') && !e.target.closest('[title="More options"]')) {
+      if (activeMessageId && messageMenuRef.current && !messageMenuRef.current.contains(e.target)) {
         setActiveMessageId(null);
       }
     };
@@ -289,7 +294,7 @@ export default function AIChatScreen({ myUid, onBack }) {
     try {
       const { getDocs, collection, query, orderBy } = await import("firebase/firestore");
       const { db } = await import("../firebase/config");
-      const snap = await getDocs(query(collection(db, "chats"), orderBy("lastMessage.sentAt", "desc")));
+      const snap = await getDocs(query(collection(db, "chats"), where("participants", "array-contains", myUid)));
       const chats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setAllChats(chats);
       // Load contact names for display
@@ -611,7 +616,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                           {m.sentAt?.toDate ? m.sentAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                         </span>
                         <div
-                          onClick={(e) => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); setActiveMsgRect({ top: rect.top, left: rect.left, width: rect.width }); setActiveMessageId(m.id); }}
+                          onClick={(e) => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); setActiveMsgRect({ top: rect.top, left: rect.left, width: rect.width }); setActiveMessageId(activeMessageId === m.id ? null : m.id); }}
                           style={{ width: 28, height: 28, borderRadius: "50%", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: t.textMuted, flexShrink: 0 }}
                           title="More options"
                         >
@@ -620,7 +625,13 @@ export default function AIChatScreen({ myUid, onBack }) {
                       </div>
                     </div>
                     {activeMessageId === m.id && (
-                      <div style={{ position: "absolute", bottom: "100%", right: 0, marginBottom: 6, background: t.surface, borderRadius: 10, boxShadow: "0 4px 20px rgba(0,0,0,0.3)", border: `1px solid ${t.border}`, overflow: "hidden", zIndex: 100, minWidth: 160 }}>
+                      <div ref={messageMenuRef} style={{ position: "absolute", bottom: "100%", right: 0, marginBottom: 6, background: t.surface, borderRadius: 10, boxShadow: "0 4px 20px rgba(0,0,0,0.3)", border: `1px solid ${t.border}`, overflow: "hidden", zIndex: 100, minWidth: 168 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 8px 6px 14px", borderBottom: `1px solid ${t.border}` }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, letterSpacing: 0.4 }}>MESSAGE</span>
+                          <div onClick={() => setActiveMessageId(null)} style={{ cursor: "pointer", padding: 4, display: "flex" }} aria-label="Close menu">
+                            <X size={15} color={t.textMuted} />
+                          </div>
+                        </div>
                         <div onClick={() => copyMessageText(m.text)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", cursor: "pointer", fontSize: 13.5, color: t.text }}>
                           <Copy size={14} /> Copy
                         </div>

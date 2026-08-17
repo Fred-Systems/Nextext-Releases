@@ -218,8 +218,9 @@ export default function ParentalControlsScreen({ myUid, onBack }) {
         <Row title="Block voice notes" sub="No voice messages can be sent or received" on={restrictions.blockVoiceNotes} onClick={() => update({ blockVoiceNotes: !restrictions.blockVoiceNotes })} />
         <Row title="Block Status" sub="Can't post or view status updates" on={restrictions.blockStatus} onClick={() => update({ blockStatus: !restrictions.blockStatus })} />
         <Row title="Remove Account Sign-Out Capabilities" sub="Children can't sign out of the account" on={restrictions.disableSignOut} onClick={() => update({ disableSignOut: !restrictions.disableSignOut })} />
-        <Row title="Block group chats" sub="Can't create or be added to groups" on={restrictions.blockGroups} onClick={() => update({ blockGroups: !restrictions.blockGroups })} />
-        <Row title="Disable all links" sub="Links appear as plain text, can't be tapped" on={restrictions.blockLinks} onClick={() => update({ blockLinks: !restrictions.blockLinks })} />
+<Row title="Block group chats" sub="Can't create or be added to groups" on={restrictions.blockGroups} onClick={() => update({ blockGroups: !restrictions.blockGroups })} />
+<Row title="Disable Calculator/Notes disguise" sub="Prevents choosing the hidden Calculator/Notes launcher icon" on={!!restrictions.disableDisguise} onClick={() => update({ disableDisguise: !restrictions.disableDisguise })} />
+<Row title="Disable all links" sub="Links appear as plain text, can't be tapped" on={restrictions.blockLinks} onClick={() => update({ blockLinks: !restrictions.blockLinks })} />
 
         <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}><Clock size={16} color={t.text} /><div style={{ fontWeight: 700, color: t.text, fontSize: 14 }}>Daily time limit</div></div>

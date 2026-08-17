@@ -6,6 +6,7 @@ import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import androidx.core.splashscreen.SplashScreen;
 import com.getcapacitor.Bridge;
@@ -87,6 +88,19 @@ public class MainActivity extends BridgeActivity {
             }
         } catch (Exception ignored) { /* keep default client on any failure */ }
 
+        // Expose a tiny synchronous bridge so the JS disguise gate can read the
+        // active icon profile (and the calculator PIN / notepad keyword) from
+        // native SharedPreferences on the VERY FIRST paint — without waiting for
+        // an async Capacitor call. The WebView localStorage is dropped when
+        // setAppIcon kills the process, so reading localStorage first would
+        // flash the wrong (default) screen for a frame. This bridge reads the
+        // value the native side persisted, eliminating that flash.
+        try {
+            if (bridge != null && bridge.getWebView() != null) {
+                bridge.getWebView().addJavascriptInterface(new NexTextIconBridge(), "NexTextNativeBridge");
+            }
+        } catch (Exception ignored) { /* bridge is best-effort */ }
+
         // Dismiss splash once the Capacitor bridge is fully initialized
         new Handler(Looper.getMainLooper()).postDelayed(() -> keepSplash = false, 1500);
 
@@ -131,6 +145,27 @@ public class MainActivity extends BridgeActivity {
                     { "icon6",   "com.nextext.app.MainActivityAlias6" },
                     { "icon7",   "com.nextext.app.MainActivityAlias7" }
                 };
+                // setAppIcon() in the plugin already applied the correct component
+                // state before killing the process, so on the next cold start the
+                // saved profile already matches what's enabled. Re-issuing every
+                // setComponentEnabledSetting here is redundant — and doing Package
+                // Manager writes during the launch window can get the process
+                // killed mid-loop on some ROMs. If that happens with MainActivity
+                // already disabled and the alias not yet enabled, there is no
+                // enabled launcher entry and Android re-enables the default icon
+                // (the "flash, crash, default icon returns" symptom). So we first
+                // check whether anything actually needs to change and bail out if
+                // the launcher state already matches the saved profile.
+                boolean needsChange = false;
+                for (String[] p : profiles) {
+                    android.content.ComponentName cn = new android.content.ComponentName(ctxPkg, p[1]);
+                    int current = pm.getComponentEnabledSetting(cn);
+                    int desired = p[0].equals(profileId)
+                        ? android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                        : android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
+                    if (current != desired) { needsChange = true; break; }
+                }
+                if (!needsChange) return;
                 for (String[] p : profiles) {
                     android.content.ComponentName cn = new android.content.ComponentName(ctxPkg, p[1]);
                     int newState = p[0].equals(profileId)
@@ -240,6 +275,36 @@ public class MainActivity extends BridgeActivity {
                 pr.deny();
             }
             return true;
+        }
+    }
+
+    // Synchronous bridge for the JS disguise gate. Called from getActiveProfileId
+    // / getCalculatorPin / getNotepadKeyword on the first paint so the launcher
+    // icon + unlock state are correct without an async round-trip. Reads the
+    // same SharedPreferences that NextextNativePlugin.setAppIcon writes.
+    private class NexTextIconBridge {
+        @JavascriptInterface
+        public String getActiveIcon() {
+            try {
+                android.content.SharedPreferences prefs = getSharedPreferences("NexTextPrefs", MODE_PRIVATE);
+                return prefs.getString("nextext_icon_profile", "default");
+            } catch (Exception ignored) { return "default"; }
+        }
+
+        @JavascriptInterface
+        public String getCalculatorPin() {
+            try {
+                android.content.SharedPreferences prefs = getSharedPreferences("NexTextPrefs", MODE_PRIVATE);
+                return prefs.getString("nextext_calc_pin", "");
+            } catch (Exception ignored) { return ""; }
+        }
+
+        @JavascriptInterface
+        public String getNotepadKeyword() {
+            try {
+                android.content.SharedPreferences prefs = getSharedPreferences("NexTextPrefs", MODE_PRIVATE);
+                return prefs.getString("nextext_notes_keyword", "");
+            } catch (Exception ignored) { return ""; }
         }
     }
 }

@@ -29,12 +29,16 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
   const [copiedShare, setCopiedShare] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareText, setShareText] = useState("");
-  const [shareMode, setShareMode] = useState("sheet"); // "sheet" | "contacts"
+  const [shareMode, setShareMode] = useState("sheet"); // "sheet" | "contacts-multi"
   // On touch devices the synthesized click fired ~300ms after touchend can land
   // on the freshly-mounted centered sheet (which sits under the finger) and
   // immediately close it. Block pointer events on the sheet for a short window
   // after opening so the stray tap is swallowed, then it becomes interactive.
   const [shareArmed, setShareArmed] = useState(false);
+  // Statistics are collapsed by default; the user taps "Show" to expand.
+  const [minimized, setMinimized] = useState(true);
+  // Multi-select of contacts to send frozen statistics to.
+  const [selectedUids, setSelectedUids] = useState([]);
 
   const load = () => {
     setLoading(true);
@@ -108,22 +112,38 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
     setShareText(text);
     setShareMode("sheet");
     setShareOpen(true);
+    setSelectedUids([]);
     setShareArmed(false);
     setTimeout(() => setShareArmed(true), 500);
   };
 
-  const shareWithContact = async (contact) => {
+  const toggleContactSelected = (uid) => {
+    setSelectedUids((prev) => prev.includes(uid) ? prev.filter((u) => u !== uid) : [...prev, uid]);
+  };
+
+  // Send the (frozen-at-open) statistics to every selected contact's direct
+  // chat. getOrCreateDirectChat is async and must be awaited — the previous
+  // single-contact path passed the returned Promise straight into
+  // sendTextMessage, which is why share-to-contact silently failed.
+  const shareWithSelected = async () => {
+    if (selectedUids.length === 0) return;
     try {
       const text = shareText;
       if (!text) return;
-      // Send statistics as a message to the contact's chat
       const { getOrCreateDirectChat, sendTextMessage } = await import("../firebase/chats");
-      const chatId = getOrCreateDirectChat(myUid, contact.uid);
-      await sendTextMessage(chatId, myUid, text);
-      setShareOpen(false);
+      for (const uid of selectedUids) {
+        try {
+          const chatId = await getOrCreateDirectChat(myUid, uid);
+          await sendTextMessage(chatId, myUid, text);
+        } catch (err) {
+          console.error("Failed to share stats with", uid, err);
+        }
+      }
+      setSelectedUids([]);
       setShareMode("sheet");
+      setShareOpen(false);
     } catch (err) {
-      console.error("Failed to share stats with contact:", err);
+      console.error("Failed to share stats:", err);
     }
   };
 
@@ -141,18 +161,22 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
         <BarChart2 size={18} color={t.primary} />
         <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Your statistics</span>
         {!loading && !error && (
-          <button onClick={shareStats} style={{ marginLeft: "auto", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, marginRight: 12, background: "none", border: "none", padding: 0 }}>
-            <Share size={13} /> {copiedShare ? "Copied!" : "Share"}
-          </button>
-        )}
-        {!loading && !error && (
-          <button onClick={load} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, background: "none", border: "none", padding: 0 }}>
-            <RefreshCw size={13} /> Refresh
-          </button>
+          <>
+            <button onClick={() => setMinimized((v) => !v)} style={{ marginLeft: "auto", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.textMuted, fontWeight: 600, background: "none", border: "none", padding: 0 }}>
+              {minimized ? "Show" : "Hide"}
+            </button>
+            <button onClick={shareStats} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, background: "none", border: "none", padding: 0 }}>
+              <Share size={13} /> {copiedShare ? "Copied!" : "Share"}
+            </button>
+            <button onClick={load} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, background: "none", border: "none", padding: 0 }}>
+              <RefreshCw size={13} /> Refresh
+            </button>
+          </>
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+      {!minimized && (<>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         <div style={{ flex: 1, background: t.primaryLight, borderRadius: 12, padding: "12px 10px", textAlign: "center" }}>
           <div style={{ fontSize: 22, fontWeight: 800, color: t.primary, lineHeight: 1.1 }}>{num(stats?.total)}</div>
           <div style={{ fontSize: 11.5, color: t.textMuted, fontWeight: 600, marginTop: 3 }}>total messages</div>
@@ -234,6 +258,7 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
       </div>
 
       {error && <div style={{ fontSize: 12.5, color: "#FF3B30", marginTop: 8 }}>Couldn't load stats — check your connection and try Refresh.</div>}
+      </>)}
 
       {shareOpen && createPortal(
         <div onClick={() => { setShareOpen(false); setShareMode("sheet"); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2147482000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, pointerEvents: shareArmed ? "auto" : "none" }}>
@@ -252,32 +277,41 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
                   <button onClick={copyShareText} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                     <Copy size={14} /> {copiedShare ? "Copied!" : "Copy"}
                   </button>
-                  <button onClick={() => setShareMode("contacts")} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: t.primaryLight, color: t.primary, fontWeight: 700, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                    <Users size={14} /> Send to contact
+                  <button onClick={() => setShareMode("contacts-multi")} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: t.primaryLight, color: t.primary, fontWeight: 700, fontSize: 13.5, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <Users size={14} /> Send to contacts
                   </button>
                 </div>
               </>
             ) : (
               <>
-                <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 8 }}>Select a contact to send stats to:</div>
+                <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 8 }}>Select contacts to send your statistics to:</div>
                 <div style={{ maxHeight: 260, overflowY: "auto" }}>
-                  {contacts.filter(c => c.status === "accepted").map((c) => (
-                    <div key={c.uid} onClick={() => shareWithContact(c)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, cursor: "pointer", background: t.bg, border: `1px solid ${t.border}`, marginBottom: 6 }}>
-                      <div style={{ width: 36, height: 36, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        <span style={{ fontSize: 14 }}>{c.profile?.displayName?.charAt(0) || "?"}</span>
+                  {contacts.filter(c => c.status === "accepted").map((c) => {
+                    const selected = selectedUids.includes(c.uid);
+                    return (
+                      <div key={c.uid} onClick={() => toggleContactSelected(c.uid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, cursor: "pointer", background: selected ? t.primaryLight : t.bg, border: `1px solid ${selected ? t.primary : t.border}`, marginBottom: 6 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <span style={{ fontSize: 14 }}>{c.profile?.displayName?.charAt(0) || "?"}</span>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.profile?.displayName || "Unknown"}</div>
+                          <div style={{ fontSize: 12, color: t.textMuted }}>@{c.profile?.username || c.uid.slice(0, 6)}</div>
+                        </div>
+                        <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${selected ? t.primary : t.border}`, display: "flex", alignItems: "center", justifyContent: "center", background: selected ? t.primary : "transparent" }}>
+                          {selected && <span style={{ color: t.bubbleMeText, fontSize: 12 }}>✓</span>}
+                        </div>
                       </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.profile?.displayName || "Unknown"}</div>
-                        <div style={{ fontSize: 12, color: t.textMuted }}>@{c.profile?.username || c.uid.slice(0, 6)}</div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {contacts.filter(c => c.status === "accepted").length === 0 && (
                     <div style={{ textAlign: "center", padding: 20, color: t.textMuted }}>No contacts available</div>
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                  <button onClick={() => setShareMode("sheet")} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Back</button>
+                  <button onClick={() => { setShareMode("sheet"); setSelectedUids([]); }} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Back</button>
+                  <button onClick={shareWithSelected} disabled={selectedUids.length === 0} style={{ flex: 1.4, padding: "10px 0", borderRadius: 10, border: "none", background: selectedUids.length === 0 ? t.border : t.primary, color: selectedUids.length === 0 ? t.textMuted : t.bubbleMeText, fontWeight: 700, fontSize: 13.5, cursor: selectedUids.length === 0 ? "default" : "pointer" }}>
+                    Send to {selectedUids.length || ""} {selectedUids.length === 1 ? "contact" : "contacts"}
+                  </button>
                 </div>
               </>
             )}

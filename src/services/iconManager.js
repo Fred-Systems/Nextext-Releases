@@ -40,7 +40,7 @@ const KEYWORD_KEY = "nextext_disguise_keyword";
 // NextextNativePlugin.java — the JS side uses this to render the picker UI
 // (label, preview image, "is this a disguise?" flag).
 export const ICON_PROFILES = [
-  { id: "default", label: "NexText", kind: "splash", iconPath: "/ic_icon1.png" },
+  { id: "default", label: "NexText", kind: "nextext", iconPath: "/ic_launcher.png" },
   { id: "icon1",   label: "NexText", kind: "splash", iconPath: "/ic_icon1.png" },
   { id: "icon2",   label: "NexText", kind: "splash", iconPath: "/ic_icon2.png" },
   { id: "icon3",   label: "NexText", kind: "splash", iconPath: "/ic_icon3.png" },
@@ -52,7 +52,43 @@ export const ICON_PROFILES = [
 
 const DEFAULT_PROFILE = "default";
 
+// Synchronous access to the native bridge (window.NexTextNativeBridge) that
+// MainActivity installs. Reading SharedPreferences directly (instead of an
+// async Capacitor call) means the first paint already has the correct profile
+// + unlock secret — localStorage is dropped when setAppIcon kills the process.
+function nativeBridge() {
+  try {
+    if (typeof window !== "undefined" && window.NexTextNativeBridge) return window.NexTextNativeBridge;
+  } catch { /* bridge unavailable (e.g. web preview) */ }
+  return null;
+}
+
+function readNative(method) {
+  try {
+    const b = nativeBridge();
+    if (b && typeof b[method] === "function") {
+      const v = b[method]();
+      if (v != null && v !== "") return v;
+    }
+  } catch { /* best-effort */ }
+  return null;
+}
+
+async function writeNativeSecret(kind, value) {
+  try {
+    const cap = window?.Capacitor;
+    const plugin = cap && cap.Plugins && cap.Plugins.NextextNative;
+    if (plugin && typeof plugin.setDisguiseSecret === "function") {
+      await plugin.setDisguiseSecret({ kind, value: value || "" });
+    }
+  } catch { /* best-effort */ }
+}
+
 function readProfile() {
+  // Prefer native storage so a cold start after setAppIcon's kill shows the
+  // correct launcher icon immediately (no splash flash for disguised apps).
+  const native = readNative("getActiveIcon");
+  if (native && ICON_PROFILES.some((p) => p.id === native)) return native;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_PROFILE;
@@ -69,6 +105,30 @@ export function getActiveProfile() {
 }
 
 export function getActiveProfileId() {
+  return readProfile();
+}
+
+// Reads the authoritative profile id the native side persisted in
+// SharedPreferences (written by setAppIcon). The WebView localStorage can be
+// dropped independently, so the disguise gate calls this on every cold start
+// to stay in sync with the launcher icon the user actually tapped. Resolves to
+// the reconciled id (also written back to localStorage) or falls back to the
+// current localStorage value.
+export async function syncNativeProfile() {
+  try {
+    const cap = window?.Capacitor;
+    const plugin = cap && cap.Plugins && cap.Plugins.NextextNative;
+    if (plugin && typeof plugin.getActiveIconProfile === "function") {
+      const res = await plugin.getActiveIconProfile();
+      const id = res?.profileId;
+      if (id && ICON_PROFILES.some((p) => p.id === id)) {
+        try { localStorage.setItem(STORAGE_KEY, id); } catch { /* best-effort */ }
+        return id;
+      }
+    }
+  } catch {
+    /* best-effort — fall through to localStorage */
+  }
   return readProfile();
 }
 
@@ -106,17 +166,25 @@ export async function setActiveProfile(profileId) {
 const DEFAULT_CALC_PIN = "1234";
 
 export function getCalculatorPin() {
-  try { return localStorage.getItem(PIN_KEY) || DEFAULT_CALC_PIN; } catch { return DEFAULT_CALC_PIN; }
+  try {
+    const local = localStorage.getItem(PIN_KEY);
+    if (local) return local;
+  } catch { /* fall through to native */ }
+  const native = readNative("getCalculatorPin");
+  if (native) return native;
+  return DEFAULT_CALC_PIN;
 }
 
 export function setCalculatorPin(pin) {
   const clean = String(pin || "").replace(/\D/g, "").slice(0, 6);
   try { localStorage.setItem(PIN_KEY, clean); } catch { /* best-effort */ }
+  writeNativeSecret("calculator", clean);
   return clean;
 }
 
 export function hasCustomCalculatorPin() {
-  try { return localStorage.getItem(PIN_KEY) != null; } catch { return false; }
+  try { if (localStorage.getItem(PIN_KEY) != null) return true; } catch { /* fall through */ }
+  return readNative("getCalculatorPin") != null;
 }
 
 // Pulls the trailing digit-only sequence from a free-form calculator history
@@ -137,17 +205,25 @@ export function calculatorPinMatches(input) {
 const DEFAULT_KEYWORD = "open";
 
 export function getNotepadKeyword() {
-  try { return localStorage.getItem(KEYWORD_KEY) || DEFAULT_KEYWORD; } catch { return DEFAULT_KEYWORD; }
+  try {
+    const local = localStorage.getItem(KEYWORD_KEY);
+    if (local) return local;
+  } catch { /* fall through to native */ }
+  const native = readNative("getNotepadKeyword");
+  if (native) return native;
+  return DEFAULT_KEYWORD;
 }
 
 export function setNotepadKeyword(keyword) {
   const clean = String(keyword || "").trim().slice(0, 32);
   try { localStorage.setItem(KEYWORD_KEY, clean); } catch { /* best-effort */ }
+  writeNativeSecret("notes", clean);
   return clean;
 }
 
 export function hasCustomNotepadKeyword() {
-  try { return localStorage.getItem(KEYWORD_KEY) != null; } catch { return false; }
+  try { if (localStorage.getItem(KEYWORD_KEY) != null) return true; } catch { /* fall through */ }
+  return readNative("getNotepadKeyword") != null;
 }
 
 // Returns true if `keyword` appears as a complete word (case-insensitive,

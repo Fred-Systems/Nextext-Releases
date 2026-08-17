@@ -1481,7 +1481,6 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const pagerDragRef = useRef(null);
   const [snapAnimating, setSnapAnimating] = useState(false);
   const snapTimerRef = useRef(null);
-  const pagerSyncedRef = useRef(false);
 
   // ── App state persistence ──────────────────────────────────────────
   // Persists navigation state to localStorage so relaunching the app
@@ -1790,28 +1789,19 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           } else {
             diag = `DIAG awake ok screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=slow`;
           }
-        } else if (wantBar && !barOK) {
-          // Bar DOM exists but isn't composited on top. Try invisible repaints
-          // first; if they don't take, bump barEpoch to force remount.
-          let fixed = false;
-          for (let attempt = 0; attempt < 2 && !fixed; attempt++) {
-            forceRepaint();
-            await delay(200);
-            fixed = barOnTop();
-          }
-          if (fixed) {
-            diag = `DIAG awake bar-fixed screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=->true raf=alive invisible`;
-          } else {
-            diag = `DIAG awake BARFIX screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive`;
-            if (!cancelled) {
-              setRepairCoverOn(true);
-              await delay(40);
-              forceRepaint();
-              setBarEpoch((n) => n + 1);
-              await delay(160);
-              setRepairCoverOn(false);
-            }
-          }
+        } else if (wantBar) {
+          // Deterministic cold-start recomposite. The barOnTop() DOM probe can
+          // false-positive on some WebViews (it reports the bar is on top when
+          // it is actually painted behind the pages), which previously left the
+          // bar dead / misaligned until the user manually navigated. So we
+          // ALWAYS force an invisible repaint + a bar remount on cold start —
+          // that guarantees the first interactive frame has a working, correctly
+          // positioned bottom bar instead of relying on the probe.
+          forceRepaint();
+          await delay(60);
+          forceRepaint();
+          if (!cancelled) setBarEpoch((n) => n + 1);
+          diag = `DIAG awake bar-recomposited screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} raf=alive`;
         } else {
           diag = `DIAG awake ok screen=${screenRef.current} tabOk=${onTab} wantBar=${wantBar} barHit=${barOK} raf=alive`;
         }
@@ -2374,29 +2364,34 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // top-bar buttons, or programmatic navigation (e.g. opening a status).
   // All tabs stay mounted as direct shell children (positioned via `left`),
   // so a failed mount can never silently blank the pages.
+  //
+  // IMPORTANT: the resting page position rendered below is ALWAYS derived from
+  // `currentTabIndex` (computed from screen + activeNavTab) — `pageIndex` is
+  // only a transient anchor used mid-drag. Keeping the two in lockstep here
+  // means the visible page can NEVER disagree with the active tab, which is
+  // what produced the "bar says Chats but Groups is shown / taps open the
+  // wrong page" cold-start desync. We do NOT gate this behind a one-time ref:
+  // if it ever stops running the visible page would silently drift.
   useEffect(() => {
     if (currentTabIndex === -1) return;
-    if (!pagerDragRef.current?.active && !pagerSyncedRef.current) {
-      setPageIndex(currentTabIndex);
-      pagerSyncedRef.current = true;
-    } else if (!pagerDragRef.current?.active) {
-      setPageIndex(currentTabIndex);
-    }
+    if (!pagerDragRef.current?.active) setPageIndex(currentTabIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTabKey, screen, orderedTabs.join(",")]);
 
-  // Cold-start pager lock: runs when orderedTabs is first populated after
-  // navConfig restore. Forces activeNavTab="chats" and snaps the Chats page
-  // to origin. Uses a ref to run only once per session.
+  // Cold-start pager lock: on first orderedTabs population, force the Chats
+  // tab + snap pageIndex to it. Runs once per session via a ref so later
+  // navConfig changes (e.g. restrictions loading) don't yank the user off
+  // whatever tab they're on.
+  const coldStartPagerLockRef = useRef(false);
   useEffect(() => {
     if (!myUid) return;
     if (orderedTabs.length === 0) return;
-    if (pagerSyncedRef.current) return;
+    if (coldStartPagerLockRef.current) return;
+    coldStartPagerLockRef.current = true;
     const target = orderedTabs.indexOf("chats");
     if (target === -1) return;
     setActiveNavTab("chats");
     setPageIndex(target);
-    pagerSyncedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderedTabs.join(","), myUid]);
 

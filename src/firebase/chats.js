@@ -72,8 +72,27 @@ export async function createGroupChat(creatorUid, memberUids, groupName, options
 }
 
 // Live list of all chats this user participates in, newest activity first.
+// Local cache of the last-known chat list so the chat list can paint instantly
+// on relaunch instead of waiting on Firestore (mirrors the contacts cache).
+// Refreshed on every snapshot; keyed by uid.
+const chatsCacheKey = (myUid) => `nextext_chats_${myUid}`;
+
+function loadChatsCache(myUid) {
+  try {
+    const raw = localStorage.getItem(chatsCacheKey(myUid));
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch { return []; }
+}
+
+function saveChatsCache(myUid, rows) {
+  try {
+    localStorage.setItem(chatsCacheKey(myUid), JSON.stringify(rows));
+  } catch { /* cache is best-effort */ }
+}
+
 export function useChats(myUid) {
-  const [chats, setChats] = useState([]);
+  const [chats, setChats] = useState(() => loadChatsCache(myUid));
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -84,6 +103,7 @@ export function useChats(myUid) {
         .map((d) => ({ id: d.id, ...d.data() }))
         .sort((a, b) => (b.lastMessage?.sentAt?.toMillis?.() || 0) - (a.lastMessage?.sentAt?.toMillis?.() || 0));
       setChats(rows);
+      saveChatsCache(myUid, rows);
       setLoading(false);
     }, (err) => {
       console.warn("[useChats] snapshot error:", err?.message || err);

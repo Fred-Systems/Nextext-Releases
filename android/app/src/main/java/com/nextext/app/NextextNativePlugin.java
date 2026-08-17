@@ -185,6 +185,43 @@ public class NextextNativePlugin extends Plugin {
         call.resolve(ret);
     }
 
+    // Returns the authoritative active icon profile id persisted in
+    // SharedPreferences (written by setAppIcon). The WebView's localStorage can
+    // be dropped independently of native storage, so the JS disguise gate
+    // reconciles against this on every cold start to stay in sync with the
+    // launcher icon the user actually tapped.
+    @PluginMethod
+    public void getActiveIconProfile(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            android.content.SharedPreferences prefs = getContext().getSharedPreferences("NexTextPrefs", android.content.Context.MODE_PRIVATE);
+            ret.put("profileId", prefs.getString("nextext_icon_profile", "default"));
+        } catch (Exception e) {
+            ret.put("profileId", "default");
+        }
+        call.resolve(ret);
+    }
+
+    // Persists the calculator PIN / notepad keyword to native SharedPreferences
+    // so the disguise unlock state survives a process kill (the WebView
+    // localStorage is dropped when setAppIcon kills the process). The JS bridge
+    // (window.NexTextNativeBridge in MainActivity) reads these back
+    // synchronously on the next cold start so the disguise never needs to
+    // re-show its unlock hint.
+    @PluginMethod
+    public void setDisguiseSecret(PluginCall call) {
+        String kind = call.getString("kind", "");
+        String value = call.getString("value", "");
+        try {
+            android.content.SharedPreferences prefs = getContext().getSharedPreferences("NexTextPrefs", android.content.Context.MODE_PRIVATE);
+            android.content.SharedPreferences.Editor ed = prefs.edit();
+            if ("calculator".equals(kind)) ed.putString("nextext_calc_pin", value);
+            else if ("notes".equals(kind)) ed.putString("nextext_notes_keyword", value);
+            ed.apply();
+        } catch (Exception ignored) { /* best-effort */ }
+        call.resolve();
+    }
+
     @PluginMethod
     public void showLocalNotification(PluginCall call) {
         // Shows a real Android status-bar notification. HTML5 Notification is a
@@ -970,9 +1007,16 @@ public class NextextNativePlugin extends Plugin {
                 // Persist to SharedPreferences so MainActivity.applyIconProfile
                 // can re-apply on cold start. JS-side state lives in
                 // localStorage, which the WebView might drop independently.
+                // IMPORTANT: use commit() (synchronous), NOT apply() — apply()
+                // writes on a background thread and we killProcess() immediately
+                // after, so an async apply() is frequently lost. A lost pref
+                // makes MainActivity fall back to "default" on next launch and
+                // re-enable MainActivity / disable the alias it just launched
+                // from, which crashes the process (black screen → exit) and
+                // reverts the launcher icon to the default.
                 try {
                     android.content.SharedPreferences prefs = getContext().getSharedPreferences("NexTextPrefs", android.content.Context.MODE_PRIVATE);
-                    prefs.edit().putString("nextext_icon_profile", profileId).apply();
+                    prefs.edit().putString("nextext_icon_profile", profileId).commit();
                 } catch (Exception ignored) { /* best-effort */ }
                 JSObject ret = new JSObject();
                 ret.put("applied", true);
