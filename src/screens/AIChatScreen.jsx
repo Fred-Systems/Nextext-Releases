@@ -404,7 +404,9 @@ export default function AIChatScreen({ myUid, onBack }) {
   const onAIMsgTouchMove = (m, e) => {
     const t = e.touches && e.touches[0];
     if (!t) return;
-    const dx = dragStartRef.current.x ? t.clientX - dragStartRef.current.x : 0;
+    // Fix: check if x is defined (not undefined), not falsy — x can be 0 at left edge
+    const startX = dragStartRef.current.x ?? 0;
+    const dx = t.clientX - startX;
     const dy = t.clientY - dragStartRef.current.y;
     if (Math.abs(dy) > 10 || Math.abs(dx) > 12) {
       dragStartRef.current.moved = true;
@@ -747,8 +749,22 @@ export default function AIChatScreen({ myUid, onBack }) {
                         </div>
                       </div>
                     </div>
-                    {activeMessageId === m.id && (
-                      <div ref={messageMenuRef} style={{ position: "absolute", bottom: "100%", right: 0, marginBottom: 6, background: t.surface, borderRadius: 10, boxShadow: "0 4px 20px rgba(0,0,0,0.3)", border: `1px solid ${t.border}`, overflow: "hidden", zIndex: 100, minWidth: 168 }}>
+                    {activeMessageId === m.id && activeMsgRect && (
+                      <div
+                        ref={messageMenuRef}
+                        style={{
+                          position: "fixed",
+                          top: activeMsgRect.top - 220,
+                          left: activeMsgRect.left + activeMsgRect.width - 168,
+                          background: t.surface,
+                          borderRadius: 10,
+                          boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
+                          border: `1px solid ${t.border}`,
+                          overflow: "hidden",
+                          zIndex: 2000,
+                          minWidth: 168,
+                        }}
+                      >
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 8px 6px 14px", borderBottom: `1px solid ${t.border}` }}>
                           <span style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, letterSpacing: 0.4 }}>MESSAGE</span>
                           <div onClick={() => setActiveMessageId(null)} style={{ cursor: "pointer", padding: 4, display: "flex" }} aria-label="Close menu">
@@ -831,7 +847,7 @@ export default function AIChatScreen({ myUid, onBack }) {
         {composerButtonOrder === "voice-stt" ? (
           <>
             {sttEnabled && !globalSettings?.hideStt && (
-              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} autoSend={sttAutoSend} size={34} useRealtime />
+              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={34} useRealtime />
             )}
             <div onClick={handleSend} style={{ width: 38, height: 38, borderRadius: "50%", background: input.trim() && !sending ? t.primary : t.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "default" }}>
               <Send size={17} color={input.trim() && !sending ? "#fff" : t.textMuted} />
@@ -843,7 +859,7 @@ export default function AIChatScreen({ myUid, onBack }) {
               <Send size={17} color={input.trim() && !sending ? "#fff" : t.textMuted} />
             </div>
             {sttEnabled && !globalSettings?.hideStt && (
-              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} autoSend={sttAutoSend} size={34} useRealtime />
+              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={34} useRealtime />
             )}
           </>
         )}

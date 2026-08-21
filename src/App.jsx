@@ -326,7 +326,7 @@ function NotificationsRow({ myUid, t }) {
 // collapsed SectionCard IIFE in SettingsScreen) — calling hooks inside a nested
 // function/IIFE violates the Rules of Hooks and threw React #310 ("rendered
 // fewer hooks than expected") whenever the section expanded/collapsed.
-function NotificationPrefsRow({ t }) {
+function NotificationPrefsRow({ t, auth, myUid }) {
   const [vibKey, setVibKey] = useState(() => localStorage.getItem("nextext_notif_vibration") || "default");
   const [soundKey, setSoundKey] = useState(() => localStorage.getItem("nextext_notif_sound") || "default");
   const [vibOn, setVibOn] = useState(() => localStorage.getItem("nextext_notif_vibrate_on") !== "false");
@@ -335,7 +335,7 @@ function NotificationPrefsRow({ t }) {
   // Mirror notification prefs into the Firestore user doc so the FCM worker can
   // honour them for background (app-killed) notifications, not just foreground.
   const syncNotif = (patch) => {
-    const uid = auth?.user?.uid;
+    const uid = (auth && auth.user && auth.user.uid) || myUid;
     if (!uid) return;
     try { updateDoc(doc(db, "users", uid), patch).catch(() => {}); } catch {}
   };
@@ -398,7 +398,7 @@ function NotificationPrefsRow({ t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth, appGlobalSettings }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -414,6 +414,16 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const appLockPassRef = useRef(null);
   const sysConfig = useSystemConfigHook();
   const globalSettings = useGlobalSettings();
+
+  // Cache the admin version override in localStorage so the updater can read it synchronously.
+  useEffect(() => {
+    const override = sysConfig?.appVersionOverride;
+    if (override && typeof override === "string" && override.trim()) {
+      localStorage.setItem("nextext_app_version_override", override.trim());
+    } else {
+      localStorage.removeItem("nextext_app_version_override");
+    }
+  }, [sysConfig?.appVersionOverride]);
   const [settingsRerenderTick, setSettingsRerenderTick] = useState(0);
   const forceSettingsRerender = () => setSettingsRerenderTick((x) => x + 1);
 
@@ -733,7 +743,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           <PhoneNumberSetting myUid={myUid} />
         </SectionCard>
 
-        {isEmailAccount && (
+        {isEmailAccount && !appGlobalSettings?.hideLoginSecurity && (
           <SectionCard title="Login & Security" emoji="🔐" sectionKey="loginSecurity">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", cursor: "pointer", borderBottom: `1px solid ${t.border}` }} onClick={() => { setCredError(""); setCredSuccess(""); setCredOldPass(""); setCredNewPass(""); setCredNewEmail(""); setCredModal("password"); }}>
               <div>
@@ -748,6 +758,9 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>Requires your password to confirm</div>
               </div>
               <ChevronRight size={18} color={t.textMuted} />
+            </div>
+            <div style={{ padding: "8px 0 4px", fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>
+              If these options don’t work on your device, use the web version at <a href="https://nextext.pages.dev" target="_blank" rel="noopener noreferrer" style={{ color: t.primary, textDecoration: "underline" }}>nextext.pages.dev</a> (GitHub Pages) to change your password or email.
             </div>
           </SectionCard>
         )}
@@ -864,7 +877,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}
         <SectionCard title="Notification Sound & Vibration" emoji="🔔" sectionKey="notifprefs">
           <NotificationsRow myUid={myUid} t={t} />
-          <NotificationPrefsRow t={t} />
+          <NotificationPrefsRow t={t} auth={auth} myUid={myUid} />
         </SectionCard>
 
         {/* ═══ APPEARANCE & INTERFACE ═══ */}
@@ -3440,9 +3453,10 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                  setLinkPreviewsOn={setLinkPreviewsOn}
                  composerButtonOrder={composerButtonOrder}
                  setComposerButtonOrder={setComposerButtonOrder}
-                 launchPage={launchPage}
-                 setLaunchPage={setLaunchPage}
-               />
+launchPage={launchPage}
+                setLaunchPage={setLaunchPage}
+appGlobalSettings={globalSettings}
+              />
               </PageErrorBoundary>
             </div>
           );

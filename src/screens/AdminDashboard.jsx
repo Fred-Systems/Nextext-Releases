@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap } from "lucide-react";
+import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -1182,6 +1182,50 @@ export default function AdminDashboard({ myUid, onBack }) {
               <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideStt ? "#fff" : t.text }}>
                 {settings?.hideStt ? "SPEECH-TO-TEXT HIDDEN FOR ALL USERS" : "Speech-to-text visible"}
               </span>
+            </div>
+          </div>
+
+          {/* Hide Login & Security page from Settings for all users */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Lock size={18} color="#FF9500" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Hide Login & Security Page</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              When enabled, the "Login & Security" section (Change password, Change email) disappears from Settings for all users. Use if you want to force password/email changes through a web portal only.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideLoginSecurity;
+              updateGlobalSettings({ hideLoginSecurity: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideLoginSecurity ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideLoginSecurity ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideLoginSecurity ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideLoginSecurity ? "#fff" : t.text }}>
+                {settings?.hideLoginSecurity ? "LOGIN & SECURITY HIDDEN FROM SETTINGS" : "Login & Security visible in Settings"}
+              </span>
+            </div>
+          </div>
+
+          {/* App version override (admin can pin a version number to block updates) */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Tag size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>App Version Override</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Pin a specific version string (e.g. "1.6.47"). When set, the app will report this version and skip update checks. Clear to re-enable normal version reporting.
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <input
+                value={sysConfig?.appVersionOverride || ""}
+                onChange={(e) => setSystemConfig({ appVersionOverride: e.target.value || null }, myUid)}
+                placeholder="e.g. 1.6.47"
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, background: t.bg, color: t.text, cursor: "pointer" }}
+              />
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textMuted }}>
+              Current override: <strong>{sysConfig?.appVersionOverride || "None (using package.json version)"}</strong>
             </div>
           </div>
 
