@@ -4,6 +4,7 @@ import {
   serverTimestamp, limit as fbLimit,
 } from "firebase/firestore";
 import { db } from "./config";
+import { getOrCreateDirectChat } from "./chats";
 
 // Get the display name for a contact: nickname if set, otherwise real name from profile
 export function getContactDisplayName(contact) {
@@ -21,45 +22,93 @@ export function getContactRealName(contact) {
 }
 
 // Search users by username prefix — powers "add contact" and admin search.
-export async function searchUsersByUsername(prefix) {
+// In addition to the always-searchable `usernameLower`, it also matches the
+// per-user opt-in index fields (searchDisplayName / searchEmail / searchPhone)
+// which only exist on a user's doc when they allowed discovery by that field.
+// `exactUsername` narrows username discovery to a full (not prefix) match.
+export async function searchUsersByUsername(prefix, opts = {}) {
   if (!prefix.trim()) return [];
   const lower = prefix.toLowerCase();
-  const q = query(
-    collection(db, "users"),
-    where("usernameLower", ">=", lower),
-    where("usernameLower", "<=", lower + "\uf8ff"),
-    fbLimit(10)
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+  const exactUsername = !!opts.exactUsername;
+  const results = new Map();
+  const add = (snap) => {
+    snap.docs.forEach((d) => { if (!results.has(d.id)) results.set(d.id, { uid: d.id, ...d.data() }); });
+  };
+
+  // Username is always searchable. When exactUsername is requested, only an
+  // exact match counts; otherwise a prefix (smart) range.
+  const usernameQ = exactUsername
+    ? query(collection(db, "users"), where("usernameLower", "==", lower), fbLimit(10))
+    : query(collection(db, "users"), where("usernameLower", ">=", lower), where("usernameLower", "<=", lower + "\uf8ff"), fbLimit(10));
+  try { add(await getDocs(usernameQ)); } catch {}
+
+  // Smart (prefix) search across opt-in fields — only when not in
+  // exact-username-only mode (that mode intentionally limits discovery to the
+  // full handle).
+  if (!exactUsername) {
+    const fieldQueries = [
+      query(collection(db, "users"), where("searchDisplayName", ">=", lower), where("searchDisplayName", "<=", lower + "\uf8ff"), fbLimit(10)),
+      query(collection(db, "users"), where("searchEmail", ">=", lower), where("searchEmail", "<=", lower + "\uf8ff"), fbLimit(10)),
+      query(collection(db, "users"), where("searchPhone", ">=", lower), where("searchPhone", "<=", lower + "\uf8ff"), fbLimit(10)),
+    ];
+    await Promise.all(fieldQueries.map((q) => getDocs(q).then(add).catch(() => {})));
+  }
+
+  let list = Array.from(results.values());
+  // If a returned user has opted into "exact username only", drop them unless
+  // the typed query equals their full username.
+  if (exactUsername === false) {
+    list = list.filter((u) => !(u.searchExactUsername && u.usernameLower !== lower));
+  }
+  return list.slice(0, 20);
 }
 
 // Sends a contact request: creates a "pending" doc on the target's side,
 // and an "accepted"-once-they-accept doc mirrored back on your side.
 export async function sendContactRequest(myUid, theirUid) {
-  await setDoc(doc(db, "users", theirUid, "contacts", myUid), {
-    addedAt: serverTimestamp(),
-    nickname: null,
-    status: "pending",
-    blocked: false,
-    mutedUntil: null,
-    favorite: false,
-    customAppearance: { photoURL: null, color: null },
-  });
-  await setDoc(doc(db, "users", myUid, "contacts", theirUid), {
-    addedAt: serverTimestamp(),
-    nickname: null,
-    status: "pending",
-    blocked: false,
-    mutedUntil: null,
-    favorite: false,
-    customAppearance: { photoURL: null, color: null },
-  });
+  // Primary write: a "pending" doc into the RECIPIENT's contacts subcollection so
+  // they see the incoming request. Allowed by the Firestore rule
+  // `match /users/{uid}/contacts/{contactUid} { allow create: if isSelf(contactUid) && status == 'pending' }`.
+  try {
+    await setDoc(doc(db, "users", theirUid, "contacts", myUid), {
+      addedAt: serverTimestamp(),
+      nickname: null,
+      status: "pending",
+      blocked: false,
+      mutedUntil: null,
+      favorite: false,
+      customAppearance: { photoURL: null, color: null },
+    }, { merge: true });
+  } catch (e) {
+    console.error("[sendContactRequest] recipient write failed:", e?.code, e?.message);
+    // Surface the real Firestore error so the UI can show "Missing or insufficient permissions" clearly.
+    throw new Error(e?.message || "Could not send request to recipient");
+  }
+  // Best-effort mirror: a "pending" doc on our own side so we can show the request
+  // as pending. Allowed by `allow write: if isSelf(uid)`. If this fails for any
+  // reason it must NOT abort the request — the recipient already has the pending doc.
+  try {
+    await setDoc(doc(db, "users", myUid, "contacts", theirUid), {
+      addedAt: serverTimestamp(),
+      nickname: null,
+      status: "pending",
+      blocked: false,
+      mutedUntil: null,
+      favorite: false,
+      customAppearance: { photoURL: null, color: null },
+    }, { merge: true });
+  } catch (e) {
+    console.warn("[sendContactRequest] own mirror write failed (non-fatal):", e?.code, e?.message);
+  }
 }
 
 export async function acceptContactRequest(myUid, theirUid) {
   await setDoc(doc(db, "users", myUid, "contacts", theirUid), { status: "accepted" }, { merge: true });
   await setDoc(doc(db, "users", theirUid, "contacts", myUid), { status: "accepted" }, { merge: true });
+  // Recreate the 1-on-1 chat if it was previously deleted — otherwise the
+  // freshly accepted contact has no chat to appear in and messages from them
+  // can't surface. getOrCreateDirectChat is a no-op when the chat already exists.
+  try { getOrCreateDirectChat(myUid, theirUid); } catch { /* non-fatal */ }
 }
 
 // Update the nickname for a contact (local display name override)

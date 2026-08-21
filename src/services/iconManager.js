@@ -1,13 +1,13 @@
 // App-icon / app-name disguise service.
 //
-// The NexText APK ships with 8 launcher entries pointing at MainActivity:
-//   - The default MainActivity (always present, label "NexText", icon
-//     ic_launcher.png). This is the "default" profile.
-//   - 7 activity-aliases (Alias1..Alias7) declared in AndroidManifest.xml.
-//     Aliases 1-5 keep the "NexText" label (same app, different wallpaper);
-//     Alias 6 ships as "Calculator" and Alias 7 as "Notes". All aliases are
-//     disabled on first install and MainActivity is the only visible launcher
-//     entry.
+// The NexText APK ships with 14 launcher entries pointing at MainActivity:
+ //   - The default MainActivity (always present, label "NexText", icon
+ //     ic_launcher.png). This is the "default" profile.
+ //   - 13 activity-aliases (Alias1..Alias13) declared in AndroidManifest.xml.
+ //     Aliases 1-5, 8-11 keep the "NexText" label (same app, different wallpaper);
+ //     Alias 6 and 12 ship as "Calculator" and Alias 7 and 13 as "Notes". All aliases are
+ //     disabled on first install and MainActivity is the only visible launcher
+ //     entry.
 //
 // At runtime the user picks a profile from Settings. We:
 //   1. Persist the choice to localStorage (instant UI feedback; this is the
@@ -35,7 +35,7 @@ const STORAGE_KEY = "nextext_icon_profile";
 const PIN_KEY = "nextext_disguise_pin";
 const KEYWORD_KEY = "nextext_disguise_keyword";
 
-// Mirror table of all 8 launcher profiles. Keep in sync with the
+// Mirror table of all 14 launcher profiles. Keep in sync with the
 // <activity-alias> entries in AndroidManifest.xml and the profile table in
 // NextextNativePlugin.java — the JS side uses this to render the picker UI
 // (label, preview image, "is this a disguise?" flag).
@@ -46,8 +46,14 @@ export const ICON_PROFILES = [
   { id: "icon3",   label: "NexText", kind: "splash", iconPath: "/ic_icon3.png" },
   { id: "icon4",   label: "NexText", kind: "splash", iconPath: "/ic_icon4.png" },
   { id: "icon5",   label: "NexText", kind: "splash", iconPath: "/ic_icon5.png" },
+  { id: "icon8",   label: "NexText", kind: "splash", iconPath: "/ic_icon8.png" },
+  { id: "icon9",   label: "NexText", kind: "splash", iconPath: "/ic_icon9.png" },
+  { id: "icon10",  label: "NexText", kind: "splash", iconPath: "/ic_icon10.png" },
+  { id: "icon11",  label: "NexText", kind: "splash", iconPath: "/ic_icon11.png" },
   { id: "icon6",   label: "Calculator", kind: "calculator", iconPath: "/ic_icon6.png" },
   { id: "icon7",   label: "Notes",      kind: "notes",      iconPath: "/ic_icon7.png" },
+  { id: "icon12",  label: "Calculator", kind: "calculator", iconPath: "/ic_icon12.png" },
+  { id: "icon13",  label: "Notes",      kind: "notes",      iconPath: "/ic_icon13.png" },
 ];
 
 const DEFAULT_PROFILE = "default";

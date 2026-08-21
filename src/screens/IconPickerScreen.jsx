@@ -16,8 +16,9 @@
 // IS the save.
 
 import React, { useState, useEffect } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Pencil } from "lucide-react";
 import { ICON_PROFILES, getActiveProfileId, setActiveProfile, hasCustomCalculatorPin, setCalculatorPin, hasCustomNotepadKeyword, setNotepadKeyword } from "../services/iconManager";
+import { useGlobalSettings, updateGlobalSettings } from "../firebase/config-settings";
 
 const PROFILE_BLURBS = {
   default: "Same as icon 1. The original NexText look.",
@@ -28,9 +29,15 @@ const PROFILE_BLURBS = {
   icon5:   "NexText with the fifth wallpaper variant.",
   icon6:   "Disguises the app as a Calculator. Enter your PIN on the keypad to open NexText. Default PIN: 1234.",
   icon7:   "Disguises the app as a Notes editor. Type your unlock keyword in a note to open NexText. Default keyword: open.",
+  icon8:   "NexText with the eighth wallpaper variant.",
+  icon9:   "NexText with the ninth wallpaper variant.",
+  icon10:  "NexText with the tenth wallpaper variant.",
+  icon11:  "NexText with the eleventh wallpaper variant.",
+  icon12:  "Disguises the app as a Calculator. Enter your PIN on the keypad to open NexText. Default PIN: 1234.",
+  icon13:  "Disguises the app as a Notes editor. Type your unlock keyword in a note to open NexText. Default keyword: open.",
 };
 
-export default function IconPickerScreen({ onBack, restrictions }) {
+export default function IconPickerScreen({ onBack, restrictions, isAdmin, myUid }) {
   const [activeId, setActiveId] = useState(getActiveProfileId);
   const [pendingId, setPendingId] = useState(null);
   // If a preview image fails to load we fall back to an emoji/letter so the
@@ -49,9 +56,11 @@ export default function IconPickerScreen({ onBack, restrictions }) {
   const [setupDraft, setSetupDraft] = useState("");
   const [setupFeedback, setSetupFeedback] = useState("");
 
+  const isDisguiseProfile = (id) => id === "icon6" || id === "icon7" || id === "icon12" || id === "icon13";
+
   const applyProfile = async (id) => {
     if (id === activeId || pendingId) return;
-    if ((id === "icon6" || id === "icon7") && restrictions?.disableDisguise) {
+    if (isDisguiseProfile(id) && restrictions?.disableDisguise) {
       alert("Calculator/Notes disguise is disabled by parental controls.");
       setPendingId(null);
       return;
@@ -68,9 +77,21 @@ export default function IconPickerScreen({ onBack, restrictions }) {
     }
   };
 
+  const globalSettings = useGlobalSettings();
+  // Admins can override the built-in disguise descriptions (e.g. make them less
+  // obvious). Falls back to the hardcoded PROFILE_BLURBS when no override exists.
+  const blurb = (id) => (globalSettings?.iconDescriptions && globalSettings.iconDescriptions[id]) || PROFILE_BLURBS[id] || "";
+  const editBlurb = (id, label) => {
+    if (!isAdmin || !myUid) return;
+    const current = (globalSettings?.iconDescriptions && globalSettings.iconDescriptions[id]) || PROFILE_BLURBS[id] || "";
+    const next = window.prompt("Edit description for " + label + ":", current);
+    if (next == null) return;
+    updateGlobalSettings({ iconDescriptions: { ...(globalSettings?.iconDescriptions || {}), [id]: next } }, myUid);
+  };
+
   const onPick = (id) => {
     if (id === activeId || pendingId) return;
-    if ((id === "icon6" || id === "icon7") && restrictions?.disableDisguise) {
+    if (isDisguiseProfile(id) && restrictions?.disableDisguise) {
       alert("Calculator/Notes disguise is disabled by parental controls.");
       return;
     }
@@ -82,14 +103,22 @@ export default function IconPickerScreen({ onBack, restrictions }) {
       setSetupDraft(""); setSetupFeedback(""); setSetupFor("icon7");
       return;
     }
+    if (id === "icon12" && !hasCustomCalculatorPin()) {
+      setSetupDraft(""); setSetupFeedback(""); setSetupFor("icon12");
+      return;
+    }
+    if (id === "icon13" && !hasCustomNotepadKeyword()) {
+      setSetupDraft(""); setSetupFeedback(""); setSetupFor("icon13");
+      return;
+    }
     applyProfile(id);
   };
 
   const saveSetup = () => {
-    if (setupFor === "icon6") {
+    if (setupFor === "icon6" || setupFor === "icon12") {
       if (setupDraft.length < 4) { setSetupFeedback("PIN must be at least 4 digits."); return; }
       setCalculatorPin(setupDraft);
-    } else if (setupFor === "icon7") {
+    } else if (setupFor === "icon7" || setupFor === "icon13") {
       const kw = setupDraft.trim();
       if (!kw) { setSetupFeedback("Keyword can't be empty."); return; }
       setNotepadKeyword(kw);
@@ -97,6 +126,25 @@ export default function IconPickerScreen({ onBack, restrictions }) {
     const id = setupFor;
     setSetupFor(null);
     applyProfile(id);
+  };
+
+  // Change the Calculator disguise unlock code. The user must first prove they
+  // know the existing code (entering it), then set a new one (confirmed twice)
+  // before it is written. This prevents someone else from silently changing
+  // the code on a locked device.
+  const [changePinFor, setChangePinFor] = useState(false);
+  const [oldPin, setOldPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [changeFeedback, setChangeFeedback] = useState("");
+
+  const saveChangePin = () => {
+    if (!calculatorPinMatches(oldPin)) { setChangeFeedback("Old code is incorrect."); return; }
+    if (newPin.length < 4) { setChangeFeedback("New code must be at least 4 digits."); return; }
+    if (newPin !== confirmPin) { setChangeFeedback("New codes don't match."); return; }
+    setCalculatorPin(newPin);
+    setChangeFeedback("✓ Code changed");
+    setTimeout(() => { setChangePinFor(false); setOldPin(""); setNewPin(""); setConfirmPin(""); setChangeFeedback(""); }, 900);
   };
 
   return (
@@ -145,7 +193,7 @@ export default function IconPickerScreen({ onBack, restrictions }) {
                   boxShadow: "0 4px 12px rgba(0,0,0,0.45)",
                 }}>
                   {/* Always-visible base preview so a tile can never look blank,
-                      even if the real icon image is missing or fails to load. */}
+                       even if the real icon image is missing or fails to load. */}
                   <div style={{
                     position: "absolute", inset: 0,
                     display: "flex", alignItems: "center", justifyContent: "center",
@@ -156,7 +204,7 @@ export default function IconPickerScreen({ onBack, restrictions }) {
                     {p.kind === "calculator" ? "🧮" : p.kind === "notes" ? "📝" : "N"}
                   </div>
                   {/* Real launcher icon overlaid on top; hidden if it errors so
-                      the base preview shows through. */}
+                       the base preview shows through. */}
                   {!failed[p.id] && (
                     <img
                       src={p.iconPath}
@@ -168,8 +216,17 @@ export default function IconPickerScreen({ onBack, restrictions }) {
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{p.label}</div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", lineHeight: 1.35, minHeight: 30 }}>
-                  {isActive ? "Currently active" : PROFILE_BLURBS[p.id] || ""}
+                  {isActive ? "Currently active" : blurb(p.id)}
                 </div>
+                {isAdmin && (
+                  <div
+                    onClick={(e) => { e.stopPropagation(); editBlurb(p.id, p.label); }}
+                    title="Edit description"
+                    style={{ marginTop: 2, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, color: "#FFD60A", cursor: "pointer", opacity: 0.85 }}
+                  >
+                    <Pencil size={11} /> edit
+                  </div>
+                )}
                 {isActive && (
                   <div style={{
                     fontSize: 11, color: "#10B981", fontWeight: 600,
@@ -187,6 +244,15 @@ export default function IconPickerScreen({ onBack, restrictions }) {
         <div style={{ marginTop: 24, fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.5 }}>
           Picking a profile swaps the launcher icon and (for Calculator / Notes) the app name. After the swap, NexText will restart so the launcher can pick up the change — tap the icon again to come back.
         </div>
+
+        {(activeId === "icon6" || activeId === "icon12" || hasCustomCalculatorPin()) && (
+          <button
+            onClick={() => { setOldPin(""); setNewPin(""); setConfirmPin(""); setChangeFeedback(""); setChangePinFor(true); }}
+            style={{ marginTop: 16, width: "100%", padding: "13px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.05)", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+          >
+            Change Calculator unlock code
+          </button>
+        )}
       </div>
 
       {setupFor && (
@@ -196,7 +262,7 @@ export default function IconPickerScreen({ onBack, restrictions }) {
               {setupFor === "icon6" ? "Set Calculator unlock PIN" : "Set Notes unlock keyword"}
             </div>
             <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.5, marginBottom: 16 }}>
-              {setupFor === "icon6"
+              {(setupFor === "icon6" || setupFor === "icon12")
                 ? "After applying, NexText will appear as a Calculator. Open it by typing this PIN anywhere on the keypad — e.g. just press 1 2 3 4. Default is 1234."
                 : "After applying, NexText will appear as Notes. Open it by typing this word anywhere in a note. Default is \"open\"."}
             </div>
@@ -225,6 +291,46 @@ export default function IconPickerScreen({ onBack, restrictions }) {
               </button>
               <button onClick={saveSetup} style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "none", background: "#10B981", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
                 Save & apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {changePinFor && (
+        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, zIndex: 60 }}>
+          <div style={{ width: "100%", maxWidth: 320, background: "#1E2A32", borderRadius: 18, padding: 22 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#fff", marginBottom: 6 }}>Change Calculator unlock code</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.5, marginBottom: 14 }}>
+              Enter your current code first, then choose a new one.
+            </div>
+            <input
+              inputMode="numeric" maxLength={6} value={oldPin}
+              onChange={(e) => { setOldPin(e.target.value.replace(/\D/g, "").slice(0, 6)); setChangeFeedback(""); }}
+              placeholder="Current code"
+              style={{ width: "100%", padding: "10px 12px", fontSize: 18, borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "#121B22", color: "#fff", letterSpacing: 6, textAlign: "center", marginBottom: 10 }}
+            />
+            <input
+              inputMode="numeric" maxLength={6} value={newPin}
+              onChange={(e) => { setNewPin(e.target.value.replace(/\D/g, "").slice(0, 6)); setChangeFeedback(""); }}
+              placeholder="New code"
+              style={{ width: "100%", padding: "10px 12px", fontSize: 18, borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "#121B22", color: "#fff", letterSpacing: 6, textAlign: "center", marginBottom: 10 }}
+            />
+            <input
+              inputMode="numeric" maxLength={6} value={confirmPin}
+              onChange={(e) => { setConfirmPin(e.target.value.replace(/\D/g, "").slice(0, 6)); setChangeFeedback(""); }}
+              placeholder="Confirm new code"
+              style={{ width: "100%", padding: "10px 12px", fontSize: 18, borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "#121B22", color: "#fff", letterSpacing: 6, textAlign: "center", marginBottom: 10 }}
+            />
+            {changeFeedback && (
+              <div style={{ fontSize: 13, color: changeFeedback.startsWith("✓") ? "#10B981" : "#FF453A", marginBottom: 10 }}>{changeFeedback}</div>
+            )}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setChangePinFor(false)} style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+                Cancel
+              </button>
+              <button onClick={saveChangePin} style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "none", background: "#10B981", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
+                Save
               </button>
             </div>
           </div>

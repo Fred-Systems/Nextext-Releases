@@ -11,6 +11,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.FileProvider;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -240,10 +241,30 @@ public class NextextNativePlugin extends Plugin {
         final String chatId = call.getString("chatId", "");
         final String tag = call.getString("tag", "nextext");
         final boolean isPrivate = call.getBoolean("private", false);
+        // Vibration pattern (ms on/off pairs) and ping sound choice, both
+        // configurable per-user / globally from Settings. A null pattern means
+        // "use the channel default"; an explicit empty array means silent.
+        long[] vibrationPattern = null;
+        try {
+            final JSArray vpArr = call.getArray("vibrationPattern", null);
+            final java.util.List<Object> vp = vpArr != null ? vpArr.toList() : null;
+            if (vp != null && !vp.isEmpty()) {
+                vibrationPattern = new long[vp.size()];
+                for (int i = 0; i < vp.size(); i++) {
+                    final Object o = vp.get(i);
+                    vibrationPattern[i] = o instanceof Number ? ((Number) o).longValue() : 200;
+                }
+            }
+        } catch (Exception ignored) { vibrationPattern = null; }
+        final long[] finalPattern = vibrationPattern;
+        final String soundKey = call.getString("sound", "default");
+        final String senderColor = call.getString("senderColor", "#7C5CFF");
+        final String imageUrl = call.getString("imageUrl", "");
         new Thread(() -> {
             try {
                 android.content.Context ctx = getContext();
-                String channelId = "nextext_messages";
+                String channelId = "nextext_messages_v2";
+                if (finalPattern == null) channelId = "nextext_messages_silent";
                 android.app.NotificationManager nm = (android.app.NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
                 if (nm == null) {
                     call.reject("no notification manager");
@@ -255,7 +276,32 @@ public class NextextNativePlugin extends Plugin {
                     channel.setDescription("New messages and alerts");
                     channel.enableLights(true);
                     channel.setLightColor(0xFF10B981);
+                    // IMPORTANT: leave the channel's sound/vibration UNSET so each
+                    // notification can control them. A channel-created sound/vibrate
+                    // is locked and any per-notification setSound()/setVibrate() is
+                    // silently IGNORED — that was why pings/vibration patterns
+                    // never played. With a null channel sound + default vibration
+                    // enabled, the builder's setSound()/setVibrate() win.
+                    channel.setSound(null, null);
+                    channel.enableVibration(true);
+                    channel.setVibrationPattern(new long[] { 0, 200 });
                     nm.createNotificationChannel(channel);
+
+                    // A second, fully-silent channel used when the user picks the
+                    // "No vibration" preset (or vibration is switched off globally).
+                    // A null vibrate on the builder still inherits the default
+                    // channel's vibration pattern, so we MUST route silent
+                    // notifications through a channel that has vibration OFF —
+                    // otherwise "No vibration" would still buzz.
+                    android.app.NotificationChannel silentChannel = new android.app.NotificationChannel(
+                        "nextext_messages_silent", "Messages (silent)", android.app.NotificationManager.IMPORTANCE_HIGH);
+                    silentChannel.setDescription("New messages without vibration");
+                    silentChannel.enableLights(true);
+                    silentChannel.setLightColor(0xFF10B981);
+                    silentChannel.setSound(null, null);
+                    silentChannel.enableVibration(false);
+                    silentChannel.setVibrationPattern(null);
+                    nm.createNotificationChannel(silentChannel);
                 }
                 // Title: for group messages the GROUP name leads (the sender
                 // appears as a small sub-text beneath it); for direct messages
@@ -284,8 +330,32 @@ public class NextextNativePlugin extends Plugin {
                     .setAutoCancel(true)
                     .setWhen(System.currentTimeMillis())
                     .setPriority(android.app.Notification.PRIORITY_HIGH)
-                    .setCategory(android.app.Notification.CATEGORY_MESSAGE)
-                    .setDefaults(android.app.Notification.DEFAULT_SOUND | android.app.Notification.DEFAULT_VIBRATE | android.app.Notification.DEFAULT_LIGHTS);
+                    .setCategory(android.app.Notification.CATEGORY_MESSAGE);
+                // Disable channel defaults entirely — we set sound + vibration
+                // explicitly below, per-notification. setDefaults(DEFAULT_*)
+                // would override our setVibrate()/setSound() and lock the
+                // channel's behaviour, which is exactly the bug we're fixing.
+                builder.setDefaults(0);
+                // Sound: "none" silences; "default" uses the system notification
+                // sound; ping1/ping2/ping3 play a distinct ToneGenerator beep
+                // (no bundled assets needed).
+                if ("none".equals(soundKey)) {
+                    builder.setSound(null);
+                } else if ("ping1".equals(soundKey) || "ping2".equals(soundKey) || "ping3".equals(soundKey)) {
+                    builder.setSound(null);
+                    try { playPingTone(soundKey); } catch (Exception ignored) {}
+                } else {
+                    try {
+                        builder.setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION));
+                    } catch (Exception ignored) {}
+                }
+                // Vibration: a pattern array vibrates with that pattern; a null
+                // pattern (the "none" preset) or an empty array is silent.
+                if (finalPattern != null) {
+                    builder.setVibrate(finalPattern.length == 0 ? null : finalPattern);
+                } else {
+                    builder.setVibrate(null);
+                }
                 // Locked chat / app lock: never reveal the body on the lock
                 // screen — Android shows "New message" instead of the content.
                 if (isPrivate && android.os.Build.VERSION.SDK_INT >= 21) {
@@ -298,12 +368,32 @@ public class NextextNativePlugin extends Plugin {
                         builder.setSubText(subText);
                     }
                 } catch (Exception ignored) { /* sub-text is best-effort */ }
-                // Large icon = the app's launcher icon, for a richer heads-up.
+                // Large icon: prefer sender's profile image; if missing, generate
+                // a circular avatar with their initial on their avatar color.
+                android.graphics.Bitmap large = null;
                 try {
-                    android.graphics.Bitmap large = android.graphics.BitmapFactory.decodeResource(
-                        ctx.getResources(), ctx.getApplicationInfo().icon);
-                    if (large != null) builder.setLargeIcon(large);
-                } catch (Exception ignored) { /* large icon is best-effort */ }
+                    if (imageUrl != null && !imageUrl.isEmpty()) {
+                        // Download profile image
+                        java.net.URL url = new java.net.URL(imageUrl);
+                        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                        conn.setConnectTimeout(5000);
+                        conn.setReadTimeout(8000);
+                        conn.setDoInput(true);
+                        conn.connect();
+                        if (conn.getResponseCode() == 200) {
+                            java.io.InputStream is = conn.getInputStream();
+                            large = android.graphics.BitmapFactory.decodeStream(is);
+                            is.close();
+                        }
+                        conn.disconnect();
+                    }
+                } catch (Exception ignored) { /* fallback to generated avatar */ }
+
+                if (large == null) {
+                    // Generate fallback: circular with first initial on senderColor
+                    large = generateSenderAvatar(senderName, senderColor);
+                }
+                if (large != null) builder.setLargeIcon(large);
                 // Expanded big-text body showing the full message.
                 try {
                     if (android.os.Build.VERSION.SDK_INT >= 16) {
@@ -342,6 +432,110 @@ public class NextextNativePlugin extends Plugin {
                 call.reject("notification failed: " + (e.getMessage() == null ? String.valueOf(e) : e.getMessage()));
             }
         }).start();
+    }
+
+    // Generates a circular avatar bitmap with the sender's first initial
+    // drawn on their avatar background color. Returns null on any error.
+    private android.graphics.Bitmap generateSenderAvatar(String senderName, String colorHex) {
+        try {
+            int size = 128; // notification large icon size
+            android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
+            android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+            canvas.drawColor(android.graphics.Color.TRANSPARENT);
+
+            // Parse color safely
+            int bgColor;
+            try {
+                bgColor = android.graphics.Color.parseColor(colorHex);
+            } catch (Exception e) {
+                bgColor = 0xFF7C5CFF; // fallback purple
+            }
+
+            // Draw circular background
+            android.graphics.Paint circlePaint = new android.graphics.Paint();
+            circlePaint.setAntiAlias(true);
+            circlePaint.setColor(bgColor);
+            float radius = size / 2f;
+            canvas.drawCircle(radius, radius, radius, circlePaint);
+
+            // Draw initial
+            String initial = "?";
+            if (senderName != null && !senderName.trim().isEmpty()) {
+                initial = senderName.trim().substring(0, 1).toUpperCase(java.util.Locale.ROOT);
+            }
+            android.graphics.Paint textPaint = new android.graphics.Paint();
+            textPaint.setAntiAlias(true);
+            textPaint.setColor(android.graphics.Color.WHITE);
+            textPaint.setTextSize(size * 0.5f);
+            textPaint.setTextAlign(android.graphics.Paint.Align.CENTER);
+            textPaint.setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT_BOLD, android.graphics.Typeface.BOLD));
+
+            // Center the text
+            android.graphics.Paint.FontMetrics fm = textPaint.getFontMetrics();
+            float textY = radius - (fm.ascent + fm.descent) / 2f;
+            canvas.drawText(initial, radius, textY, textPaint);
+
+            return bitmap;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // Plays a short distinct notification "ping" via ToneGenerator so the user
+    // can pick between several tones without bundling any audio assets.
+    private void playPingTone(String key) {
+        int tone;
+        if ("ping2".equals(key)) tone = android.media.ToneGenerator.TONE_PROP_BEEP2;
+        else if ("ping3".equals(key)) tone = android.media.ToneGenerator.TONE_PROP_ACK;
+        else tone = android.media.ToneGenerator.TONE_PROP_BEEP;
+        try {
+            android.media.ToneGenerator tg = new android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 90);
+            tg.startTone(tone, 220);
+            final android.media.ToneGenerator tgf = tg;
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
+                public void run() { try { tgf.release(); } catch (Exception ignored) {} }
+            }, 340);
+        } catch (Exception ignored) {}
+    }
+
+    // Plays ONLY the notification feedback (vibration + ping) with no status-bar
+    // notification — used so the user can preview their chosen vibration/sound
+    // the instant they tap it in Settings / a contact profile.
+    @PluginMethod
+    public void previewNotificationFeedback(PluginCall call) {
+        long[] vibrationPattern = null;
+        try {
+            final JSArray vpArr = call.getArray("vibrationPattern", null);
+            final java.util.List<Object> vp = vpArr != null ? vpArr.toList() : null;
+            if (vp != null) {
+                vibrationPattern = new long[vp.size()];
+                for (int i = 0; i < vp.size(); i++) {
+                    final Object o = vp.get(i);
+                    vibrationPattern[i] = o instanceof Number ? ((Number) o).longValue() : 200;
+                }
+            }
+        } catch (Exception ignored) {}
+        final String soundKey = call.getString("sound", "default");
+        try {
+            if (vibrationPattern != null && vibrationPattern.length > 0) {
+                android.os.Vibrator v = (android.os.Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
+                if (v != null) {
+                    if (android.os.Build.VERSION.SDK_INT >= 26) v.vibrate(android.os.VibrationEffect.createWaveform(vibrationPattern, -1));
+                    else v.vibrate(vibrationPattern, -1);
+                }
+            }
+        } catch (Exception ignored) {}
+        if ("none".equals(soundKey)) { /* silent */ }
+        else if ("ping1".equals(soundKey) || "ping2".equals(soundKey) || "ping3".equals(soundKey)) {
+            try { playPingTone(soundKey); } catch (Exception ignored) {}
+        } else {
+            try {
+                android.net.Uri uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION);
+                android.media.Ringtone r = android.media.RingtoneManager.getRingtone(getContext(), uri);
+                if (r != null) { r.play(); }
+            } catch (Exception ignored) {}
+        }
+        call.resolve();
     }
 
     @PermissionCallback
@@ -982,6 +1176,8 @@ public class NextextNativePlugin extends Plugin {
                 android.content.pm.PackageManager pm = getContext().getPackageManager();
                 // id → component-name table. Keep this in sync with the
                 // <activity-alias> entries in AndroidManifest.xml.
+                // id → component-name table. Keep this in sync with the
+                // <activity-alias> entries in AndroidManifest.xml (Alias1..Alias13).
                 String[][] profiles = new String[][] {
                     { "default",  "com.nextext.app.MainActivity" },
                     { "icon1",    "com.nextext.app.MainActivityAlias1" },
@@ -990,7 +1186,13 @@ public class NextextNativePlugin extends Plugin {
                     { "icon4",    "com.nextext.app.MainActivityAlias4" },
                     { "icon5",    "com.nextext.app.MainActivityAlias5" },
                     { "icon6",    "com.nextext.app.MainActivityAlias6" },
-                    { "icon7",    "com.nextext.app.MainActivityAlias7" }
+                    { "icon7",    "com.nextext.app.MainActivityAlias7" },
+                    { "icon8",    "com.nextext.app.MainActivityAlias8" },
+                    { "icon9",    "com.nextext.app.MainActivityAlias9" },
+                    { "icon10",   "com.nextext.app.MainActivityAlias10" },
+                    { "icon11",   "com.nextext.app.MainActivityAlias11" },
+                    { "icon12",   "com.nextext.app.MainActivityAlias12" },
+                    { "icon13",   "com.nextext.app.MainActivityAlias13" }
                 };
                 for (String[] p : profiles) {
                     String id = p[0];
@@ -1041,15 +1243,24 @@ public class NextextNativePlugin extends Plugin {
         // Settings screen can show live previews without having to ship a
         // hardcoded list on the JS side too.
         org.json.JSONArray arr = new org.json.JSONArray();
+        // Static list mirroring AndroidManifest.xml (Alias1..Alias13) — exposed to JS so the
+        // Settings screen can show live previews without having to ship a
+        // hardcoded list on the JS side too.
         String[][] profiles = new String[][] {
-            { "default",  "NexText",         "ic_icon1" },
+            { "default",  "NexText",         "ic_launcher" },
             { "icon1",    "NexText",         "ic_icon1" },
             { "icon2",    "NexText",         "ic_icon2" },
             { "icon3",    "NexText",         "ic_icon3" },
             { "icon4",    "NexText",         "ic_icon4" },
             { "icon5",    "NexText",         "ic_icon5" },
             { "icon6",    "Calculator",      "ic_icon6" },
-            { "icon7",    "Notes",           "ic_icon7" }
+            { "icon7",    "Notes",           "ic_icon7" },
+            { "icon8",    "NexText",         "ic_icon8" },
+            { "icon9",    "NexText",         "ic_icon9" },
+            { "icon10",   "NexText",         "ic_icon10" },
+            { "icon11",   "NexText",         "ic_icon11" },
+            { "icon12",   "Calculator",      "ic_icon12" },
+            { "icon13",   "Notes",           "ic_icon13" }
         };
         try {
             for (String[] p : profiles) {

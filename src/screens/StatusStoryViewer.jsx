@@ -367,7 +367,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
   return createPortal(
     <div
-      style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: bg, zIndex: 300, display: "flex", flexDirection: "column", userSelect: "none" }}
+      style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: bg, zIndex: 300, display: "flex", flexDirection: "column", userSelect: "none" }}
       onTouchStart={(e) => { touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
       onTouchEnd={(e) => {
         const dx = e.changedTouches[0].clientX - touchStartRef.current.x;

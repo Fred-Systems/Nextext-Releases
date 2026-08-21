@@ -34,8 +34,8 @@ export default function ContactSharePicker({ t, myUid, contacts, shared, mode = 
 
   return createPortal(
     <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2147481300 }} />
-      <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, background: t.surface, borderRadius: "18px 18px 0 0", zIndex: 2147481301, padding: "16px 18px calc(20px + var(--safe-bottom))", maxHeight: "72vh", display: "flex", flexDirection: "column" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2147481300 }} />
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, background: t.surface, borderRadius: "18px 18px 0 0", zIndex: 2147481301, padding: "16px 18px calc(20px + var(--safe-bottom))", maxHeight: "72vh", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
           <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}>
             {mode === "forward-to" ? "Forward contact to" : "Share a contact"}

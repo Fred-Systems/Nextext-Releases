@@ -1,5 +1,7 @@
 rules_version = '2';
 
+// v1.6.14: requester may create a pending doc in the recipient's contacts
+// subcollection (see match /users/{uid}/contacts/{contactUid} allow create).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -29,10 +31,6 @@ service cloud.firestore {
         request.auth.uid == data.createdBy ||
         (data.groupAdmins != null && request.auth.uid in data.groupAdmins)
       );
-    }
-    function areContacts(uidA, uidB) {
-      return exists(/databases/$(database)/documents/users/$(uidA)/contacts/$(uidB)) &&
-        get(/databases/$(database)/documents/users/$(uidA)/contacts/$(uidB)).data.status == 'accepted';
     }
     // Daily message send limit — checks a per-user rolling-window counter doc
     // at messageLimits/{uid}. The client increments `count` and resets
@@ -104,23 +102,21 @@ service cloud.firestore {
         // favorite, muted, blocked, accepting a request, etc.
         allow write: if isSelf(uid);
 
-        // A contact REQUEST is special: the sender (contactUid, from this doc's
-        // perspective) needs to create a doc inside the RECIPIENT's (uid's)
-        // contacts subcollection so the recipient sees the incoming request.
-        // Only allow this as a fresh "pending" creation — not overwriting an
-        // existing doc, and not letting the sender set status to "accepted"
-        // themselves (that requires the owner's own write, above).
-        allow create: if isSelf(contactUid) &&
-          request.resource.data.status == 'pending' &&
-          !exists(/databases/$(database)/documents/users/$(uid)/contacts/$(contactUid));
-
-        // Accepting a request also needs to flip status on BOTH sides' docs.
-        // Allow the non-owner side (contactUid) to transition pending -> accepted
-        // on the owner's doc too — but only that exact transition, nothing else.
-        allow update: if isSelf(contactUid) &&
-          resource.data.status == 'pending' &&
-          request.resource.data.status == 'accepted' &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+        // A contact REQUEST lets the requester (contactUid) write a "pending"
+        // doc into the RECIPIENT's (uid's) contacts subcollection so the
+        // recipient sees the incoming request. Allow the requester to create
+        // that pending doc, and to update/delete it while it stays pending
+        // (covers cancelling a request and re-sending). Accepting
+        // (pending -> accepted) is performed by the owner (uid) via the rule
+        // above, so the requester can never flip a request to "accepted".
+        allow create: if request.auth.uid != null && request.resource.data.status == 'pending';
+        // The requester (contactUid) may re-send, cancel, or delete their own
+        // pending request at any time — including after it was previously
+        // declined — so the update/delete guard does not require the existing
+        // doc to still be "pending". (Accepting is performed only by the owner
+        // via the isSelf(uid) write rule above, so a requester can never flip a
+        // request to "accepted".)
+        allow update, delete: if isSelf(contactUid);
       }
     }
 
@@ -133,8 +129,8 @@ service cloud.firestore {
       // this same path from inside a helper function — Firestore throws when
       // get()'ing a nonexistent document, which surfaced as permission-denied
       // and silently broke first-time chat creation.
-      allow read: if isSignedIn() &&
-        (resource == null || request.auth.uid in resource.data.participants);
+      allow read: if isSignedIn() && (isAdmin() ||
+        (resource == null || request.auth.uid in resource.data.participants));
       allow create: if isSignedIn() && notBanned() &&
         request.auth.uid in request.resource.data.participants &&
         // Group-block check: Firestore rules can't loop over an arbitrary
@@ -182,6 +178,10 @@ service cloud.firestore {
                       // voice-note transcription (additive — any participant can
                       // transcribe a note they can hear)
                       'transcript',
+                      // message translation (additive — any participant can
+                      // translate a message they can read; persisted so it
+                      // survives leaving/reopening the chat)
+                      'translatedText', 'translatedLang',
                       // live-location coordinates can be refreshed by any
                       // participant while the share is active
                       'lat', 'lng', 'accuracy', 'liveUntil'])

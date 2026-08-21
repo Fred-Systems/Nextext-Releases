@@ -111,7 +111,7 @@ export default function NotepadScreen({ onUnlock }) {
   return (
     <div
       style={{
-        position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+        position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
         width: "100%", height: "100dvh",
         background: t.bg, color: t.ink,
         display: "flex", flexDirection: "column",

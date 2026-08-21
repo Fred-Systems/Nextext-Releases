@@ -44,7 +44,7 @@ export default function ErrorReporter({ children }) {
     <>
       {children}
       {errors.length > 0 && (
-        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 9999999, background: "#3D0A0A", borderTop: "2px solid #FF3B30", padding: 10, maxHeight: "40vh", overflowY: "auto", fontSize: 11, color: "#FFB3B3", fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 9999999, background: "#3D0A0A", borderTop: "2px solid #FF3B30", padding: 10, maxHeight: "40vh", overflowY: "auto", fontSize: 11, color: "#FFB3B3", fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
           {errors.map((err) => (
             <div key={err.id} style={{ marginBottom: 6, display: "flex", alignItems: "flex-start", gap: 8 }}>
               <span style={{ flex: 1 }}>{err.msg}</span>

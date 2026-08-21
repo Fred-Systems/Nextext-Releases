@@ -61,6 +61,23 @@ export function playVoicePing() {
   } catch { /* ping is best-effort */ }
 }
 
+// Plays any ping/chime by id (used for notification ping previews and incoming
+// foreground notifications so a user-selected chime actually sounds — the
+// native side can't synthesize these Web Audio tones, so the JS layer handles
+// them for the foreground case while the native layer handles vibration).
+export function playChime(id) {
+  try {
+    pingCtx = pingCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (pingCtx.state === "suspended") pingCtx.resume().catch(() => {});
+    const now = pingCtx.currentTime;
+    (PATTERNS[id] || PATTERNS.classic).forEach(([freq, offset, dur, gain]) => tone(pingCtx, freq, now + offset, dur, gain));
+  } catch { /* chime is best-effort */ }
+}
+
+export function isChimeId(id) {
+  return PING_SOUNDS.some((s) => s.id === id);
+}
+
 // End-of-burst chime: a distinct, brighter completion sound played once when a
 // RUN of consecutive voice notes (2+) finishes — on top of the regular per-note
 // ping. The master chime toggle is `nextext_voice_end_chime`. The SEPARATE

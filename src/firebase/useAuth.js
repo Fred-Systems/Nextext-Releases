@@ -9,8 +9,12 @@ import {
   signInWithCredential,
   GoogleAuthProvider,
   signOut,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
+  updateEmail,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, arrayUnion } from "firebase/firestore";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { SocialLogin as CapgoSocialLogin } from "@capgo/capacitor-social-login";
 import { auth, googleProvider, db } from "../firebase/config";
@@ -298,5 +302,53 @@ export function useAuth() {
     return signOut(auth);
   }
 
-  return { user, userDoc, loading, signUpWithEmail, signInWithEmail, signInWithGoogle, completeGoogleSignup, completeProfile, logOut };
+  // Returns true if the signed-in account uses email/password auth (so it can
+  // change its password / email) rather than Google or phone sign-in.
+  function isEmailPasswordAccount() {
+    return Array.isArray(auth.currentUser?.providerData)
+      ? auth.currentUser.providerData.some((p) => p.providerId === "password")
+      : false;
+  }
+
+  // Require the current password (re-authenticate) before changing it. This is
+  // the security gate the user requested: the old password must be supplied.
+  async function changePassword(oldPassword, newPassword) {
+    const u = auth.currentUser;
+    if (!u || !u.email) throw new Error("Not signed in with an email account.");
+    const cred = EmailAuthProvider.credential(u.email, oldPassword);
+    await reauthenticateWithCredential(u, cred);
+    await updatePassword(u, newPassword);
+  }
+
+  // Changing the email also requires the account password for re-authentication.
+  // The previous address is preserved in emailHistory so an admin can always see
+  // what an account used to be tied to.
+  async function changeEmail(newEmail, password) {
+    const u = auth.currentUser;
+    if (!u || !u.email) throw new Error("Not signed in with an email account.");
+    const normalized = String(newEmail).trim().toLowerCase();
+    if (!normalized || !normalized.includes("@")) throw new Error("Enter a valid email address.");
+    const cred = EmailAuthProvider.credential(u.email, password);
+    await reauthenticateWithCredential(u, cred);
+    const oldEmail = u.email;
+    await updateEmail(u, normalized);
+    const ref = doc(db, "users", u.uid);
+    const curSnap = await getDoc(ref);
+    const curData = curSnap.exists() ? curSnap.data() : {};
+    const emailPatch = { email: normalized, emailLower: normalized };
+    // Re-publish the searchable email copy only if the user opted into email
+    // discovery; otherwise strip it so searches can't surface them by email.
+    if (curData?.searchVisibility?.email) emailPatch.searchEmail = normalized;
+    else emailPatch.searchEmail = deleteField();
+    await updateDoc(ref, emailPatch);
+    try {
+      await updateDoc(ref, {
+        emailHistory: arrayUnion({ email: oldEmail, changedAt: serverTimestamp() }),
+      });
+    } catch { /* emailHistory field may not exist yet — non-fatal */ }
+    const snap = await getDoc(ref);
+    if (snap.exists()) setUserDoc(snap.data());
+  }
+
+  return { user, userDoc, loading, signUpWithEmail, signInWithEmail, signInWithGoogle, completeGoogleSignup, completeProfile, logOut, isEmailPasswordAccount, changePassword, changeEmail };
 }

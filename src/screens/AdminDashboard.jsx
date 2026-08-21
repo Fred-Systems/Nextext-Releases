@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus } from "lucide-react";
+import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { AI_CONTACT_UID, PERSONALITIES } from "../firebase/ai";
 import { getOrCreateDirectChat } from "../firebase/chats";
 import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings } from "../firebase/config-settings";
-import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest } from "../firebase/ai";
+import { getUserMessageStats, formatActiveTime, formatBytes } from "../firebase/stats";
+import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest } from "../firebase/ai";
 
 export default function AdminDashboard({ myUid, onBack }) {
   const { t } = useTheme();
@@ -14,6 +15,8 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [search, setSearch] = useState("");
   const [results, setResults] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedUserStats, setSelectedUserStats] = useState(null);
+  const [selectedUserStatsLoading, setSelectedUserStatsLoading] = useState(false);
   const [reports, setReports] = useState([]);
   const [feedback, setFeedback] = useState([]);
   const [systemMsg, setSystemMsg] = useState("");
@@ -33,6 +36,17 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [groupAIPersonality, setGroupAIPersonality] = useState("default");
   const settings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
+  const [aiModeDraft, setAiModeDraft] = useState(sysConfig?.aiMode || "old");
+  const [aiLiveDraft, setAiLiveDraft] = useState(sysConfig?.aiLiveModel || "groq/compound");
+  const [aiSaved, setAiSaved] = useState(false);
+  // Keep the draft in sync with the saved config. sysConfig loads asynchronously
+  // (often after this component first renders), so initializing the draft from it
+  // once left the selector stuck on "old" even after "live" was saved — reopening
+  // the panel would reset the selection. Re-sync whenever the saved values change.
+  useEffect(() => {
+    if (sysConfig?.aiMode) setAiModeDraft(sysConfig.aiMode);
+    if (sysConfig?.aiLiveModel) setAiLiveDraft(sysConfig.aiLiveModel);
+  }, [sysConfig?.aiMode, sysConfig?.aiLiveModel]);
   const aiRequests = useAIRequestsHook();
   const groupAIRequests = useGroupAIRequestsHook();
 
@@ -364,18 +378,68 @@ export default function AdminDashboard({ myUid, onBack }) {
     }
   };
 
+  // Fetch per-user message statistics whenever an admin opens a user's detail.
+  useEffect(() => {
+    if (!selectedUser?.uid) { setSelectedUserStats(null); return; }
+    let cancelled = false;
+    setSelectedUserStatsLoading(true);
+    getUserMessageStats(selectedUser.uid)
+      .then((s) => { if (!cancelled) { setSelectedUserStats(s); setSelectedUserStatsLoading(false); } })
+      .catch(() => { if (!cancelled) setSelectedUserStatsLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedUser?.uid]);
+
   if (selectedUser) {
     return (
-    <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 46 }}>
+    <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 46, display: "flex", flexDirection: "column", height: "100%" }}>
         <div style={{ display: "flex", alignItems: "center", padding: "16px", gap: 12, background: t.surface, flexShrink: 0, borderBottom: `1px solid ${t.border}` }}>
           <ChevronLeft size={22} color={t.text} onClick={() => setSelectedUser(null)} style={{ cursor: "pointer" }} />
           <span style={{ color: t.text, fontWeight: 700, fontSize: 17 }}>{selectedUser.displayName}</span>
         </div>
-        <div className="nx-scroll" style={{ padding: 16 }}>
+        <div className="nx-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 16 }}>
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
             <div style={{ fontSize: 13, color: t.textMuted }}>Username</div><div style={{ fontSize: 15, fontWeight: 600, color: t.text, marginBottom: 10 }}>@{selectedUser.username}</div>
             <div style={{ fontSize: 13, color: t.textMuted }}>Email</div><div style={{ fontSize: 15, fontWeight: 600, color: t.text, marginBottom: 10 }}>{selectedUser.email}</div>
+            {Array.isArray(selectedUser.emailHistory) && selectedUser.emailHistory.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 4 }}>Previous emails</div>
+                {[...selectedUser.emailHistory].reverse().map((h, i) => (
+                  <div key={i} style={{ fontSize: 13, color: t.text, padding: "3px 0" }}>{h.email}</div>
+                ))}
+              </div>
+            )}
             <div style={{ fontSize: 13, color: t.textMuted }}>Ban status</div><div style={{ fontSize: 15, fontWeight: 600, color: t.text }}>{selectedUser.moderation?.banType || "none"}</div>
+          </div>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 10 }}>Message statistics</div>
+            {selectedUserStatsLoading && <div style={{ fontSize: 12.5, color: t.textMuted }}>Loading statistics…</div>}
+            {!selectedUserStatsLoading && selectedUserStats && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: `1px solid ${t.border}` }}>
+                  <span style={{ fontSize: 13, color: t.textMuted }}>Total messages</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{selectedUserStats.total}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: `1px solid ${t.border}` }}>
+                  <span style={{ fontSize: 13, color: t.textMuted }}>Sent</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{selectedUserStats.sent}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: `1px solid ${t.border}` }}>
+                  <span style={{ fontSize: 13, color: t.textMuted }}>Received</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{selectedUserStats.received}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: `1px solid ${t.border}` }}>
+                  <span style={{ fontSize: 13, color: t.textMuted }}>Chats</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{selectedUserStats.chats}</span>
+                </div>
+                {selectedUserStats.mediaSizeBytes && (selectedUserStats.mediaSizeBytes.sent + selectedUserStats.mediaSizeBytes.recv > 0) && (
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0" }}>
+                    <span style={{ fontSize: 13, color: t.textMuted }}>Media sent / recv</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{formatBytes(selectedUserStats.mediaSizeBytes.sent)} / {formatBytes(selectedUserStats.mediaSizeBytes.recv)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+            {!selectedUserStatsLoading && !selectedUserStats && <div style={{ fontSize: 12.5, color: t.textMuted }}>Statistics unavailable.</div>}
           </div>
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 10 }}>Moderation</div>
@@ -871,6 +935,66 @@ export default function AdminDashboard({ myUid, onBack }) {
           </div>
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <SlidersHorizontal size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Hide Filter/Sort Buttons</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Hide the filter/sort dropdown buttons in the chat list and contacts screens. Useful if the buttons are unresponsive on some devices.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideFilterButton;
+              updateGlobalSettings({ hideFilterButton: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideFilterButton ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideFilterButton ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideFilterButton ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideFilterButton ? "#fff" : t.text }}>
+                {settings?.hideFilterButton ? "Filter/Sort HIDDEN" : "Filter/Sort Visible"}
+              </span>
+            </div>
+          </div>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Share2 size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Hide Share Statistics Button</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Hide the "Share" button in the personal statistics card in Settings.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideShareButton;
+              updateGlobalSettings({ hideShareButton: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideShareButton ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideShareButton ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideShareButton ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideShareButton ? "#fff" : t.text }}>
+                {settings?.hideShareButton ? "Share Button HIDDEN" : "Share Button Visible"}
+              </span>
+            </div>
+          </div>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Terminal size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Hide On-Device DIAG Log</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Hide the copyable DIAG log overlay that appears on screen (used to diagnose device issues when USB debugging is blocked).
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideDiagLog;
+              updateGlobalSettings({ hideDiagLog: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideDiagLog ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideDiagLog ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideDiagLog ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideDiagLog ? "#fff" : t.text }}>
+                {settings?.hideDiagLog ? "DIAG Log HIDDEN" : "DIAG Log Visible"}
+              </span>
+            </div>
+          </div>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <Bot size={18} color={t.primary} />
               <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>NexText AI Model (Groq)</span>
             </div>
@@ -910,6 +1034,27 @@ export default function AdminDashboard({ myUid, onBack }) {
                 Active model: <strong>openai/gpt-oss-20b</strong> (default). Toggle off to pick a custom model.
               </div>
             )}
+            <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 12, paddingTop: 12 }}>
+              <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 8 }}>Model mode (applies to all AI chats instantly)</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {AI_MODE_OPTIONS.map((o) => (
+                  <div key={o.id} onClick={() => setAiModeDraft(o.id)} style={{ flex: 1, textAlign: "center", padding: "10px 8px", borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: `1px solid ${t.border}`, background: aiModeDraft === o.id ? t.primary : t.bg, color: aiModeDraft === o.id ? "#fff" : t.text }}>
+                    {o.label}
+                  </div>
+                ))}
+              </div>
+              {aiModeDraft === "live" && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 4 }}>Live model</div>
+                  <select value={aiLiveDraft} onChange={(e) => setAiLiveDraft(e.target.value)} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, background: t.bg, color: t.text, cursor: "pointer" }}>
+                    {GROQ_LIVE_MODEL_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>
+                </div>
+              )}
+              <button onClick={() => { setSystemConfig({ aiMode: aiModeDraft, aiLiveModel: aiLiveDraft }, myUid); setAiSaved(true); setTimeout(() => setAiSaved(false), 2500); }} style={{ marginTop: 10, width: "100%", padding: 11, borderRadius: 10, border: "none", background: t.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}>
+                {aiSaved ? "Saved ✓" : "Save Settings"}
+              </button>
+            </div>
           </div>
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -931,6 +1076,88 @@ export default function AdminDashboard({ myUid, onBack }) {
               </span>
             </div>
           </div>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14, border: "1px solid #FF3B30" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Power size={18} color="#FF3B30" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Force Logout Everyone (except admins)</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              When ON, every non-admin user is signed out of all their devices immediately and must log back in. Use this to force a universal re-auth (e.g. after a breach). Turn it back OFF to let everyone sign in again.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.forceLogoutNonAdmins;
+              updateGlobalSettings({ forceLogoutNonAdmins: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.forceLogoutNonAdmins ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.forceLogoutNonAdmins ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.forceLogoutNonAdmins ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.forceLogoutNonAdmins ? "#fff" : t.text }}>
+                {settings?.forceLogoutNonAdmins ? "FORCE LOGOUT IS LIVE — non-admins are signed out" : "Force logout off"}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Camera size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Status Builder: Hide Camera</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Hide the Camera button in the status builder for all users. Useful if camera access causes issues on some devices.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideStatusCamera;
+              updateGlobalSettings({ hideStatusCamera: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideStatusCamera ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideStatusCamera ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideStatusCamera ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideStatusCamera ? "#fff" : t.text }}>
+                {settings?.hideStatusCamera ? "CAMERA HIDDEN IN STATUS BUILDER" : "Camera visible in status builder"}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Mic size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Status Builder: Hide Voice Notes</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Hide the Voice Note button in the status builder for all users. Useful if microphone access causes issues on some devices.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideStatusVoiceNote;
+              updateGlobalSettings({ hideStatusVoiceNote: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideStatusVoiceNote ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideStatusVoiceNote ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideStatusVoiceNote ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideStatusVoiceNote ? "#fff" : t.text }}>
+                {settings?.hideStatusVoiceNote ? "VOICE NOTES HIDDEN IN STATUS BUILDER" : "Voice notes visible in status builder"}
+              </span>
+            </div>
+
+            {/* Hide speech-to-text (voice typing) across ALL chats */}
+            <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginTop: 14, marginBottom: 4 }}>
+              Speech-to-text (voice typing)
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Hide the speech-to-text microphone button and its settings in every chat (direct, group, and AI). When on, users cannot voice-type at all.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideStt;
+              updateGlobalSettings({ hideStt: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideStt ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideStt ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideStt ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideStt ? "#fff" : t.text }}>
+                {settings?.hideStt ? "SPEECH-TO-TEXT HIDDEN FOR ALL USERS" : "Speech-to-text visible"}
+              </span>
+            </div>
+          </div>
+
         </div>
       )}
 

@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import {   ChevronLeft, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Bot, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff, Forward, Languages } from "lucide-react";
+import {   ChevronLeft, Copy, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Bot, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff, Forward, Languages } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import {
   useMessages, sendTextMessage, markChatRead, setTypingHeartbeat, reactToMessage,
@@ -31,6 +31,7 @@ import { useContacts, getContactDisplayName, getContactRealName } from "../fireb
 import ContactSharePicker from "../components/ContactSharePicker";
 import ForwardPicker from "../components/ForwardPicker";
 import AskAIPanel from "../components/AskAIPanel";
+import VoiceToTextButton from "../components/VoiceToTextButton";
 
 
 const VIEWED_KEY = "nextext_status_viewed";
@@ -484,7 +485,7 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
 }
 
 export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, recordingBarScale = 1, userDoc, emojiAnimations = true, emojiBigOn = true }) {
-  const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth } = useTheme();
+  const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth, composerButtonOrder } = useTheme();
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
@@ -501,6 +502,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [translatingLang, setTranslatingLang] = useState("");
   const [translations, setTranslations] = useState({});
   const [hiddenTranslations, setHiddenTranslations] = useState({});
+  const [actionMenu, setActionMenu] = useState(null);
+  const [copiedToast, setCopiedToast] = useState(false);
   const [translationErrors, setTranslationErrors] = useState({});
   // User-configurable translation language order (popular languages on top).
   // Persisted on the user doc as translationLangOrder (array of codes).
@@ -783,6 +786,33 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [myGroupNickname, setMyGroupNickname] = useState("");
   const [otherUserPhoto, setOtherUserPhoto] = useState(null);
 
+  // ── Feature: message pagination / "load earlier" ─────────────────  // The user can cap how many messages are kept in the DOM via Settings →
+  // "Chat Performance". Fewer messages = smoother scrolling & swiping,
+  // especially on long chats / low-end devices. "all" renders everything.
+  const MSG_LIMIT_KEY = "nextext_message_limit";
+  const readMessageLimit = () => {
+    const raw = (typeof localStorage !== "undefined" && localStorage.getItem(MSG_LIMIT_KEY)) || "50";
+    if (raw === "all") return Infinity;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 50;
+  };
+  const messageLimitPref = readMessageLimit();
+  const [visibleCount, setVisibleCount] = useState(messageLimitPref === Infinity ? 1000000 : messageLimitPref);
+
+  // ── Feature: forward arrows OUTSIDE the bubble (setting) ──────────
+  const forwardOutside = localStorage.getItem("nextext_forward_arrows_outside") !== "false";
+
+  // ── Feature: long-press multi-select mode ────────────────────────
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedMessages, setSelectedMessages] = useState(() => new Set());
+  const [forwardingSelection, setForwardingSelection] = useState(false);
+  const msgLongPressTimer = useRef(null);
+  const msgLongPressFiredRef = useRef(false);
+
+  // ── Feature: STT (voice-to-text) button in composer ──────────────
+  const sttEnabled = localStorage.getItem("nextext_stt_enabled") !== "off";
+  const sttAutoSend = localStorage.getItem("nextext_stt_autosend") === "on";
+
   // Fallback: fetch the other user's profile photo directly from Firestore so
   // "View Profile Picture" always has the image even if the contact object is stale.
   useEffect(() => {
@@ -874,6 +904,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const composerRef = useRef(null);
   const composerBarRef = useRef(null);
   const pinchStartRef = useRef(null);
+  const dragRef = useRef({ id: null, startX: 0, startY: 0, dx: 0, swiping: false, pointerId: null });
   const prevMessageCount = useRef(0);
   const typingClearTimer = useRef(null);
   const typingHeartbeatTimer = useRef(null);
@@ -885,9 +916,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const { contacts: convoContacts } = useContacts(myUid);
   const acceptedContacts = (convoContacts || []).filter((c) => c.status === "accepted");
   const presence = usePresence(isGroup ? null : otherUid, myUid);
-  const otherParticipants = isGroup
-    ? (chatMeta?.participants || []).filter((p) => p !== myUid)
-    : [otherUid];
+  const otherParticipants = useMemo(() => (
+    isGroup
+      ? (chatMeta?.participants || []).filter((p) => p !== myUid)
+      : [otherUid]
+  ), [isGroup, chatMeta?.participants, myUid, otherUid]);
   const otherStatuses = useStatuses(isGroup ? [] : [otherUid]);
   const hasOtherActiveStatus = otherStatuses.length > 0;
   const otherViewedMap = getStoredViewed();
@@ -1077,11 +1110,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     }
   };
 
-  const send = async () => {
-    if (!input.trim()) return;
+  const send = async (override) => {
+    const textToSend = (override != null ? String(override) : input).trim();
+    if (!textToSend) return;
     setSendError("");
     if (!chatId) { setSendError("Chat isn't ready yet — please wait a moment and try again."); return; }
-    const textToSend = input.trim();
     setInput("");
     autoResizeComposer();
     try {
@@ -1113,6 +1146,20 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     } catch (e) {
       setSendError("Message didn't send: " + e.message);
       setInput(textToSend);
+    }
+  };
+
+  // Wire the STT (VoiceToTextButton) result into the composer input. Mirrors
+  // the AskAIPanel handleSttResult pattern: append to the existing input, and
+  // when the recognizer is in autoSend mode, send immediately.
+  const handleSttResult = (text, { autoSend } = {}) => {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+    if (autoSend) {
+      send(trimmed);
+    } else {
+      setInput((prev) => (prev ? (prev.endsWith(" ") ? prev : prev + " ") : "") + trimmed);
+      autoResizeComposer();
     }
   };
 
@@ -1163,6 +1210,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       const result = await translateMessage(myUid, m.text, langCode);
       setTranslations((prev) => ({ ...prev, [key]: { lang: langCode, text: result } }));
       setHiddenTranslations((prev) => { const n = { ...prev }; delete n[key]; return n; });
+      // Persist the translation on the message doc so it survives chat re-open.
+      try {
+        await updateDoc(doc(db, "chats", chatId, "messages", m.id), { translatedText: result, translatedLang: langCode });
+      } catch { /* offline / rules-rejected — ignore, in-memory copy still works */ }
     } catch (e) {
       setTranslationErrors((prev) => ({ ...prev, [key]: e?.message || "Translation failed — try again." }));
     }
@@ -1170,6 +1221,25 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setTranslateMsg(null);
     setActiveMsg(null);
   };
+
+  // Seed persisted translations: when messages load (or a new one arrives),
+  // restore any translation saved on the message doc so it's there next time
+  // the chat is opened. Skips messages the user has explicitly hidden and
+  // never overwrites a fresher in-memory translation.
+  useEffect(() => {
+    if (!messages.length || !chatId) return;
+    setTranslations((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const m of messages) {
+        if (m.translatedText && m.translatedLang && !next[m.id] && !hiddenTranslations[m.id]) {
+          next[m.id] = { lang: m.translatedLang, text: m.translatedText };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [messages, hiddenTranslations, chatId]);
 
   const handleReply = () => {
     if (!activeMsg) return;
@@ -1195,23 +1265,251 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setForwardBusy(true);
     let ok = 0;
     let fail = 0;
+    // When forwarding a multi-select batch, iterate over every selected message
+    // (otherwise just the single tapped message).
+    const sources = forwardingSelection
+      ? messages.filter((m) => selectedMessages.has(m.id))
+      : [forwardMsg];
     for (const target of targets) {
-      try {
-        const targetChatId = await getOrCreateDirectChat(myUid, target.uid);
-        const source = { ...forwardMsg, sourceChatId: chatId };
-        await sendForwardedMessage(targetChatId, myUid, source, target.uid === myUid ? [] : [target.uid]);
-        await incrementForwardedCount(chatId, forwardMsg.id);
-        ok++;
-      } catch { fail++; }
+      for (const source of sources) {
+        try {
+          const targetChatId = await getOrCreateDirectChat(myUid, target.uid);
+          const src = { ...source, sourceChatId: chatId };
+          await sendForwardedMessage(targetChatId, myUid, src, target.uid === myUid ? [] : [target.uid]);
+          await incrementForwardedCount(chatId, source.id);
+          ok++;
+        } catch { fail++; }
+      }
     }
     setForwardBusy(false);
     setForwardMsg(null);
+    const wasSelection = forwardingSelection;
+    setForwardingSelection(false);
+    if (wasSelection) exitSelectionMode();
     if (ok > 0) {
       setSendError(`↪️ Forwarded to ${ok} chat${ok === 1 ? "" : "s"}`);
       setTimeout(() => setSendError(""), 2500);
     } else if (fail > 0) {
       setSendError("Forward failed — try again.");
     }
+  };
+
+  // ── Long-press multi-select helpers ──────────────────────────────
+  const copyMessageText = (m) => { if (m?.text) navigator.clipboard?.writeText(m.text).catch(() => {}); };
+
+  const SWIPE_THRESHOLD = 60;
+
+  // Long-press now opens a bottom-sheet action menu (instead of selection mode).
+  // Selection mode stays reachable via right-click / context menu on desktop.
+  const startMessageLongPress = (m) => {
+    if (selectionMode) return;
+    msgLongPressFiredRef.current = false;
+    if (msgLongPressTimer.current) clearTimeout(msgLongPressTimer.current);
+    msgLongPressTimer.current = setTimeout(() => {
+      msgLongPressFiredRef.current = true;
+      setActionMenu(m);
+    }, 420);
+  };
+
+  // Sets a message as the reply target and focuses the composer.
+  const replyToMessage = (m) => {
+    setReplyingTo({
+      messageId: m.id,
+      senderId: m.senderId,
+      previewText: m.text || (m.type === "poll" ? "📊 " + (m.poll?.question || "Poll") : m.type === "voice" ? "🎤 Voice note" : m.type === "image" ? "📷 Photo" : m.type === "video" ? "📹 Video" : m.type === "location" ? "📍 Location" : m.type === "contact" ? "👤 Contact" : m.type === "file" ? "📎 File" : ""),
+      previewType: m.type,
+    });
+  };
+
+  // Copy with a transient "Copied!" toast + clipboard fallback for insecure contexts.
+  const copyWithToast = async (text) => {
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        throw new Error("no clipboard");
+      }
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {}
+    }
+    setCopiedToast(true);
+    setTimeout(() => setCopiedToast(false), 1200);
+  };
+
+  // ── Swipe-right to reply ──────────────────────────────────────────
+  const onRowPointerDown = (e, m) => {
+    if (e.pointerType === "mouse" || selectionMode) return;
+    dragRef.current = { id: m.id, startX: e.clientX, startY: e.clientY, dx: 0, swiping: false, pointerId: e.pointerId, el: e.currentTarget };
+    startMessageLongPress(m);
+  };
+
+  // Read the message-swipe speed the user picked in Settings (page-swipe speed
+  // doubles as the reply-swipe snap-back duration for consistency).
+  const swipeSpeed = (typeof localStorage !== "undefined" && localStorage.getItem("nextext_swipe_speed")) || "normal";
+  const replySnapMs = swipeSpeed === "slow" ? 0.28 : swipeSpeed === "fast" ? 0.1 : 0.18;
+
+  const onRowPointerMove = (e, m) => {
+    const d = dragRef.current;
+    if (!d || d.id !== m.id) return;
+    const dxTotal = e.clientX - d.startX;
+    const dyTotal = e.clientY - d.startY;
+    if (!d.swiping) {
+      if (Math.abs(dxTotal) > 8 && Math.abs(dxTotal) > Math.abs(dyTotal)) {
+        d.swiping = true;
+        cancelMessageLongPress();
+        msgLongPressFiredRef.current = false;
+        if (d.el) d.el.style.willChange = "transform";
+      } else if (Math.abs(dyTotal) > 10) {
+        d.id = null;
+        return;
+      } else {
+        return;
+      }
+    }
+    const clamped = Math.max(0, dxTotal);
+    d.dx = clamped;
+    // Move the bubble via direct DOM writes (not React state) so the whole
+    // message list does NOT re-render on every pointer move — this is what
+    // keeps the swipe smooth even in very long chats.
+    if (d.el) {
+      d.el.style.transition = "none";
+      d.el.style.transform = `translate3d(${clamped}px,0,0)`;
+    }
+  };
+
+  const onRowPointerUp = (e, m) => {
+    cancelMessageLongPress();
+    const d = dragRef.current;
+    if (d && d.el) {
+      // Smoothly snap the bubble back to its resting position.
+      d.el.style.transition = `transform ${replySnapMs}s ease`;
+      d.el.style.transform = "translate3d(0,0,0)";
+      d.el.style.willChange = "auto";
+    }
+    if (d && d.id === m.id && d.swiping && d.dx >= SWIPE_THRESHOLD) {
+      replyToMessage(m);
+      composerRef.current?.focus();
+    }
+    dragRef.current = { id: null, startX: 0, startY: 0, dx: 0, swiping: false, pointerId: null, el: null };
+  };
+
+  // Delete a specific message (used by the long-press action menu).
+  const deleteMessageById = async (msg) => {
+    if (!chatId || !msg) return;
+    try {
+      if (msg.senderId === myUid) await deleteMessageForEveryone(chatId, msg.id);
+      else await deleteMessageForSelf(chatId, msg.id, myUid);
+    } catch (e) {
+      setSendError("Couldn't delete: " + (e.message || "server rejected the write"));
+    }
+  };
+
+  const cancelMessageLongPress = () => {
+    if (msgLongPressTimer.current) { clearTimeout(msgLongPressTimer.current); msgLongPressTimer.current = null; }
+  };
+
+  // Config: comma-separated list e.g. "forward,askai". Default = just "forward".
+  // "copy" / "askai" only render when explicitly listed; "askai" also requires aiApproved.
+  const outsideActionsList = (() => {
+    try {
+      const raw = localStorage.getItem("nextext_outside_actions");
+      const parts = raw == null
+        ? ["forward"]
+        : raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+      if (parts.length === 0) parts.push("forward");
+      if (!parts.includes("forward")) parts.push("forward");
+      return parts;
+    } catch {
+      return ["forward"];
+    }
+  })();
+
+  const renderOutsideActions = (m, side) => {
+    const showForward = canForward(m) && outsideActionsList.includes("forward");
+    const showCopy = !!m.text && outsideActionsList.includes("copy");
+    const showBot = aiApproved && !!m.text && outsideActionsList.includes("askai");
+    if (!showForward && !showCopy && !showBot) return null;
+    const onlyForward = showForward && !showCopy && !showBot;
+    return (
+      <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: onlyForward ? 0 : 8, opacity: 0.9, flexShrink: 0, marginLeft: side === "right" ? 6 : 0, marginRight: side === "left" ? 6 : 0 }}>
+        {showForward && (
+          <div onClick={(e) => { e.stopPropagation(); setForwardMsg(m); }} title="Forward" style={{ width: 34, height: 34, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <Forward size={onlyForward ? 19 : 16} color={t.primary} />
+          </div>
+        )}
+        {showCopy && <Copy size={15} style={{ cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); copyWithToast(m.text); }} />}
+        {showBot && <Bot size={15} style={{ cursor: "pointer", color: t.primary }} onClick={(e) => { e.stopPropagation(); openAskAI(m); }} />}
+      </div>
+    );
+  };
+
+  const enterSelectionMode = (m) => {
+    setSelectionMode(true);
+    setSelectedMessages(new Set([m.id]));
+  };
+
+  const toggleSelectMessage = (m) => {
+    setSelectedMessages((prev) => {
+      const next = new Set(prev);
+      if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
+      return next;
+    });
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedMessages(new Set());
+    setForwardingSelection(false);
+  };
+
+  const getSelectedMsgs = () => messages.filter((m) => selectedMessages.has(m.id));
+
+  const handleSelectionCopy = () => {
+    const text = getSelectedMsgs().map((m) => m.text || "").filter(Boolean).join("\n");
+    if (text) navigator.clipboard?.writeText(text).catch(() => {});
+    exitSelectionMode();
+  };
+
+  const handleSelectionForward = () => {
+    const msgs = getSelectedMsgs();
+    if (msgs.length === 0) return;
+    setForwardMsg(msgs[0]);
+    setForwardingSelection(true);
+  };
+
+  const handleSelectionDelete = async () => {
+    const msgs = getSelectedMsgs();
+    for (const m of msgs) {
+      try {
+        if (m.senderId === myUid) await deleteMessageForEveryone(chatId, m.id);
+        else await deleteMessageForSelf(chatId, m.id, myUid);
+      } catch { /* best-effort per message */ }
+    }
+    exitSelectionMode();
+  };
+
+  const handleSelectionAskAI = () => {
+    const msgs = getSelectedMsgs();
+    if (msgs.length === 0) return;
+    const ctx = msgs.map((m) => ({
+      id: m.id,
+      senderId: m.senderId,
+      text: m.text || (m.type === "image" ? "[image]" : m.type === "voice" ? "[voice note]" : m.type === "location" ? "[location]" : m.type === "contact" ? "[contact card]" : m.type === "poll" ? "[poll]" : "[media]"),
+    }));
+    setAskAI({ context: ctx });
+    exitSelectionMode();
   };
 
   const handleEdit = () => { if (!activeMsg) return; setEditingMsg(activeMsg); setInput(activeMsg.text || ""); setActiveMsg(null); setTimeout(autoResizeComposer, 0); };
@@ -2105,6 +2403,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     : messages
   ).filter((m) => !isMediaBlocked(m));
 
+  // 60-message pagination: only render the most recent `visibleCount` messages
+  // so long chats stay fast. "Load earlier" grows visibleCount by 60.
+  const displayMessages = useMemo(() => visibleMessages.slice(Math.max(0, visibleMessages.length - visibleCount)), [visibleMessages, visibleCount]);
+
   const replyToSenderName = (senderId) => {
     if (senderId === myUid) return "You";
     if (isGroup) return memberNames[senderId] || "…";
@@ -2397,6 +2699,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               </div>
             </div>
           )}
+          {!blocked && translations[m.id] && hiddenTranslations[m.id] && (
+            <div style={{ marginTop: 6 }}>
+              <span onClick={(e) => { e.stopPropagation(); setHiddenTranslations((prev) => { const n = { ...prev }; delete n[m.id]; return n; }); }} style={{ fontSize: 11.5, fontWeight: 600, opacity: 0.85, cursor: "pointer", textDecoration: "underline" }}>Show translation</span>
+            </div>
+          )}
           {translationErrors[m.id] && (
             <div style={{ fontSize: 11.5, color: "#FF3B30", marginTop: 3, lineHeight: 1.3, maxWidth: 260 }}>{translationErrors[m.id]}</div>
           )}
@@ -2405,8 +2712,39 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     );
   };
 
+  // Memoized message-list context. Excludes composer `input` so typing does NOT
+  // re-render the (potentially long) message list — only the lightweight
+  // composer re-renders. The list recomputes only when its real data changes.
+  const messageListCtx = useMemo(() => ({
+    displayMessages, visibleMessages, visibleCount, setVisibleCount,
+    translations, hiddenTranslations, selectedMessages, selectionMode,
+    isGroup, memberNames, globalSettings, forwardOutside,
+    theyRecordingVoice, theyTyping, showScrollDownSetting, showScrollDown,
+    scrollDownPos, newMsgBadge, scrollDownSize, otherParticipants, t, myUid, messageWidth,
+    renderBubble, renderOutsideActions, canForward, replyToSenderName,
+    msgDisplayDate, formatDayLabel, onRowPointerDown, onRowPointerUp, onRowPointerMove,
+    cancelMessageLongPress, enterSelectionMode, toggleSelectMessage,
+    setForwardMsg, setActiveMsg, setContactCardMember, StatusTicks, scrollToBottom, msgLongPressFiredRef,
+    replySnapMs,
+  }), [
+    displayMessages, visibleMessages, visibleCount, translations, hiddenTranslations,
+    selectedMessages, selectionMode, isGroup, memberNames, globalSettings, forwardOutside,
+    theyRecordingVoice, theyTyping, showScrollDownSetting, showScrollDown,
+    scrollDownPos, newMsgBadge, scrollDownSize, otherParticipants, t, myUid, messageWidth, replySnapMs,
+  ]);
+
   return (
     <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 20 }}>
+      {selectionMode && (
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 45, display: "flex", alignItems: "center", gap: 14, padding: "calc(14px + var(--safe-top)) 14px 14px", background: t.primary, color: t.bubbleMeText, flexShrink: 0 }}>
+          <X size={22} color={t.bubbleMeText} onClick={exitSelectionMode} style={{ cursor: "pointer", flexShrink: 0 }} />
+          <span style={{ flex: 1, fontWeight: 700, fontSize: 15 }}>{selectedMessages.size} selected</span>
+          <Copy size={20} color={t.bubbleMeText} onClick={handleSelectionCopy} style={{ cursor: "pointer", flexShrink: 0 }} />
+          <Forward size={20} color={t.bubbleMeText} onClick={handleSelectionForward} style={{ cursor: "pointer", flexShrink: 0 }} />
+          <Trash2 size={20} color={t.bubbleMeText} onClick={handleSelectionDelete} style={{ cursor: "pointer", flexShrink: 0 }} />
+          {aiApproved && <Bot size={20} color={t.bubbleMeText} onClick={handleSelectionAskAI} style={{ cursor: "pointer", flexShrink: 0 }} />}
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "calc(14px + var(--safe-top)) 12px 14px", background: "#111B21", position: "relative", flexShrink: 0 }}>
         <ChevronLeft size={22} color="#fff" onClick={handleBack} style={{ cursor: "pointer" }} />
         <div onClick={onOpenProfile} style={{ cursor: "pointer" }}>
@@ -2518,85 +2856,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           touchAction: pinchEnabled() ? "pan-y" : "auto",
           backgroundImage: wallpaper ? `url(${wallpaper})` : "none", backgroundSize: "cover", backgroundPosition: "center",
         }}>
-          {visibleMessages.map((m, i) => {
-            const prev = visibleMessages[i - 1];
-            const next = visibleMessages[i + 1];
-            const groupedWithPrev = prev && prev.senderId === m.senderId && !prev.deletedForEveryone;
-            const groupedWithNext = next && next.senderId === m.senderId && !next.deletedForEveryone;
-            const isMine = m.senderId === myUid;
-            const mDate = msgDisplayDate(m);
-            const prevDate = msgDisplayDate(prev);
-            const newDay = mDate && (!prevDate || prevDate.toDateString() !== mDate.toDateString());
-            return (
-            <React.Fragment key={m.id}>
-              {newDay && (
-                <div style={{ display: "flex", justifyContent: "center", margin: "16px 0 4px", flexShrink: 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 12, padding: "4px 12px", boxShadow: "0 1px 2px rgba(0,0,0,0.08)", textTransform: "capitalize" }}>{formatDayLabel(mDate)}</span>
-                </div>
-              )}
-              <div className="nextext-message-in" style={{ display: "flex", justifyContent: isMine ? "flex-end" : "flex-start", marginTop: groupedWithPrev ? 2 : 12 }}>
-                <div onClick={() => !m.deletedForEveryone && setActiveMsg(m)} style={{
-                  position: "relative", maxWidth: (messageWidth === "compact" ? "58%" : messageWidth === "standard" ? "74%" : "90%"), padding: "8px 12px", cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
-                  background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText,
-                  borderRadius: `${groupedWithPrev ? 6 : 14}px ${groupedWithPrev ? 6 : 14}px ${groupedWithNext ? 6 : 14}px ${groupedWithNext ? 6 : 14}px`,
-                }}>
-                  {isGroup && !isMine && !groupedWithPrev && (
-                    <div onClick={(e) => { e.stopPropagation(); const memberInfo = { uid: m.senderId, name: m.senderName || memberNames[m.senderId] || "…" }; setContactCardMember(memberInfo); }} style={{ fontSize: 12, fontWeight: 700, color: t.primary, marginBottom: 2, cursor: "pointer" }}>{m.senderName || memberNames[m.senderId] || "…"}</div>
-                  )}
-                  {(m.forwardedFrom || m.forwardedCount > 0) && (
-                    <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", opacity: 0.55, marginBottom: 2 }}>
-                      {m.forwardedFrom
-                        ? (m.forwardedCount > 0 && !globalSettings?.hideForwardedCount ? `Forwarded · ${m.forwardedCount}×` : "Forwarded")
-                        : (m.forwardedCount > 0 && !globalSettings?.hideForwardedCount ? `Forwarded ${m.forwardedCount} time${m.forwardedCount === 1 ? "" : "s"}` : "Forwarded")}
-                    </div>
-                  )}
-                  {m.replyTo && (
-                  <div style={{ background: m.senderId === myUid ? "rgba(255,255,255,0.15)" : t.primaryLight, borderLeft: `3px solid ${m.senderId === myUid ? "rgba(255,255,255,0.6)" : t.primary}`, borderRadius: 6, padding: "5px 8px", marginBottom: 6, fontSize: 12 }}>
-                    <div style={{ fontWeight: 700, opacity: 0.85, fontSize: 11, marginBottom: 1 }}>
-                      {replyToSenderName(m.replyTo.senderId)}
-                    </div>
-                    <div style={{ opacity: 0.75, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.replyTo.previewText}</div>
-                  </div>
-                )}
-                {renderBubble(m)}
-                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 7, marginTop: 3 }}>
-                  {canForward(m) && (
-                    <Forward size={13} onClick={(e) => { e.stopPropagation(); setForwardMsg(m); }} style={{ cursor: "pointer", opacity: 0.6 }} />
-                  )}
-                  {!m.deletedForEveryone && (
-                    <MoreVertical size={13} onClick={(e) => { e.stopPropagation(); setActiveMsg(m); }} style={{ cursor: "pointer", opacity: 0.6 }} />
-                  )}
-                  <span style={{ fontSize: 10.5, opacity: 0.65 }}>
-                    {msgDisplayDate(m) ? msgDisplayDate(m).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "sending…"}
-                  </span>
-                  <StatusTicks mine={m.senderId === myUid} deliveredTo={m.deliveredTo} readBy={m.readBy} otherParticipants={otherParticipants} />
-                </div>
-                {m.reactions && Object.keys(m.reactions).length > 0 && (
-                  <div style={{ display: "flex", gap: 3, marginTop: 3, justifyContent: isMine ? "flex-end" : "flex-start" }}>
-                    <div style={{ display: "flex", gap: 3, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 10, padding: "2px 5px", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }}>
-                      {Object.values(m.reactions).map((e, i) => <span key={i} style={{ fontSize: 12 }}>{e}</span>)}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            </React.Fragment>
-            );
-          })}
-          {(theyRecordingVoice || theyTyping) && (
-            <div className="nextext-message-in" style={{ display: "flex", justifyContent: "flex-start" }}>
-              <div style={{ padding: "10px 14px", borderRadius: 14, background: t.bubbleThem, boxShadow: "0 1px 2px rgba(0,0,0,0.08)", display: "flex", alignItems: "center", gap: 7 }}>
-                {theyRecordingVoice ? (
-                  <>
-                    <Mic size={14} className="nextext-mic-waver" color="#2BB579" />
-                    <span style={{ fontSize: 12.5, color: t.textMuted }}>recording voice note…</span>
-                  </>
-                ) : (
-                  <TypingDots color={t.textMuted} />
-                )}
-              </div>
-            </div>
-          )}
+          <MessageList ctx={messageListCtx} />
         </div>
 
         {showScrollDownSetting && showScrollDown && (
@@ -2842,6 +3102,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 <Plus size={Math.max(22, Math.round(25 * composerHeight))} color={showAttach ? t.primary : t.textMuted} />
               </div>
             </div>
+            {sttEnabled && !globalSettings?.hideStt && composerButtonOrder === "stt-voice" && (
+              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) send(text.trim()); }} autoSend={sttAutoSend} composerHeight={composerHeight} size={42} useRealtime />
+            )}
             {input.trim() || editingMsg ? (
               <button
                 onClick={editingMsg ? saveEdit : send}
@@ -2929,7 +3192,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 </div>
               )}
               {aiApproved && activeMsg.text && (
-                <div onClick={() => openAskAI(activeMsg)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                <div onClick={(e) => { e.stopPropagation(); openAskAI(activeMsg); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <Bot size={17} color={t.primary} /><span style={{ fontSize: 15, color: t.primary }}>Ask AI about this</span>
                 </div>
               )}
@@ -2950,6 +3213,56 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </div>
         );
       })()}
+
+      {actionMenu && (() => {
+        const m = actionMenu;
+        const lpConfig = (() => {
+          try {
+            const raw = localStorage.getItem("nextext_longpress_actions");
+            const def = ["reply", "copy", "forward", "delete", "askai"];
+            if (raw == null) return def;
+            const parts = raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+            return parts.length ? parts : def;
+          } catch { return ["reply", "copy", "forward", "delete", "askai"]; }
+        })();
+        const deny = m.deletedForEveryone;
+        return (
+          <div className="nextext-overlay-backdrop" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 57, display: "flex", alignItems: "flex-end" }} onClick={() => setActionMenu(null)}>
+            <div className="nextext-overlay-sheet" style={{ background: t.surface, width: "100%", borderRadius: "18px 18px 0 0", padding: "16px 20px 24px" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Message</span>
+                <X size={20} color={t.textMuted} onClick={() => setActionMenu(null)} style={{ cursor: "pointer" }} />
+              </div>
+              {lpConfig.includes("reply") && !deny && (
+                <div onClick={() => { setActionMenu(null); replyToMessage(m); composerRef.current?.focus(); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <CornerUpLeft size={17} color={t.text} /><span style={{ fontSize: 15, color: t.text }}>Reply</span>
+                </div>
+              )}
+              {lpConfig.includes("copy") && m.text && (
+                <div onClick={() => { setActionMenu(null); copyWithToast(m.text); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <Copy size={17} color={t.text} /><span style={{ fontSize: 15, color: t.text }}>Copy</span>
+                </div>
+              )}
+              {lpConfig.includes("forward") && canForward(m) && (
+                <div onClick={() => { setActionMenu(null); setForwardMsg(m); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <Forward size={17} color={t.text} /><span style={{ fontSize: 15, color: t.text }}>Forward</span>
+                </div>
+              )}
+              {lpConfig.includes("delete") && !deny && (
+                <div onClick={() => { setActionMenu(null); deleteMessageById(m); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <Trash2 size={17} color="#FF3B30" /><span style={{ fontSize: 15, color: "#FF3B30" }}>{m.senderId === myUid ? "Delete for everyone" : "Delete for me"}</span>
+                </div>
+              )}
+              {lpConfig.includes("askai") && aiApproved && m.text && (
+                <div onClick={(e) => { e.stopPropagation(); setActionMenu(null); openAskAI(m); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <Bot size={17} color={t.primary} /><span style={{ fontSize: 15, color: t.primary }}>Ask AI about this</span>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {translateMsg && (
         <div className="nextext-overlay-backdrop" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 56, display: "flex", alignItems: "flex-end" }} onClick={() => { if (!translatingLang) { setTranslateMsg(null); setActiveMsg(null); } }}>
           <div className="nextext-overlay-sheet" style={{ background: t.surface, width: "100%", borderRadius: "18px 18px 0 0", padding: "16px 20px 24px", maxHeight: "72%", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
@@ -3005,7 +3318,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           myUid={myUid}
           contacts={convoContacts}
           myProfile={userDoc}
-          onClose={() => { if (!forwardBusy) setForwardMsg(null); }}
+          onClose={() => { if (!forwardBusy) { setForwardMsg(null); setForwardingSelection(false); } }}
           onForward={handleForwardTo}
         />
       )}
@@ -3193,6 +3506,136 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         </div>,
         document.body
       )}
-     </div>
-  );
+
+      {copiedToast && (
+        <div style={{ position: "absolute", bottom: 96, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.82)", color: "#fff", padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: 600, zIndex: 80, pointerEvents: "none", boxShadow: "0 2px 10px rgba(0,0,0,0.3)" }}>
+          Copied!
+        </div>
+      )}
+      </div>
+   );
 }
+
+// Isolated, memoized message list. Wrapped so that composer typing (which only
+// changes `input`) never re-renders the potentially-long list — the parent's
+// `messageListCtx` reference is stable across keystrokes, so this bails out.
+const MessageList = React.memo(function MessageList({ ctx }) {
+  const {
+    displayMessages, visibleMessages, visibleCount, setVisibleCount,
+    selectedMessages, selectionMode, isGroup, memberNames, globalSettings, forwardOutside,
+    theyRecordingVoice, theyTyping, t, myUid, messageWidth, replySnapMs,
+    renderOutsideActions, canForward, replyToSenderName, msgDisplayDate, formatDayLabel,
+    onRowPointerDown, onRowPointerUp, onRowPointerMove, cancelMessageLongPress,
+    enterSelectionMode, toggleSelectMessage, setForwardMsg, setActiveMsg, setContactCardMember,
+            StatusTicks, otherParticipants, msgLongPressFiredRef,
+    renderBubble,
+  } = ctx;
+  return (
+    <>
+      {visibleMessages.length > visibleCount && (
+        <div style={{ display: "flex", justifyContent: "center", margin: "8px 0 12px", flexShrink: 0 }}>
+          <button onClick={() => setVisibleCount((c) => c + (messageLimitPref === Infinity ? 200 : messageLimitPref))} style={{ fontSize: 12.5, fontWeight: 600, color: t.primary, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 16, padding: "6px 16px", cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.08)" }}>
+            Load earlier messages{visibleMessages.length - visibleCount > 0 ? ` (${visibleMessages.length - visibleCount} more)` : ""}
+          </button>
+        </div>
+      )}
+      {displayMessages.map((m, i) => {
+        const prev = displayMessages[i - 1];
+        const next = displayMessages[i + 1];
+        const groupedWithPrev = prev && prev.senderId === m.senderId && !prev.deletedForEveryone;
+        const groupedWithNext = next && next.senderId === m.senderId && !next.deletedForEveryone;
+        const isMine = m.senderId === myUid;
+        const mDate = msgDisplayDate(m);
+        const prevDate = msgDisplayDate(prev);
+        const newDay = mDate && (!prevDate || prevDate.toDateString() !== mDate.toDateString());
+        return (
+        <React.Fragment key={m.id}>
+          {newDay && (
+            <div style={{ display: "flex", justifyContent: "center", margin: "16px 0 4px", flexShrink: 0 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 12, padding: "4px 12px", boxShadow: "0 1px 2px rgba(0,0,0,0.08)", textTransform: "capitalize" }}>{formatDayLabel(mDate)}</span>
+            </div>
+          )}
+          <div className="nextext-message-in" style={{ display: "flex", justifyContent: isMine ? "flex-end" : "flex-start", marginTop: groupedWithPrev ? 2 : 12 }}>
+            {isMine && forwardOutside && renderOutsideActions(m, "left")}
+            <div
+              onClick={() => {
+                if (msgLongPressFiredRef.current) { msgLongPressFiredRef.current = false; return; }
+                if (selectionMode) { toggleSelectMessage(m); return; }
+                if (!m.deletedForEveryone) setActiveMsg(m);
+              }}
+              onPointerDown={(e) => { onRowPointerDown(e, m); }}
+              onPointerUp={(e) => { onRowPointerUp(e, m); }}
+              onPointerMove={(e) => { onRowPointerMove(e, m); }}
+              onPointerLeave={cancelMessageLongPress}
+              onContextMenu={(e) => { e.preventDefault(); if (!selectionMode) enterSelectionMode(m); }}
+              style={{
+              position: "relative", maxWidth: (messageWidth === "compact" ? "58%" : messageWidth === "standard" ? "74%" : "90%"), padding: "8px 12px", cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+              background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText,
+              borderRadius: `${groupedWithPrev ? 6 : 14}px ${groupedWithPrev ? 6 : 14}px ${groupedWithNext ? 6 : 14}px ${groupedWithNext ? 6 : 14}px`,
+              outline: selectedMessages.has(m.id) ? `2px solid ${t.primary}` : "none",
+              transform: "translate3d(0,0,0)",
+              transition: `transform ${replySnapMs}s ease`,
+              willChange: "transform",
+              touchAction: "pan-y",
+            }}>
+              {isGroup && !isMine && !groupedWithPrev && (
+                <div onClick={(e) => { e.stopPropagation(); const memberInfo = { uid: m.senderId, name: m.senderName || memberNames[m.senderId] || "…" }; setContactCardMember(memberInfo); }} style={{ fontSize: 12, fontWeight: 700, color: t.primary, marginBottom: 2, cursor: "pointer" }}>{m.senderName || memberNames[m.senderId] || "…"}</div>
+              )}
+              {(m.forwardedFrom || m.forwardedCount > 0) && (
+                <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", opacity: 0.55, marginBottom: 2 }}>
+                  {m.forwardedFrom
+                    ? (m.forwardedCount > 0 && !globalSettings?.hideForwardedCount ? `Forwarded · ${m.forwardedCount}×` : "Forwarded")
+                    : (m.forwardedCount > 0 && !globalSettings?.hideForwardedCount ? `Forwarded ${m.forwardedCount} time${m.forwardedCount === 1 ? "" : "s"}` : "Forwarded")}
+                </div>
+              )}
+              {m.replyTo && (
+              <div style={{ background: m.senderId === myUid ? "rgba(255,255,255,0.15)" : t.primaryLight, borderLeft: `3px solid ${m.senderId === myUid ? "rgba(255,255,255,0.6)" : t.primary}`, borderRadius: 6, padding: "5px 8px", marginBottom: 6, fontSize: 12 }}>
+                <div style={{ fontWeight: 700, opacity: 0.85, fontSize: 11, marginBottom: 1 }}>
+                  {replyToSenderName(m.replyTo.senderId)}
+                </div>
+                <div style={{ opacity: 0.75, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.replyTo.previewText}</div>
+              </div>
+            )}
+            {renderBubble(m)}
+            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 7, marginTop: 3 }}>
+              {!forwardOutside && canForward(m) && (
+                <Forward size={13} onClick={(e) => { e.stopPropagation(); setForwardMsg(m); }} style={{ cursor: "pointer", opacity: 0.6 }} />
+              )}
+              {!m.deletedForEveryone && (
+                <MoreVertical size={13} onClick={(e) => { e.stopPropagation(); setActiveMsg(m); }} style={{ cursor: "pointer", opacity: 0.6 }} />
+              )}
+              <span style={{ fontSize: 10.5, opacity: 0.65 }}>
+                {msgDisplayDate(m) ? msgDisplayDate(m).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "sending…"}
+              </span>
+              <StatusTicks mine={m.senderId === myUid} deliveredTo={m.deliveredTo} readBy={m.readBy} otherParticipants={otherParticipants} />
+            </div>
+            {m.reactions && Object.keys(m.reactions).length > 0 && (
+              <div style={{ display: "flex", gap: 3, marginTop: 3, justifyContent: isMine ? "flex-end" : "flex-start" }}>
+                <div style={{ display: "flex", gap: 3, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 10, padding: "2px 5px", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }}>
+                  {Object.values(m.reactions).map((e, i) => <span key={i} style={{ fontSize: 12 }}>{e}</span>)}
+                </div>
+              </div>
+            )}
+          </div>
+            {!isMine && forwardOutside && renderOutsideActions(m, "right")}
+          </div>
+          </React.Fragment>
+          );
+        })}
+        {(theyRecordingVoice || theyTyping) && (
+          <div className="nextext-message-in" style={{ display: "flex", justifyContent: "flex-start" }}>
+            <div style={{ padding: "10px 14px", borderRadius: 14, background: t.bubbleThem, boxShadow: "0 1px 2px rgba(0,0,0,0.08)", display: "flex", alignItems: "center", gap: 7 }}>
+              {theyRecordingVoice ? (
+                <>
+                  <Mic size={14} className="nextext-mic-waver" color="#2BB579" />
+                  <span style={{ fontSize: 12.5, color: t.textMuted }}>recording voice note…</span>
+                </>
+              ) : (
+                <TypingDots color={t.textMuted} />
+              )}
+            </div>
+          </div>
+        )}
+    </>
+  );
+});

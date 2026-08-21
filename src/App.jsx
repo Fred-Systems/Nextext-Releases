@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { ThemeProvider, useTheme, themes, ROTATE_INTERVALS } from "./theme/ThemeContext";
 import { useAuth } from "./firebase/useAuth";
@@ -7,7 +7,7 @@ import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
 import { useContacts } from "./firebase/contacts";
 import { useChats, purgeExpiredChatMedia, markChatRead } from "./firebase/chats";
 import { setGlobalWallpaper, fileToWallpaperDataUrl } from "./theme/wallpaper";
-import { ChevronLeft, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile } from "lucide-react";
+import { ChevronLeft, ChevronRight, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile } from "lucide-react";
 import { FONTS } from "./theme/ThemeContext";
 import Avatar from "./components/Avatar";
 import AvatarColorPicker from "./components/AvatarColorPicker";
@@ -33,7 +33,7 @@ import CalculatorScreen from "./screens/CalculatorScreen";
 import NotepadScreen from "./screens/NotepadScreen";
 import IconPickerScreen from "./screens/IconPickerScreen";
 import { getActiveProfileId, syncNativeProfile, ICON_PROFILES } from "./services/iconManager";
-import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead } from "./firebase/notifications";
+import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead, VIBRATION_PRESETS, previewNotificationFeedback } from "./firebase/notifications";
 import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
 import UpdatePrompt from "./components/UpdatePrompt";
@@ -67,7 +67,7 @@ function ThemeSheet({ current, onSelect, onClose }) {
   );
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100000, display: "flex", alignItems: "flex-end" }} onClick={onClose}>
+    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100000, display: "flex", alignItems: "flex-end" }} onClick={onClose}>
       <div style={{ background: t.surface, width: "100%", borderRadius: "20px 20px 0 0", padding: "20px 20px 30px", maxHeight: "92vh", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", WebkitOverflowScrolling: "touch" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
           <h3 style={{ margin: 0, color: t.text, fontSize: 18 }}>Theme</h3>
@@ -180,7 +180,7 @@ function NameSetting({ myUid, userDoc, globalSettings }) {
     }
   };
 
-  if (blocked) {
+if (blocked) {
     return (
       <div style={{ marginTop: 20, marginBottom: 20 }}>
         <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, padding: "10px 12px", borderRadius: 10, background: t.primaryLight }}>
@@ -319,7 +319,71 @@ function NotificationsRow({ myUid, t }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts }) {
+// Notification sound + vibration picker. Extracted into its own component so
+// its useState hooks live at THIS component's top level (not inside the
+// collapsed SectionCard IIFE in SettingsScreen) — calling hooks inside a nested
+// function/IIFE violates the Rules of Hooks and threw React #310 ("rendered
+// fewer hooks than expected") whenever the section expanded/collapsed.
+function NotificationPrefsRow({ t }) {
+  const [vibKey, setVibKey] = useState(() => localStorage.getItem("nextext_notif_vibration") || "default");
+  const [soundKey, setSoundKey] = useState(() => localStorage.getItem("nextext_notif_sound") || "default");
+  const [vibOn, setVibOn] = useState(() => localStorage.getItem("nextext_notif_vibrate_on") !== "false");
+  const [soundOn, setSoundOn] = useState(() => localStorage.getItem("nextext_notif_sound_on") !== "false");
+  const vibOptions = [
+    { key: "default", label: "Default (2 short)" },
+    { key: "short", label: "Short (1 buzz)" },
+    { key: "long", label: "Long (triple)" },
+    { key: "heartbeat", label: "Heartbeat" },
+    { key: "none", label: "No vibration" },
+  ];
+  const soundOptions = [
+    { key: "default", label: "Default system sound" },
+    { key: "none", label: "No sound" },
+    ...PING_SOUNDS.map((s) => ({ key: s.id, label: s.label })),
+  ];
+  const Toggle = ({ label, value, onChange }) => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderTop: `1px solid ${t.border}` }}>
+      <span style={{ fontSize: 13.5, color: t.text, fontWeight: 600 }}>{label}</span>
+      <div onClick={() => onChange(!value)} style={{ width: 46, height: 26, borderRadius: 13, background: value ? t.primary : t.border, position: "relative", cursor: "pointer", transition: "background 0.2s", flexShrink: 0 }}>
+        <div style={{ position: "absolute", top: 3, left: value ? 23 : 3, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+      </div>
+    </div>
+  );
+  const Picker = ({ label, value, options, onPick }) => (
+    <div style={{ padding: "10px 16px", borderTop: `1px solid ${t.border}` }}>
+      <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 6 }}>{label}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {options.map((o) => (
+          <div
+            key={o.key}
+            onClick={() => onPick(o.key)}
+            style={{ padding: "7px 12px", borderRadius: 16, fontSize: 12.5, fontWeight: value === o.key ? 700 : 500, cursor: "pointer", background: value === o.key ? t.primary : t.surface, color: value === o.key ? t.bubbleMeText : t.text, border: `1px solid ${value === o.key ? t.primary : t.border}` }}
+          >
+            {o.label}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+  const preview = (vk, sk) => {
+    const p = vibOn ? (VIBRATION_PRESETS[vk] || VIBRATION_PRESETS.default) : null;
+    const s = soundOn ? sk : "none";
+    previewNotificationFeedback(p, s);
+  };
+  return (
+    <>
+      <Toggle label="Vibrate on new message" value={vibOn} onChange={(v) => { setVibOn(v); try { localStorage.setItem("nextext_notif_vibrate_on", String(v)); } catch {} if (v) preview(vibKey, soundKey); }} />
+      <Toggle label="Play sound on new message" value={soundOn} onChange={(v) => { setSoundOn(v); try { localStorage.setItem("nextext_notif_sound_on", String(v)); } catch {} if (v) preview(soundKey, soundKey); }} />
+      <Picker label="Vibration style" value={vibKey} options={vibOptions} onPick={(k) => { setVibKey(k); try { localStorage.setItem("nextext_notif_vibration", k); } catch {} preview(k, soundKey); }} />
+      <Picker label="Ping sound" value={soundKey} options={soundOptions} onPick={(k) => { setSoundKey(k); try { localStorage.setItem("nextext_notif_sound", k); } catch {} preview(vibKey, k); }} />
+      <div style={{ padding: "4px 16px 12px", fontSize: 11.5, color: t.textMuted }}>
+        Tip: open a chat, tap the contact's name → "Notifications for …" to give one person a different ping/vibration. Tap a style above to feel/hear it instantly.
+      </div>
+    </>
+  );
+}
+
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -335,6 +399,81 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const appLockPassRef = useRef(null);
   const sysConfig = useSystemConfigHook();
   const globalSettings = useGlobalSettings();
+  const [settingsRerenderTick, setSettingsRerenderTick] = useState(0);
+  const forceSettingsRerender = () => setSettingsRerenderTick((x) => x + 1);
+
+  // Login & security: change password / change email (email/password accounts only).
+  const [credModal, setCredModal] = useState(null); // "password" | "email" | null
+  const [credOldPass, setCredOldPass] = useState("");
+  const [credNewPass, setCredNewPass] = useState("");
+  const [credNewEmail, setCredNewEmail] = useState("");
+  const [credBusy, setCredBusy] = useState(false);
+  const [credError, setCredError] = useState("");
+  const [credSuccess, setCredSuccess] = useState("");
+  const isEmailAccount = !!(auth && auth.isEmailPasswordAccount && auth.isEmailPasswordAccount());
+
+  const submitCredChange = async () => {
+    setCredError("");
+    setCredSuccess("");
+    setCredBusy(true);
+    try {
+      if (credModal === "password") {
+        if (!credOldPass || !credNewPass) throw new Error("Enter both your current and new password.");
+        if (credNewPass.length < 6) throw new Error("New password must be at least 6 characters.");
+        await auth.changePassword(credOldPass, credNewPass);
+        setCredSuccess("Password changed successfully.");
+        setCredOldPass(""); setCredNewPass("");
+      } else if (credModal === "email") {
+        if (!credOldPass || !credNewEmail) throw new Error("Enter your password and the new email.");
+        await auth.changeEmail(credNewEmail, credOldPass);
+        setCredSuccess("Email changed successfully.");
+        setCredOldPass(""); setCredNewEmail("");
+      }
+    } catch (e) {
+      setCredError(e?.message || "Something went wrong. Please try again.");
+    } finally {
+      setCredBusy(false);
+    }
+  };
+  const readList = (key, fallback) => {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback.slice();
+    return raw.split(",").map((s) => s.trim()).filter(Boolean);
+  };
+  const toggleList = (key, value, fallback) => {
+    const list = readList(key, fallback);
+    const next = list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+    localStorage.setItem(key, next.join(","));
+    forceSettingsRerender();
+  };
+  const ActionChips = ({ title, desc, storageKey, options, fallback, lockedKeys = [] }) => (
+    <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+      <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>{title}</div>
+      {desc && <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1, marginBottom: 8 }}>{desc}</div>}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: desc ? 0 : 8 }}>
+        {options.map((opt) => {
+          const active = readList(storageKey, fallback).includes(opt.key);
+          const locked = lockedKeys.includes(opt.key);
+          return (
+            <div
+              key={opt.key}
+              onClick={() => { if (!locked) toggleList(storageKey, opt.key, fallback); }}
+              style={{
+                padding: "7px 12px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: locked ? "not-allowed" : "pointer",
+                background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text,
+                border: `1px solid ${active ? t.primary : t.border}`, opacity: locked ? 0.5 : 1,
+              }}
+            >{opt.label}{locked ? " (AI only)" : ""}</div>
+          );
+        })}
+      </div>
+    </div>
+  );
+  const [sttEnabled, setSttEnabled] = useState(() => localStorage.getItem("nextext_stt_enabled") !== "off");
+  const [sttAutoSend, setSttAutoSend] = useState(() => localStorage.getItem("nextext_stt_autosend") === "on");
+  const [sttShowInterim, setSttShowInterim] = useState(() => localStorage.getItem("nextext_stt_show_interim") === "on");
+  const [hideVersion, setHideVersion] = useState(() => localStorage.getItem("nextext_hide_version") === "on");
+  const [useCustomPrompt, setUseCustomPrompt] = useState(() => localStorage.getItem("nextext_ai_custom_instructions_enabled") !== "off");
   const [aiRequestStatus, setAiRequestStatus] = useState("");
   const CONTACT_SORT_OPTIONS = [
     { key: "alpha", label: "Alphabetical" },
@@ -381,6 +520,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const customStatusInputRef = useRef(null);
   const [customStatusSaved, setCustomStatusSaved] = useState(false);
   const [openSections, setOpenSections] = useState({ accountActions: true });
+  const [appearanceSubs, setAppearanceSubs] = useState({});
   const [resetPasswordModal, setResetPasswordModal] = useState(false);
   const [resetPasswordInput, setResetPasswordInput] = useState("");
   const [disableLockModal, setDisableLockModal] = useState(false);
@@ -443,6 +583,21 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   // Memoized so its identity stays stable across App re-renders — defining it
   // inline would unmount/remount every card (losing input focus) on any state
   // change, e.g. the admin tech-stack editor's first keystroke.
+  const renderSub = (title, children, defaultOpen = false) => {
+    const open = (appearanceSubs && appearanceSubs[title]) ?? defaultOpen;
+    return (
+      <div style={{ borderTop: `1px solid ${t.border}` }}>
+        <div
+          onClick={() => setAppearanceSubs((p) => ({ ...(p || {}), [title]: !open }))}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", cursor: "pointer" }}
+        >
+          <span style={{ fontWeight: 700, color: t.text, fontSize: 14 }}>{title}</span>
+          <span style={{ color: t.textMuted, fontSize: 12 }}>{open ? "▲" : "▼"}</span>
+        </div>
+        {open && <div style={{ padding: "2px 0 10px" }}>{children}</div>}
+      </div>
+    );
+  };
   const SectionCard = useMemo(() => ({ title, emoji, children, sectionKey }) => {
     const isOpen = sectionKey ? (openSections?.[sectionKey] ?? false) : true;
     // Category headers are dark grey (#1E1E1E) on light themes for a crisp
@@ -475,12 +630,38 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   ];
 
   const moveTab = (idx, dir) => {
+    if (navConfigLocked) return;
     const next = [...navConfig];
     const swap = idx + dir;
     if (swap < 0 || swap >= next.length) return;
     [next[idx], next[swap]] = [next[swap], next[idx]];
     setNavConfig(next);
   };
+
+  // Pointer-based drag-to-reorder for the bottom bar layout editor.
+  const [dragIndex, setDragIndex] = useState(null);
+  const rowRefs = useRef({});
+  const onEditorPointerMove = (e) => {
+    if (dragIndex == null || navConfigLocked) return;
+    const y = e.clientY;
+    const keys = navConfig.map((n) => n.key);
+    let target = dragIndex;
+    for (let i = 0; i < keys.length; i++) {
+      const el = rowRefs.current[keys[i]];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (y < r.top + r.height / 2) { target = i; break; }
+      target = i;
+    }
+    if (target !== dragIndex) {
+      const next = [...navConfig];
+      const [m] = next.splice(dragIndex, 1);
+      next.splice(target, 0, m);
+      setNavConfig(next);
+      setDragIndex(target);
+    }
+  };
+  const onEditorPointerUp = () => setDragIndex(null);
 
   const toggleTab = (key) => {
     const isActive = navConfig.some((t) => t.key === key);
@@ -515,6 +696,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         <div style={{ display: "flex", alignItems: "center", padding: "calc(16px + var(--safe-top)) 16px 16px", gap: 12, background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
           <ChevronLeft size={22} color={t.text} onClick={onBack} style={{ cursor: "pointer" }} />
           <span style={{ color: t.text, fontWeight: 700, fontSize: 18 }}>Settings</span>
+          {!hideVersion && <span style={{ marginLeft: "auto", fontSize: 12.5, fontWeight: 700, color: t.primary }}>v{getCurrentVersion()}</span>}
         </div>
       <div className="nx-scroll" style={{ padding: "12px 16px", paddingBottom: 100 }}>
 
@@ -535,6 +717,25 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           <NameSetting myUid={myUid} userDoc={userDoc} globalSettings={globalSettings} />
           <PhoneNumberSetting myUid={myUid} />
         </SectionCard>
+
+        {isEmailAccount && (
+          <SectionCard title="Login & Security" emoji="🔐" sectionKey="loginSecurity">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", cursor: "pointer", borderBottom: `1px solid ${t.border}` }} onClick={() => { setCredError(""); setCredSuccess(""); setCredOldPass(""); setCredNewPass(""); setCredNewEmail(""); setCredModal("password"); }}>
+              <div>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 14.5 }}>Change password</div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>Requires your current password</div>
+              </div>
+              <ChevronRight size={18} color={t.textMuted} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", cursor: "pointer" }} onClick={() => { setCredError(""); setCredSuccess(""); setCredOldPass(""); setCredNewPass(""); setCredNewEmail(""); setCredModal("email"); }}>
+              <div>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 14.5 }}>Change email</div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>Requires your password to confirm</div>
+              </div>
+              <ChevronRight size={18} color={t.textMuted} />
+            </div>
+          </SectionCard>
+        )}
 
         {/* ═══ CUSTOM STATUS / ABOUT ME ═══ */}
         <SectionCard title="About Me" emoji="💬" sectionKey="about">
@@ -645,71 +846,227 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           </div>
         </SectionCard>
 
+        {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}
+        <SectionCard title="Notification Sound & Vibration" emoji="🔔" sectionKey="notifprefs">
+          <NotificationsRow myUid={myUid} t={t} />
+          <NotificationPrefsRow t={t} />
+        </SectionCard>
+
         {/* ═══ APPEARANCE & INTERFACE ═══ */}
         <SectionCard title="Appearance & Interface" emoji="🎨" sectionKey="appearance">
-          <Row icon={<Palette size={18} color={t.primary} />} label="Theme" sub={themes[themeKey]?.name || "Default Theme"} onClick={onOpenTheme} dataTour="theme" />
-          <Row icon={<ImageIcon size={18} color={t.primary} />} label="Default chat background" sub={wallpaperSaved ? "Saved ✓" : "Applies to chats without their own background"} onClick={() => wallpaperInputRef.current?.click()} />
-          <input ref={wallpaperInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleGlobalWallpaper} />
+          {renderSub("Theme & Display", (<>
+            <Row icon={<Palette size={18} color={t.primary} />} label="Theme" sub={themes[themeKey]?.name || "Default Theme"} onClick={onOpenTheme} dataTour="theme" />
+            <Row icon={<ImageIcon size={18} color={t.primary} />} label="Default chat background" sub={wallpaperSaved ? "Saved ✓" : "Applies to chats without their own background"} onClick={() => wallpaperInputRef.current?.click()} />
+            <input ref={wallpaperInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleGlobalWallpaper} />
 
-          {/* Launch splash screen toggle */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Enable Launch Splash Screen</div>
-              <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Show the 2.5s cinematic boot animation on app launch.</div>
+            {/* Launch splash screen toggle */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Enable Launch Splash Screen</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Show the 2.5s cinematic boot animation on app launch.</div>
+              </div>
+              <div
+                onClick={() => { const next = !(showSplash ?? true); setShowSplash(next); localStorage.setItem("nextext_splash_enabled", next ? "on" : "off"); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: (showSplash ?? true) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: showSplash ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
             </div>
-            <div
-              onClick={() => { const next = !(showSplash ?? true); setShowSplash(next); localStorage.setItem("nextext_splash_enabled", next ? "on" : "off"); }}
-              style={{ width: 46, height: 26, borderRadius: 13, background: (showSplash ?? true) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-            >
-              <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: showSplash ? 23 : 3, transition: "left 0.15s" }} />
-            </div>
-          </div>
+          </>), true)}
 
-          {/* Fullscreen mode toggle */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Full Screen Mode</div>
-              <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Hide status bar and navigation for immersive experience. (Only available on some devices)</div>
+          {!globalSettings?.hideStt && renderSub("Speech to Text", (<>
+            {/* Voice-to-Text toggle */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Speech to Text</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Show a mic in every chat and in Ask AI to speak your messages. What you say is turned into text you can review and send.</div>
+              </div>
+              <div
+                onClick={() => { const next = !sttEnabled; setSttEnabled(next); localStorage.setItem("nextext_stt_enabled", next ? "on" : "off"); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: sttEnabled ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttEnabled ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
             </div>
-            <div
-              onClick={() => {
-                const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
-                if (isFull) {
-                  if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
-                  else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-                } else {
-                  const el = document.documentElement;
-                  if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
-                  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-                }
-              }}
-              style={{ width: 46, height: 26, borderRadius: 13, background: (document.fullscreenElement || document.webkitFullscreenElement) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-            >
-              <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (document.fullscreenElement || document.webkitFullscreenElement) ? 23 : 3, transition: "left 0.15s" }} />
-            </div>
-          </div>
 
-          {/* Font */}
-          <div style={{ padding: "13px 0" }}>
-            <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 6 }}>Font</div>
-            <select value={appFontId} onChange={(e) => setAppFontId(e.target.value)} style={{ width: "100%", padding: "10px 14px", paddingRight: 16, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, background: t.bg, color: t.text, cursor: "pointer" }}>
-              {FONTS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
-            </select>
-          </div>
-
-          {/* App-wide text scaling */}
-          <div style={{ padding: "13px 0" }}>
-            <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>App size</div>
-            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Adjust if things look too small or too large.</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <input type="range" min="0.6" max="1.6" step="0.05" value={uiScale} onChange={(e) => setUiScale(Number(e.target.value))} style={{ flex: 1, accentColor: t.primary }} />
-              <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{Math.round(uiScale * 100)}%</span>
-              <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: t.textMuted, cursor: "pointer" }}>
-                <input type="checkbox" checked={uiScale === 1} onChange={() => setUiScale(1)} style={{ accentColor: t.primary, width: 15, height: 15, cursor: "pointer" }} />
-                Default
-              </label>
+            {/* Auto-send transcribed messages toggle */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Composer button order</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Choose whether Speech-to-Text or Voice Note appears next to the message box.</div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["stt-voice", "voice-stt"].map((key) => (
+                    <div key={key} onClick={() => { setComposerButtonOrder(key); localStorage.setItem("nextext_composer_button_order", key); }} style={{ flex: 1, padding: "7px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: composerButtonOrder === key ? t.primary : t.bg, color: composerButtonOrder === key ? t.bubbleMeText : t.text, border: `1px solid ${composerButtonOrder === key ? t.primary : t.border}` }}>{key === "stt-voice" ? "STT → Voice" : "Voice → STT"}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Forward arrow placement */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Auto-send transcribed text</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Send your speech immediately when you stop talking instead of reviewing it first.</div>
+                </div>
+                <div
+                  onClick={() => { const next = localStorage.getItem("nextext_stt_autosend") !== "on"; localStorage.setItem("nextext_stt_autosend", next ? "on" : "off"); forceSettingsRerender(); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_stt_autosend") === "on" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_stt_autosend") === "on" ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            )}
+            {/* Live transcription preview */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Show live transcription preview</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>While dictating, show the words being detected above the mic. Off by default to keep the chat clean.</div>
+                </div>
+                <div
+                  onClick={() => { const next = !sttShowInterim; setSttShowInterim(next); localStorage.setItem("nextext_stt_show_interim", next ? "on" : "off"); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: sttShowInterim ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttShowInterim ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            )}
+          </>))}
+          {renderSub("Chat Performance", (<>
+            {/* Messages shown in a chat — performance vs. history trade-off */}
+            <div style={{ padding: "13px 0" }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Messages loaded at once</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>
+                How many recent messages stay on screen. Fewer messages = a much faster, smoother chat — scrolling and swiping replies feel instant even in very long conversations. You can always tap "Load earlier" to reveal older ones.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {[
+                  { id: "25", label: "25" },
+                  { id: "50", label: "50" },
+                  { id: "100", label: "100" },
+                  { id: "200", label: "200" },
+                  { id: "all", label: "All" },
+                ].map((opt) => {
+                  const active = (localStorage.getItem("nextext_message_limit") || "50") === opt.id;
+                  return (
+                    <div
+                      key={opt.id}
+                      onClick={() => { localStorage.setItem("nextext_message_limit", opt.id); forceSettingsRerender(); }}
+                      style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text, border: `1px solid ${active ? t.primary : t.border}` }}
+                    >
+                      {opt.label}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 6 }}>
+                Tip: 50 is the sweet spot for speed. Pick "All" only if you need the full history visible at once.
+              </div>
             </div>
-          </div>
+            {/* Hide app version number */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Hide app version</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Don't show the version number (e.g. v1.6.45) in the top-right of Settings.</div>
+              </div>
+              <div
+                onClick={() => { const next = !hideVersion; setHideVersion(next); localStorage.setItem("nextext_hide_version", next ? "on" : "off"); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: hideVersion ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: hideVersion ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+          </>))}
+
+          {renderSub("Message Actions", (<>
+            {/* Forward arrow placement */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Forward arrows outside messages</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Show a forward button beside each message. Turn off to keep it inside the message bubble.</div>
+              </div>
+              <div
+                onClick={() => { const next = localStorage.getItem("nextext_forward_arrows_outside") !== "false"; const val = next ? "off" : "on"; localStorage.setItem("nextext_forward_arrows_outside", val); forceSettingsRerender(); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_forward_arrows_outside") !== "false" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_forward_arrows_outside") !== "false" ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+            <ActionChips
+              title="Buttons outside messages"
+              desc="Choose which action buttons appear beside each message. Forward is always shown."
+              storageKey="nextext_outside_actions"
+              fallback={userDoc?.aiApproved ? ["forward", "askai"] : ["forward"]}
+              lockedKeys={[]}
+              options={[
+                { key: "forward", label: "Forward" },
+                { key: "copy", label: "Copy" },
+                ...(userDoc?.aiApproved ? [{ key: "askai", label: "Ask AI" }] : []),
+              ]}
+            />
+            <ActionChips
+              title="Long-press menu actions"
+              desc="Choose which actions appear when you hold a message."
+              storageKey="nextext_longpress_actions"
+              fallback={userDoc?.aiApproved ? ["reply", "copy", "forward", "delete", "askai"] : ["reply", "copy", "forward", "delete"]}
+              lockedKeys={[]}
+              options={[
+                { key: "reply", label: "Reply" },
+                { key: "copy", label: "Copy" },
+                { key: "forward", label: "Forward" },
+                { key: "delete", label: "Delete" },
+                ...(userDoc?.aiApproved ? [{ key: "askai", label: "Ask AI" }] : []),
+              ]}
+            />
+          </>))}
+          {renderSub("Text, Fonts & Animations", (<>
+            {/* Fullscreen mode toggle */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Full Screen Mode</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Hide status bar and navigation for immersive experience. (Only available on some devices)</div>
+              </div>
+              <div
+                onClick={() => {
+                  const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
+                  if (isFull) {
+                    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+                    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+                  } else {
+                    const el = document.documentElement;
+                    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+                    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+                  }
+                }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: (document.fullscreenElement || document.webkitFullscreenElement) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (document.fullscreenElement || document.webkitFullscreenElement) ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Font */}
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 6 }}>Font</div>
+              <select value={appFontId} onChange={(e) => setAppFontId(e.target.value)} style={{ width: "100%", padding: "10px 14px", paddingRight: 16, boxSizing: "border-box", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, background: t.bg, color: t.text, cursor: "pointer" }}>
+                {FONTS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+              </select>
+            </div>
+
+            {/* App-wide text scaling */}
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>App size</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Adjust if things look too small or too large.</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <input type="range" min="0.6" max="1.6" step="0.05" value={uiScale} onChange={(e) => setUiScale(Number(e.target.value))} style={{ flex: 1, accentColor: t.primary }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{Math.round(uiScale * 100)}%</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: t.textMuted, cursor: "pointer" }}>
+                  <input type="checkbox" checked={uiScale === 1} onChange={() => setUiScale(1)} style={{ accentColor: t.primary, width: 15, height: 15, cursor: "pointer" }} />
+                  Default
+                </label>
+              </div>
+            </div>
 
           {/* Chat text scaling */}
           <div style={{ padding: "13px 0" }}>
@@ -849,10 +1206,10 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </div>
             {swipeAnimationOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Slide animation when swiping between tabs.</div>}
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Edge swipe bounce</span>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Overscroll bounce</span>
               <Toggle on={swipeBounce} onClick={() => setSwipeBounce(!swipeBounce)} />
             </div>
-            {swipeBounce && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Bouncy effect when swiping past the first or last tab.</div>}
+            {swipeBounce && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Shows the bounce/glow indicator when you scroll past the top or bottom of a list, and when swiping past the first or last tab.</div>}
             {swipeAnimationOn && (
               <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
                 {[
@@ -884,58 +1241,92 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               </div>
             )}
           </div>
+          </>))}
 
-          {/* Search bar size */}
-          <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-            <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Main search bar size</div>
-            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Adjust the scale and height of the top search bar.</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <input type="range" min="0.6" max="2.0" step="0.05" value={searchBarScale} onChange={(e) => setSearchBarScale(Number(e.target.value))} style={{ flex: 1, accentColor: t.primary }} />
-              <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{searchBarScale === 1 ? "Default" : `${Math.round(searchBarScale * 100)}%`}</span>
-              <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: t.textMuted, cursor: "pointer" }}>
-                <input type="checkbox" checked={searchBarScale === 1} onChange={() => setSearchBarScale(1)} style={{ accentColor: t.primary, width: 15, height: 15, cursor: "pointer" }} />
-                Default
-              </label>
+          {renderSub("Search & Composer", (<>
+            {/* Search bar size */}
+            <div style={{ padding: "13px 0" }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Main search bar size</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Adjust the scale and height of the top search bar.</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <input type="range" min="0.6" max="2.0" step="0.05" value={searchBarScale} onChange={(e) => setSearchBarScale(Number(e.target.value))} style={{ flex: 1, accentColor: t.primary }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{searchBarScale === 1 ? "Default" : `${Math.round(searchBarScale * 100)}%`}</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: t.textMuted, cursor: "pointer" }}>
+                  <input type="checkbox" checked={searchBarScale === 1} onChange={() => setSearchBarScale(1)} style={{ accentColor: t.primary, width: 15, height: 15, cursor: "pointer" }} />
+                  Default
+                </label>
+              </div>
             </div>
-          </div>
 
-          {/* Message box height */}
-          <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-            <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Message box size</div>
-            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Make the message input taller, shorter, or easier to tap.</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <input type="range" min="0.6" max="2.5" step="0.05" value={composerHeight} onChange={(e) => setComposerHeight(Number(e.target.value))} style={{ flex: 1, accentColor: t.primary }} />
-              <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{composerHeight === 1 ? "Default" : `${Math.round(composerHeight * 100)}%`}</span>
-              <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: t.textMuted, cursor: "pointer" }}>
-                <input type="checkbox" checked={composerHeight === 1} onChange={() => setComposerHeight(1)} style={{ accentColor: t.primary, width: 15, height: 15, cursor: "pointer" }} />
-                Default
-              </label>
+            {/* Message box height */}
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Message box size</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Make the message input taller, shorter, or easier to tap.</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <input type="range" min="0.6" max="2.5" step="0.05" value={composerHeight} onChange={(e) => setComposerHeight(Number(e.target.value))} style={{ flex: 1, accentColor: t.primary }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{composerHeight === 1 ? "Default" : `${Math.round(composerHeight * 100)}%`}</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: t.textMuted, cursor: "pointer" }}>
+                  <input type="checkbox" checked={composerHeight === 1} onChange={() => setComposerHeight(1)} style={{ accentColor: t.primary, width: 15, height: 15, cursor: "pointer" }} />
+                  Default
+                </label>
+              </div>
             </div>
-          </div>
+          </>))}
 
-          {/* Bottom bar customizer */}
-          <div style={{ padding: "13px 0" }}>
-            <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Bottom bar layout</div>
-            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10 }}>Toggle and reorder tabs on the bottom navigation bar. Chats is always on.</div>
-            {ALL_TABS.map((tabDef) => {
-              const activeIdx = navConfig.findIndex((n) => n.key === tabDef.key);
-              const isActive = activeIdx !== -1;
-              return (
-                <div key={tabDef.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${t.border}` }}>
-                  <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: isActive ? t.text : t.textMuted, opacity: isActive ? 1 : 0.5 }}>{tabDef.label}{tabDef.mandatory ? " (always on)" : ""}</span>
-                  {!tabDef.mandatory && <Toggle on={isActive} onClick={() => toggleTab(tabDef.key)} />}
-                  {tabDef.mandatory && <div style={{ width: 46 }} />}
-                  {isActive && (
-                    <div style={{ display: "flex", gap: 4 }}>
-                      <div onClick={() => moveTab(activeIdx, -1)} style={{ width: 26, height: 26, borderRadius: 6, background: activeIdx > 0 ? t.primaryLight : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: activeIdx > 0 ? "pointer" : "default", fontSize: 14, color: activeIdx > 0 ? t.primary : t.textMuted }}>↑</div>
-                      <div onClick={() => moveTab(activeIdx, 1)} style={{ width: 26, height: 26, borderRadius: 6, background: activeIdx < navConfig.length - 1 ? t.primaryLight : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: activeIdx < navConfig.length - 1 ? "pointer" : "default", fontSize: 14, color: activeIdx < navConfig.length - 1 ? t.primary : t.textMuted }}>↓</div>
-                    </div>
-                  )}
+          {renderSub("Navigation & Bottom Bar", (<>
+            {/* Bottom bar customizer */}
+            <div style={{ padding: "13px 0" }} onPointerMove={onEditorPointerMove} onPointerUp={onEditorPointerUp} onPointerLeave={onEditorPointerUp}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Bottom bar layout</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10 }}>
+                {navConfigLocked
+                  ? "Tab order is locked. Unlock to drag tabs to reorder."
+                  : "Drag the ⠿ handle to reorder tabs, or use the arrows. Chats is always on."}
+              </div>
+              {ALL_TABS.map((tabDef) => {
+                const activeIdx = navConfig.findIndex((n) => n.key === tabDef.key);
+                const isActive = activeIdx !== -1;
+                return (
+                  <div
+                    key={tabDef.key}
+                    ref={(el) => { if (el) rowRefs.current[tabDef.key] = el; }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${t.border}`, opacity: isActive ? 1 : 0.5, background: dragIndex === activeIdx ? t.primaryLight : "transparent" }}
+                  >
+                    <span
+                      onPointerDown={(e) => { if (navConfigLocked || !isActive) return; e.preventDefault(); setDragIndex(activeIdx); }}
+                      title="Drag to reorder"
+                      style={{ cursor: navConfigLocked || !isActive ? "default" : "grab", color: t.textMuted, fontSize: 18, lineHeight: 1, touchAction: "none", userSelect: "none" }}
+                    >⠿</span>
+                    <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: isActive ? t.text : t.textMuted }}>{tabDef.label}{tabDef.mandatory ? " (always on)" : ""}</span>
+                    {!tabDef.mandatory && <Toggle on={isActive} onClick={() => navConfigLocked ? null : toggleTab(tabDef.key)} disabled={navConfigLocked} />}
+                    {tabDef.mandatory && <div style={{ width: 46 }} />}
+                    {isActive && (
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <div onClick={() => moveTab(activeIdx, -1)} style={{ width: 26, height: 26, borderRadius: 6, background: navConfigLocked || activeIdx <= 0 ? "transparent" : t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: navConfigLocked || activeIdx <= 0 ? "default" : "pointer", fontSize: 14, color: navConfigLocked || activeIdx <= 0 ? t.textMuted : t.primary }}>↑</div>
+                        <div onClick={() => moveTab(activeIdx, 1)} style={{ width: 26, height: 26, borderRadius: 6, background: navConfigLocked || activeIdx >= navConfig.length - 1 ? "transparent" : t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: navConfigLocked || activeIdx >= navConfig.length - 1 ? "default" : "pointer", fontSize: 14, color: navConfigLocked || activeIdx >= navConfig.length - 1 ? t.textMuted : t.primary }}>↓</div>
+                        {navConfigLocked && <Lock size={14} color={t.textMuted} style={{ marginLeft: 4, marginTop: 2 }} />}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+                <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Lock tab order</span>
+                <Toggle on={navConfigLocked} onClick={() => setNavConfigLocked(!navConfigLocked)} />
+              </div>
+              <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Prevent accidental reordering of bottom bar tabs.</div>
+              <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Launch page</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Choose which tab the app opens on when launched.</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {["chats", "status", "groups", "settings"].map((key) => (
+                    <div key={key} onClick={() => onLaunchPageSelect ? onLaunchPageSelect(key) : (setLaunchPage(key), localStorage.setItem("nextext_launch_page", key))} style={{ flex: 1, minWidth: 70, padding: "8px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: launchPage === key ? t.primary : t.bg, color: launchPage === key ? t.bubbleMeText : t.text, border: `1px solid ${launchPage === key ? t.primary : t.border}` }}>{key.charAt(0).toUpperCase() + key.slice(1)}</div>
+                  ))}
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            </div>
+          </>))}
 
+          {renderSub("Lists & Other", (<>
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Link previews" sub={linkPreviewsOn ? "On" : "Off"} right={<Toggle on={linkPreviewsOn} onClick={() => { const next = !linkPreviewsOn; setLinkPreviewsOn(next); localStorage.setItem("nextext_link_previews", next ? "on" : "off"); }} />} />
           <Row icon={<CircleDot size={18} color={t.primary} />} label="Scroll-to-bottom button" sub={showScrollDown ? "On" : "Off"} right={<Toggle on={showScrollDown} onClick={() => setShowScrollDown(!showScrollDown)} />} />
           {showScrollDown && (
@@ -1016,6 +1407,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           </div>
           <Row icon={<Search size={18} color={t.primary} />} label="Show search button" sub={searchMode === "button" ? "Search icon hides bar" : "Search bar always visible"} right={<Toggle on={searchMode === "button"} onClick={() => { const next = searchMode === "button" ? "visible" : "button"; setSearchMode(next); localStorage.setItem("nextext_search_mode", next); }} />} />
           <Row icon={<Users size={18} color={t.primary} />} label="Show top bar" sub={topBarVisible ? "Visible" : "Hidden"} right={<Toggle on={topBarVisible} onClick={() => { const next = !topBarVisible; setTopBarVisible(next); localStorage.setItem("nextext_top_bar_visible", String(next)); }} />} />
+          </>))}
         </SectionCard>
 
         {/* ═══ AI CONTROLS ═══ */}
@@ -1046,6 +1438,23 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                     ))}
                   </div>
                 </div>
+                 <div style={{ padding: "12px 0", borderTop: `1px solid ${t.border}` }}>
+                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                     <div style={{ fontWeight: 600, color: t.text, fontSize: 14 }}>Custom Instructions (optional)</div>
+                     <label style={{ position: "relative", display: "inline-block", width: 44, height: 24, flexShrink: 0 }}>
+                       <input type="checkbox" checked={useCustomPrompt} onChange={(e) => { const v = e.target.checked ? "on" : "off"; setUseCustomPrompt(e.target.checked); try { localStorage.setItem("nextext_ai_custom_instructions_enabled", v); } catch {} }} style={{ opacity: 0, width: 0, height: 0 }} />
+                       <span style={{ position: "absolute", cursor: "pointer", inset: 0, background: useCustomPrompt ? t.primary : "#ccc", borderRadius: 24, transition: "background .2s" }}><span style={{ position: "absolute", height: 18, width: 18, left: useCustomPrompt ? 23 : 3, top: 3, background: "#fff", borderRadius: "50%", transition: "left .2s" }} /></span>
+                     </label>
+                   </div>
+                   <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Add instructions for how the AI should behave, answer, or format responses. These are prepended to the AI's system prompt. Enabled by default.</div>
+                   <textarea
+                     defaultValue={localStorage.getItem("nextext_ai_custom_instructions") || ""}
+                     onChange={(e) => { try { localStorage.setItem("nextext_ai_custom_instructions", e.target.value); } catch {} }}
+                     placeholder="e.g. Always answer in short paragraphs. Use bullet points for lists. Be concise but friendly."
+                     style={{ width: "100%", minHeight: 80, padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none" }}
+                   />
+                   <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 6 }}>Saved locally on this device. Clear to use defaults.</div>
+                 </div>
               </>
             ) : (
               <div style={{ padding: "12px 0", textAlign: "center" }}>
@@ -1216,6 +1625,30 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           </div>
         </div>
 )}
+      {credModal && (
+        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999999, padding: 20 }} onClick={() => !credBusy && setCredModal(null)}>
+          <div style={{ background: t.surface, borderRadius: 16, padding: 18, width: "100%", maxWidth: 340, boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: t.text, marginBottom: 14 }}>{credModal === "password" ? "Change password" : "Change email"}</div>
+            {credModal === "password" ? (
+              <>
+                <input type="password" placeholder="Current password" value={credOldPass} onChange={(e) => setCredOldPass(e.target.value)} style={{ width: "100%", padding: "11px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, boxSizing: "border-box", marginBottom: 10, background: t.bg, color: t.text }} />
+                <input type="password" placeholder="New password (min 6 chars)" value={credNewPass} onChange={(e) => setCredNewPass(e.target.value)} style={{ width: "100%", padding: "11px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, boxSizing: "border-box", background: t.bg, color: t.text }} />
+              </>
+            ) : (
+              <>
+                <input type="password" placeholder="Your password" value={credOldPass} onChange={(e) => setCredOldPass(e.target.value)} style={{ width: "100%", padding: "11px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, boxSizing: "border-box", marginBottom: 10, background: t.bg, color: t.text }} />
+                <input type="email" placeholder="New email address" value={credNewEmail} onChange={(e) => setCredNewEmail(e.target.value)} style={{ width: "100%", padding: "11px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, boxSizing: "border-box", background: t.bg, color: t.text }} />
+              </>
+            )}
+            {credError && <div style={{ color: "#FF3B30", fontSize: 12.5, marginTop: 10 }}>{credError}</div>}
+            {credSuccess && <div style={{ color: "#28A745", fontSize: 12.5, marginTop: 10 }}>{credSuccess}</div>}
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button onClick={() => setCredModal(null)} disabled={credBusy} style={{ flex: 1, padding: 11, borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 14, cursor: "pointer" }}>Cancel</button>
+              <button onClick={submitCredChange} disabled={credBusy} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: credBusy ? 0.6 : 1 }}>{credBusy ? "Please wait…" : "Save"}</button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );
@@ -1223,6 +1656,25 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
 const DEFAULT_NAV_CONFIG = [{ key: "chats" }, { key: "status" }, { key: "groups" }, { key: "settings" }];
 const TAB_KEYS = ["chats", "status", "groups", "settings"];
+
+// Single source of truth for the visible tab order (pager + bottom bar).
+// Applies restrictions, forces "chats" to front, "settings" to end when top bar hidden.
+function getEffectiveTabs(navConfig, userRestrictions, topBarVisible) {
+  const tabs = navConfig
+    .filter(({ key }) => {
+      if (key === "status" && userRestrictions?.blockStatus === true) return false;
+      if (key === "groups" && userRestrictions?.blockGroups === true) return false;
+      return TAB_KEYS.includes(key);
+    })
+    .map(({ key }) => key);
+  if (!topBarVisible && !tabs.includes("settings")) tabs.push("settings");
+  // Chats MUST be the first (left-most) tab so a cold start ALWAYS lands on the
+  // chat list, never Groups/Status/Settings. Remove any existing "chats" entry
+  // first so it is guaranteed to end up at index 0 regardless of navConfig order.
+  const withoutChats = tabs.filter((k) => k !== "chats");
+  withoutChats.unshift("chats");
+  return withoutChats;
+}
 
 // Coerce any stored shape of the bottom-nav config (older builds persisted a
 // bare array of strings like ["chats","status"]) into the canonical
@@ -1305,7 +1757,7 @@ function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
     }
   }
   const cardStyle = {
-    position: "fixed", top: cardTop, left: cardLeft, right: cardRight, zIndex: zCard,
+    position: "absolute", top: cardTop, left: cardLeft, right: cardRight, zIndex: zCard,
     background: "#121B22", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 18,
     padding: "18px 18px 16px", boxShadow: "0 12px 40px rgba(0,0,0,0.5)", transition: "top 0.25s ease",
   };
@@ -1313,13 +1765,13 @@ function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
     <>
       {!minimized && (
         rect ? (
-          <div style={{ position: "fixed", left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex: zHole, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.72)", borderRadius: 12, pointerEvents: "none", transition: "left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease" }} />
+          <div style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.w, height: rect.h, zIndex: zHole, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.72)", borderRadius: 12, pointerEvents: "none", transition: "left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease" }} />
         ) : (
-          <div style={{ position: "fixed", inset: 0, zIndex: zBackdrop, background: "rgba(0,0,0,0.72)", pointerEvents: "none" }} />
+          <div style={{ position: "absolute", inset: 0, zIndex: zBackdrop, background: "rgba(0,0,0,0.72)", pointerEvents: "none" }} />
         )
       )}
       {arrow && (
-        <div style={{ position: "fixed", top: arrow.top, left: arrow.left, zIndex: zArrow, width: 0, height: 0, borderLeft: "12px solid transparent", borderRight: "12px solid transparent", borderTop: `16px solid #10B981`, transform: `rotate(${arrow.rotation}deg)`, pointerEvents: "none", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.5))" }} />
+        <div style={{ position: "absolute", top: arrow.top, left: arrow.left, zIndex: zArrow, width: 0, height: 0, borderLeft: "12px solid transparent", borderRight: "12px solid transparent", borderTop: `16px solid #10B981`, transform: `rotate(${arrow.rotation}deg)`, pointerEvents: "none", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.5))" }} />
       )}
       {minimized ? (
         // Minimized: just the arrow (above) + a floating resume pill so the
@@ -1327,7 +1779,7 @@ function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
         // app underneath is fully interactive.
         <button
           onClick={() => setMinimized(false)}
-          style={{ position: "fixed", bottom: "calc(env(safe-area-inset-bottom) + 18px)", left: "50%", transform: "translateX(-50%)", zIndex: zArrow, display: "flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 99, border: "none", background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", boxShadow: "0 8px 24px rgba(0,0,0,0.45)" }}
+          style={{ position: "absolute", bottom: "calc(env(safe-area-inset-bottom) + 18px)", left: "50%", transform: "translateX(-50%)", zIndex: zArrow, display: "flex", alignItems: "center", gap: 8, padding: "11px 18px", borderRadius: 99, border: "none", background: "#10B981", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", boxShadow: "0 8px 24px rgba(0,0,0,0.45)" }}
         >
           ▸ Resume tour ({step + 1}/{total})
         </button>
@@ -1373,6 +1825,23 @@ function AppShell({ appLocked, setAppLocked }) {
   useSystemInsets();
   const globalSettings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
+  // DIAG overlay: surfaces the latest DIAG line on-device (USB debugging is
+  // often blocked) so it can be copied and pasted. Admins can hide it globally.
+  const [diagLine, setDiagLine] = useState("");
+  const [showDiag, setShowDiag] = useState(true);
+  useEffect(() => {
+    const id = setInterval(() => {
+      try {
+        const arr = window.__nxCapturedErrors || [];
+        let last = "";
+        for (let i = arr.length - 1; i >= 0; i--) {
+          if (arr[i] && typeof arr[i] === "string" && arr[i].startsWith("DIAG")) { last = arr[i]; break; }
+        }
+        if (last) setDiagLine(last);
+      } catch { /* diagnostics must never crash the app */ }
+    }, 500);
+    return () => clearInterval(id);
+  }, []);
   const [screen, setScreen] = useState("list");
   // App-icon / app-name disguise gate. Reads the active profile from
   // iconManager on every render. When the profile is a "calculator" or
@@ -1390,9 +1859,21 @@ function AppShell({ appLocked, setAppLocked }) {
   // `bottom: 0` (the bottom nav bar) below the fold on first paint. Tapping
   // Settings later forced a reflow that "fixed" it; sizing to innerHeight makes
   // it correct from the very first frame.
-  const [appHeight, setAppHeight] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 0));
+  const [appHeight, setAppHeight] = useState(() => (typeof window !== "undefined" ? window.visualViewport?.height || window.innerHeight : 0));
+  // True on phone-sized screens. We scale the app with native viewport scaling
+  // ONLY on mobile — CSS `zoom` breaks touch hit-testing on the F21 Pro WebView,
+  // but it works fine on desktop, so desktop keeps responsive + CSS-zoom. This
+  // keeps the desktop (wide) view from being locked into a 390px column.
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 429px)").matches);
   useEffect(() => {
-    const update = () => setAppHeight(window.innerHeight || 0);
+    const mq = window.matchMedia("(max-width: 429px)");
+    const onChange = () => setIsMobile(mq.matches);
+    onChange();
+    if (mq.addEventListener) mq.addEventListener("change", onChange); else mq.addListener(onChange);
+    return () => { if (mq.removeEventListener) mq.removeEventListener("change", onChange); else mq.removeListener(onChange); };
+  }, []);
+  useEffect(() => {
+    const update = () => setAppHeight(window.visualViewport?.height || window.innerHeight || 0);
     update();
     window.addEventListener("resize", update);
     if (window.visualViewport) {
@@ -1432,7 +1913,8 @@ function AppShell({ appLocked, setAppLocked }) {
   const [emojiBigOn, setEmojiBigOn] = useState(() => localStorage.getItem("nextext_emoji_big") !== "off");
   const [compactList, setCompactList] = useState(() => localStorage.getItem("nextext_compact_list") === "true");
   const [showThemeSheet, setShowThemeSheet] = useState(false);
-  const [activeNavTab, setActiveNavTab] = useState("chats");
+  const [launchPage, setLaunchPage] = useState(() => localStorage.getItem("nextext_launch_page") || "groups");
+  const [activeNavTab, setActiveNavTab] = useState(() => localStorage.getItem("nextext_launch_page") || "groups");
   const [userRestrictions, setUserRestrictions] = useState(null);
   const [liveUserDoc, setLiveUserDoc] = useState(auth.userDoc);
   const [navConfig, setNavConfig] = useState(() => {
@@ -1455,6 +1937,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const [swipeAnimationOn, setSwipeAnimationOn] = useState(() => localStorage.getItem("nextext_swipe_animation") !== "off");
   const [swipeSpeed, setSwipeSpeed] = useState(() => { try { return localStorage.getItem("nextext_swipe_speed") || "normal"; } catch { return "normal"; } });
   const [swipeBounce, setSwipeBounce] = useState(() => localStorage.getItem("nextext_swipe_bounce") !== "off");
+  const [navConfigLocked, setNavConfigLocked] = useState(() => localStorage.getItem("nextext_nav_config_locked") === "true");
+  const [composerButtonOrder, setComposerButtonOrder] = useState(() => localStorage.getItem("nextext_composer_button_order") || "stt-voice");
   const [searchBarScale, setSearchBarScale] = useState(() => { try { return Number(localStorage.getItem("nextext_search_bar_scale")) || 1; } catch { return 1; } });
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [showTour, setShowTour] = useState(false);
@@ -1478,9 +1962,35 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const [autoUpdateCheckOn, setAutoUpdateCheckOn] = useState(() => localStorage.getItem("nextext_auto_update_check") !== "off");
   const shellRef = useRef(null);
   const pageRefs = useRef({});
-  const pagerDragRef = useRef(null);
+  const pagerContainerRef = useRef(null);
+  const pagerRowRef = useRef(null);
+
+  const glowRef = useRef(null);
+
+  // Guard against a horizontal document scroll that offsets the entire pager.
+  // On the F21 Pro WebView a stray scrollLeft (autofocus / transient wide
+  // element) shifts every absolutely-positioned page left by that amount,
+  // which reads as a uniform -Npx offset in getBoundingClientRect (the
+  // "Groups on cold start" bug). Keep the root scroll fully locked.
+  useEffect(() => {
+    const lock = () => {
+      try {
+        if (document.documentElement.scrollLeft !== 0) document.documentElement.scrollLeft = 0;
+        if (document.body.scrollLeft !== 0) document.body.scrollLeft = 0;
+      } catch {}
+    };
+    lock();
+    document.addEventListener("scroll", lock, true);
+    window.addEventListener("resize", lock);
+    return () => {
+      document.removeEventListener("scroll", lock, true);
+      window.removeEventListener("resize", lock);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [snapAnimating, setSnapAnimating] = useState(false);
   const snapTimerRef = useRef(null);
+  const pagerDragRef = useRef(null);
 
   // ── App state persistence ──────────────────────────────────────────
   // Persists navigation state to localStorage so relaunching the app
@@ -1550,8 +2060,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       // unrelated Settings gear. Tabs (activeNavTab) only meaningfully apply
       // on the list screen, so we also normalize that back to "chats" so the
       // first thing the user sees is every chat (groups + 1-on-1s).
-      setScreen("list");
-      setActiveNavTab("chats");
+      navigateToTab(launchPage);
       // Still restore other persisted prefs/configs below:
       if (state.activeChat) setActiveChat(state.activeChat);
       if (state.activeGroup) setActiveGroup(state.activeGroup);
@@ -1587,13 +2096,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // bottom nav visible — the reported "bottom bar missing / dead group row
   // until I tap Settings" cold start. Only fires once per user session.
   const [coldStartComplete, setColdStartComplete] = useState(false);
-  // Forces a one-time remount of the shell subtree AFTER the first painted
-  // frame. On some Android WebViews the bottom-nav + pager drop out of the very
-  // first composite (invisible + non-interactive) until a real re-render
-  // happens (e.g. a Settings round-trip "fixes" it). Keying the shell by this
-  // flag reproduces that second composite deterministically, without requiring
-  // user interaction.
-  const [coldStartReady, setColdStartReady] = useState(false);
+  // Temporary boot diagnostic (v1.6.21): shows the real tab state for 12s so a
+  // persisted "opens on Groups" bug can be confirmed/reproduced. Tap to dismiss.
+  const [showBootDiag, setShowBootDiag] = useState(false);
+  const [pagerDebug, setPagerDebug] = useState("");
+  useEffect(() => { const t = setTimeout(() => setShowBootDiag(false), 120000); return () => clearTimeout(t); }, []);
   // While true, the in-app splash stays fully opaque. The awake-kick releases
   // it once the cold-start repair has run, so the Settings-trip recovery
   // happens invisibly behind the splash instead of flashing the screen.
@@ -1613,36 +2120,28 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       setSplashVisible(true);
     }
     setSplashHold(true);
-    // Hard fallback so the re-held splash can never trap the user even if the
-    // awake-kick effect is deferred (e.g. by the welcome tour).
-    const t = setTimeout(() => setSplashHold(false), 12000);
+    // Hard fallback — shorter now that the awake-kick repair is disabled
+    // (flex layout fixes the geometry on first paint).
+    const t = setTimeout(() => setSplashHold(false), 4000);
     return () => clearTimeout(t);
   }, [myUid]);
-  // Opaque full-screen cover shown ONLY while the Settings-trip recovery runs.
-  // Unlike the splash (skippable in Settings / never shows if the user turned
-  // it off), this cover is independent of any setting, so the trip is always
-  // guaranteed hidden even on devices with the splash disabled.
-  const [repairCoverOn, setRepairCoverOn] = useState(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!myUid) return;
-    // Run synchronously (0ms) to ensure coldStartComplete is true before
-    // any notification tap handler can process a pending chatId.
-    const t = setTimeout(() => {
-      setScreen((prev) => {
-        if (["list", "status", "settings"].includes(prev)) return prev;
-        return "list";
-      });
-      // Always land on the Chats tab on a cold start (the user expects the
-      // bottom bar + chat list ready immediately, not a restored Groups tab).
-      setActiveNavTab("chats");
-      setColdStartComplete(true);
-      // After the first composite has settled, force a remount so the bottom
-      // nav + pager are guaranteed a second paint (fixes the cold-start "dead
-      // bar" / stuck-swipe). A short delay (not just double-rAF) makes sure
-      // this happens AFTER the first frame, not during it.
-      setTimeout(() => setColdStartReady(true), 350);
-    }, 0);
-    return () => clearTimeout(t);
+    // Run SYNCHRONOUSLY (useLayoutEffect) so the target screen/tab is set
+    // before the pager layout effect reads it. This prevents the "bottom bar
+    // shows one tab but content shows another" cold-start desync. The chosen
+    // launch page (chats/status/groups/settings) is what opens.
+    const targetTab = orderedTabs.includes(launchPage) ? launchPage : "chats";
+    navigateToTab(targetTab);
+    // Defensive: force the pager row to the target page imperatively (list tabs
+    // only — status/settings aren't pager pages).
+    const row = pagerRowRef.current;
+    if (row && targetTab !== "status" && targetTab !== "settings") {
+      const idx = Math.max(0, orderedTabs.indexOf(targetTab));
+      row.style.transition = "none";
+      row.style.transform = `translateX(${-idx * 100}%)`;
+    }
+    setColdStartComplete(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid]);
 
@@ -1694,6 +2193,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // Deferred while the welcome tour is up (its backdrop legitimately covers the
   // bar and re-runs when the tour ends).
   useEffect(() => {
+    return; // disabled: flex layout removed the compositor race this watchdog worked around
     if (!coldStartComplete) return;
     if (showTour) return; // defer — re-runs when the tour ends
     let cancelled = false;
@@ -1745,17 +2245,21 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           const shellEl = document.getElementById("nextext-app-shell");
           if (shellEl) {
             try {
-              const prevTransform = shellEl.style.transform;
-              const prevTransition = shellEl.style.transition;
-              shellEl.style.transition = "none";
-              shellEl.style.transform = "scale(0.9998)";
-              shellEl.style.transformOrigin = "top left";
+              // Force a layout/reflow to nudge the compositor into repainting.
+              // IMPORTANT: we must NOT touch `transform` here. Toggling a
+              // transform on the shell creates a containing block for any fixed
+              // descendants, and on older Android WebViews (Android 11 /
+              // Duoqin F21 Pro) that permanently mis-positions them — which is
+              // exactly the "bottom bar disappears / taps get eaten" cold-start
+              // bug. A padding nudge + forced reflow repaints without that risk.
               if (!/0\.1px/.test(shellEl.style.paddingBottom || "")) {
+                const prevPad = shellEl.style.paddingBottom;
                 shellEl.style.paddingBottom = "calc(var(--safe-bottom) + 0.1px)";
+                void shellEl.offsetHeight;
+                shellEl.style.paddingBottom = prevPad;
+              } else {
+                void shellEl.offsetHeight;
               }
-              void shellEl.offsetHeight;
-              shellEl.style.transform = prevTransform;
-              shellEl.style.transition = prevTransition;
             } catch { /* best-effort */ }
           }
           try {
@@ -1996,6 +2500,14 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     const unsubChats = onSnapshot(chatsQuery, (snap) => {
       snap.docChanges().forEach((change) => {
         const chatId = change.doc.id;
+        if (change.type === "removed") {
+          // Tear down the per-chat message listener so it doesn't leak after a
+          // chat is deleted/left.
+          const idx = unsubs.findIndex((u) => u.chatId === chatId);
+          if (idx !== -1) { try { unsubs[idx].unsub(); } catch {} unsubs.splice(idx, 1); }
+          delete chatDataMap[chatId];
+          return;
+        }
         if (change.type !== "added" && change.type !== "modified") return;
         chatDataMap[chatId] = change.doc.data() || {};
         // Attach a message listener to this chat if we haven't already.
@@ -2031,6 +2543,21 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
             // build a proper title (sender for DMs, group name for groups with
             // the sender as sub-text) and a chatId so tapping the notification
             // opens the conversation.
+            // Per-user vibration/ping override: a contact can carry notifVibrate
+            // / notifSound keys that override the global Settings choice.
+            let vibrationPattern;
+            let sound;
+            try {
+              const otherContact = (contacts || []).find((c) => c.uid === m.senderId);
+              if (otherContact?.notifVibrate) {
+                if (otherContact.notifVibrate === "custom") {
+                  try { vibrationPattern = JSON.parse(localStorage.getItem("nextext_notif_vibration_custom")); } catch {}
+                } else {
+                  vibrationPattern = VIBRATION_PRESETS[otherContact.notifVibrate];
+                }
+              }
+              if (otherContact?.notifSound) sound = otherContact.notifSound;
+            } catch {}
             if (privateNotif) {
               showLocalNotification("New message", "You have a new message", chatId, {
                 chatId,
@@ -2038,14 +2565,22 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                 groupName: "",
                 messageText: "",
                 private: true,
+                vibrationPattern,
+                sound,
               });
             } else {
+              const senderColor = (otherContact?.avatarColor || otherContact?.color || "#7C5CFF");
+              const imageUrl = otherContact?.photoURL || otherContact?.profilePic || "";
               showLocalNotification(chatName, body.length > 60 ? body.slice(0, 60) + "…" : body, chatId, {
                 chatId,
                 senderName,
                 groupName: isGroup ? chatName : "",
                 messageText: body,
                 private: false,
+                vibrationPattern,
+                sound,
+                senderColor,
+                imageUrl,
               });
             }
           });
@@ -2182,12 +2717,26 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   };
 
   useEffect(() => { localStorage.setItem(UI_SCALE_KEY, String(uiScale)); }, [uiScale]);
+  // Apply UI scale. On mobile we scale NATIVELY via the viewport meta `width`
+  // (browser scales the whole page → touch hit-testing + position:fixed stay
+  // correct; CSS `zoom` breaks taps on the F21 Pro WebView). On desktop we keep
+  // the responsive layout and apply any extra zoom with CSS `zoom` (safe there).
+  useEffect(() => {
+    const meta = document.getElementById("nx-viewport");
+    if (!meta) return;
+    if (isMobile) {
+      meta.setAttribute("content", `width=${Math.round(390 / uiScale)}, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover`);
+    } else {
+      meta.setAttribute("content", "width=device-width, initial-scale=1.0, viewport-fit=cover");
+    }
+  }, [uiScale, isMobile]);
   useEffect(() => { localStorage.setItem("nextext_recording_bar_scale", String(recordingBarScale)); }, [recordingBarScale]);
   useEffect(() => { localStorage.setItem(SCROLL_DOWN_KEY, String(showScrollDown)); }, [showScrollDown]);
   useEffect(() => { localStorage.setItem("nextext_animate_on_tap", String(animateOnTap)); }, [animateOnTap]);
   useEffect(() => { localStorage.setItem("nextext_swipe_animation", swipeAnimationOn ? "on" : "off"); }, [swipeAnimationOn]);
   useEffect(() => { localStorage.setItem("nextext_swipe_speed", swipeSpeed); }, [swipeSpeed]);
   useEffect(() => { localStorage.setItem("nextext_swipe_bounce", swipeBounce ? "on" : "off"); }, [swipeBounce]);
+  useEffect(() => { localStorage.setItem("nextext_nav_config_locked", String(navConfigLocked)); }, [navConfigLocked]);
   // The "Edge swipe bounce" setting also controls the iOS-style rubber-band
   // effect on vertical scroll overscroll (when you reach the top or bottom
   // of any scrollable area and keep dragging). Same UX concept, one toggle.
@@ -2344,21 +2893,54 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   };
 
   // ── Swipeable tab pager (WhatsApp-style drag + snap) ──────────────
-  const orderedTabs = navConfig
-    .filter(({ key }) => {
-      if (key === "status" && userRestrictions?.blockStatus === true) return false;
-      if (key === "groups" && userRestrictions?.blockGroups === true) return false;
-      return TAB_KEYS.includes(key);
-    })
-    .map(({ key }) => key);
-  if (!topBarVisible && !orderedTabs.includes("settings")) orderedTabs.push("settings");
-  if (!orderedTabs.includes("chats")) orderedTabs.unshift("chats");
+  const orderedTabs = getEffectiveTabs(navConfig, userRestrictions, topBarVisible);
 
   const currentTabKey = screen === "status" ? "status"
     : screen === "settings" ? "settings"
     : screen === "list" ? activeNavTab
     : null;
   const currentTabIndex = currentTabKey ? Math.max(0, orderedTabs.indexOf(currentTabKey)) : -1;
+  // Single source of truth for which page is visible. Chats on the list screen
+  // is ALWAYS index 0; otherwise it's the active tab's index (or the last
+  // resting pageIndex when on a non-tab screen). Both the page render and the
+  // boot diag read this, so they can never disagree.
+  const effectiveIndex = (screen === "list" && activeNavTab === "chats") ? 0 : (currentTabIndex >= 0 ? currentTabIndex : pageIndex);
+
+// BULLETPROOF pager position: after every render where the active tab (or
+  // tab order) changes, imperatively force the row's transform to match
+  // effectiveIndex. The row is now 100% wide with absolute pages at 0%, 100%, etc.
+  // so translateX(-index * 100%) is stable and works on first paint.
+  const orderedTabsKey = orderedTabs.join(",");
+  useLayoutEffect(() => {
+    if (pagerRowRef.current && !pagerDragRef.current?.active) {
+      pagerRowRef.current.style.transform = `translateX(${-effectiveIndex * 100}%)`;
+    }
+    // Force the root scroll back to 0 — a stray document.scrollLeft offsets the
+    // whole pager (every absolutely-positioned page shifts by that amount).
+    try {
+      if (document.documentElement.scrollLeft !== 0) document.documentElement.scrollLeft = 0;
+      if (document.body.scrollLeft !== 0) document.body.scrollLeft = 0;
+    } catch {}
+    // Ground-truth readout of where each page actually sits on screen, so a
+    // desync between the virtual tab index and the painted layout is visible.
+    try {
+      const parts = orderedTabs.map((key) => {
+        const el = pageRefs.current?.[key];
+        const x = el ? Math.round(el.getBoundingClientRect().left) : "?";
+        return `${key}@${x}`;
+      });
+      let shellX = "?", containerX = "?", rootX = "?", docScroll = "?", pageT = "?", rowT = "?";
+      try { shellX = shellRef.current ? Math.round(shellRef.current.getBoundingClientRect().left) : "?"; } catch {}
+      try { containerX = pagerContainerRef.current ? Math.round(pagerContainerRef.current.getBoundingClientRect().left) : "?"; } catch {}
+      try { const r = document.getElementById("root"); rootX = r ? Math.round(r.getBoundingClientRect().left) : "?"; } catch {}
+      try { docScroll = `${document.documentElement.scrollLeft}|${document.body.scrollLeft}`; } catch {}
+      try { const el = pageRefs.current?.[orderedTabs[0]]; pageT = el ? getComputedStyle(el).transform : "?"; } catch {}
+      try { rowT = pagerRowRef.current ? getComputedStyle(pagerRowRef.current).transform : "?"; } catch {}
+      const meta = document.querySelector('meta[name="viewport"]');
+      const metaW = meta ? meta.getAttribute("content") : "?";
+      setPagerDebug(`ei=${effectiveIndex} pi=${pageIndex} cti=${currentTabIndex} | ${parts.join("  ")} | shell@${shellX} cont@${containerX} root@${rootX} scroll@${docScroll} pageT=${pageT} rowT=${rowT} iw=${window.innerWidth} meta=${metaW}`);
+    } catch {}
+  }, [effectiveIndex, orderedTabsKey, pageIndex, currentTabIndex]);
 
   // Sync the pager position whenever the active tab changes via bottom bar,
   // top-bar buttons, or programmatic navigation (e.g. opening a status).
@@ -2378,30 +2960,37 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTabKey, screen, orderedTabs.join(",")]);
 
+  // Absolute guarantee: on the list screen with Chats active, pageIndex is 0,
+  // so both the resting render AND any drag start land on Chats.
+  useEffect(() => {
+    if (screen === "list" && activeNavTab === "chats" && !pagerDragRef.current?.active) {
+      setPageIndex(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, activeNavTab, orderedTabs.join(",")]);
+
   // Cold-start pager lock: on first orderedTabs population, force the Chats
   // tab + snap pageIndex to it. Runs once per session via a ref so later
   // navConfig changes (e.g. restrictions loading) don't yank the user off
   // whatever tab they're on.
-  const coldStartPagerLockRef = useRef(false);
+    const coldStartPagerLockRef = useRef(false);
   useEffect(() => {
     if (!myUid) return;
     if (orderedTabs.length === 0) return;
     if (coldStartPagerLockRef.current) return;
     coldStartPagerLockRef.current = true;
-    const target = orderedTabs.indexOf("chats");
-    if (target === -1) return;
-    setActiveNavTab("chats");
-    setPageIndex(target);
+    navigateToTab(orderedTabs.includes(launchPage) ? launchPage : "chats");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderedTabs.join(","), myUid]);
 
   const navigateToTab = (key) => {
+    if (key === "status") { setStatusOrigin("status"); setScreen("status"); return; }
+    if (key === "settings") { setScreen("settings"); return; }
     const idx = orderedTabs.indexOf(key);
     if (idx === -1) return;
     setPageIndex(idx);
-    if (key === "status") { setStatusOrigin("status"); setScreen("status"); }
-    else if (key === "settings") setScreen("settings");
-    else { setActiveNavTab(key); setScreen("list"); }
+    setActiveNavTab(key);
+    setScreen("list");
   };
 
   const pagerTouchStart = (e) => {
@@ -2417,7 +3006,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     pagerDragRef.current = {
       startX: e.touches[0].clientX,
       startY: e.touches[0].clientY,
-      startIndex: Math.max(0, currentTabIndex),
+      startIndex: effectiveIndex,
       offset: 0,
       width,
       active: false,
@@ -2461,20 +3050,51 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       if (drag.startIndex === len - 1 && offset < 0) offset *= 0.35;
     }
     drag.offset = offset;
-    orderedTabs.forEach((key, i) => {
-      const el = pageRefs.current[key];
-      if (el) {
-        el.style.transition = "none";
-        el.style.left = `${(i - drag.startIndex) * drag.width + offset}px`;
+    // Visual overscroll glow bubble: when the swipe is pulled past the first or
+    // last tab (and the Overscroll bounce setting is on), fade in a rounded
+    // glow at that edge. Driven directly via the DOM node (not React state) so
+    // it doesn't trigger a pager re-render on every touchmove.
+    if (glowRef.current) {
+      let edge = null;
+      let amt = 0;
+      if (swipeBounce) {
+        if (drag.startIndex === 0 && offset > 0) { edge = "start"; amt = offset; }
+        else if (drag.startIndex === len - 1 && offset < 0) { edge = "end"; amt = -offset; }
       }
-    });
+      const g = glowRef.current;
+      if (edge && amt > 0.5) {
+        const intensity = Math.min(amt / 110, 1);
+        g.style.opacity = String(0.15 + intensity * 0.85);
+        if (edge === "start") {
+          g.style.left = `${4 + amt * 0.25}px`;
+          g.style.right = "auto";
+        } else {
+          g.style.right = `${4 + amt * 0.25}px`;
+          g.style.left = "auto";
+        }
+      } else {
+        g.style.opacity = "0";
+      }
+    }
+    // Drive the row transform directly (absolute carousel). translateX is a mix of
+    // the resting percentage for the start index plus the live pixel offset
+    // converted to percentage.
+    if (pagerRowRef.current) {
+      const container = pagerContainerRef.current;
+      const containerWidth = container ? container.offsetWidth : 0;
+      const basePct = -drag.startIndex * 100;
+      const offsetPct = containerWidth > 0 ? (offset / containerWidth) * 100 : 0;
+      pagerRowRef.current.style.transition = "none";
+      pagerRowRef.current.style.transform = `translateX(${basePct + offsetPct}%)`;
+    }
     if (e.cancelable) e.preventDefault();
   };
 
   const pagerTouchEnd = () => {
     const drag = pagerDragRef.current;
-    if (!drag || !drag.active) { pagerDragRef.current = null; return; }
+    if (!drag || !drag.active) { pagerDragRef.current = null; if (glowRef.current) glowRef.current.style.opacity = "0"; return; }
     pagerDragRef.current = null;
+    if (glowRef.current) glowRef.current.style.opacity = "0";
     const len = orderedTabs.length;
     const threshold = drag.width * 0.2;
     let target = drag.startIndex;
@@ -2486,14 +3106,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     // mid-drag offset (the "page just moves and stays in an awkward position"
     // bug) because the commit block below was skipped entirely.
     const dur = swipeAnimationEnabled() ? swipeDuration() * 1000 : 0;
-    const trans = swipeAnimationEnabled() ? `left ${swipeDuration()}s ${swipeBezier()}` : "none";
-    orderedTabs.forEach((k, i) => {
-      const el = pageRefs.current[k];
-      if (el) {
-        el.style.transition = trans;
-        el.style.left = `${(i - target) * 100}%`;
-      }
-    });
+    const trans = swipeAnimationEnabled() ? `transform ${swipeDuration()}s ${swipeBezier()}` : "none";
+    if (pagerRowRef.current) {
+      pagerRowRef.current.style.transition = trans;
+      pagerRowRef.current.style.transform = `translateX(${-target * 100}%)`;
+    }
     // Always sync pageIndex so React-owned positions match the visual snap.
     // This ensures a re-render never overwrites the snapped-back position.
     setSnapAnimating(true);
@@ -2512,43 +3129,95 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const pagerTouchCancel = () => {
     const drag = pagerDragRef.current;
     pagerDragRef.current = null;
-    if (drag?.active) {
-      // Cancel: restore every page to its React-owned position (no nav change).
-      orderedTabs.forEach((key, i) => {
-        const el = pageRefs.current[key];
-        if (el) {
-          el.style.transition = "";
-          el.style.left = `${(i - pageIndex) * 100}%`;
+    if (glowRef.current) glowRef.current.style.opacity = "0";
+      if (drag?.active) {
+        // Cancel: restore the row to its React-owned position (no nav change).
+        if (pagerRowRef.current) {
+          pagerRowRef.current.style.transition = "";
+          pagerRowRef.current.style.transform = `translateX(${-effectiveIndex * 100}%)`;
         }
-      });
-      setPagerDragging(false);
-    }
+        setPagerDragging(false);
+      }
   };
 
-  // UI-scale scaling. The shell is scaled from the top-left corner; to keep the
-  // scaled output EXACTLY filling the viewport we pre-shrink the box to
-  // 100/uiScale% (both axes) so scale(uiScale) expands it right back to 100%.
-  // Without this, uiScale > 1 pushed the whole shell below the visible bottom
-  // edge — the bottom nav (positioned at bottom:0 inside the shell) ended up
-  // off-screen, which read as "bottom bar missing on every app reopen" because
-  // the setting persists across restarts.
+  // Safety net for dropped touch-end events. On some WebViews (notably the
+  // F21 Pro) a touchend that lands outside the 390px app shell — or that the
+  // browser simply fails to deliver — never reaches the shell's onTouchEnd.
+  // When that happens pagerDragRef stays `active` and pageIndex freezes on the
+  // drag's START tab, so the pager renders a stale page while the bottom bar
+  // highlights the real tab ("starts on the wrong page / bar mixed up"). A
+  // window-level listener guarantees the drag always completes (or cancels).
+  const pagerEndRef = useRef(pagerTouchEnd);
+  const pagerCancelRef = useRef(pagerTouchCancel);
+  pagerEndRef.current = pagerTouchEnd;
+  pagerCancelRef.current = pagerTouchCancel;
+  useEffect(() => {
+    const end = () => pagerEndRef.current();
+    const cancel = () => pagerCancelRef.current();
+    window.addEventListener("touchend", end);
+    window.addEventListener("touchcancel", cancel);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("mouseup", end);
+    return () => {
+      window.removeEventListener("touchend", end);
+      window.removeEventListener("touchcancel", cancel);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("mouseup", end);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Robust full-viewport height. Native `100dvh` (the *visual* viewport, which
+  // excludes the on-screen nav bar) is used where supported; on older WebViews
+  // without dvh we fall back to the JS-measured visualViewport height (appHeight),
+  // which is correct on the F21 Pro. The shell is a pure CSS flex column (below)
+  // so the bottom bar is always a flex child pinned to the visual bottom — it can
+  // never be pushed off-screen / behind the nav bar by a stale JS height the way
+  // the old absolutely-positioned bar could (the root cause of the "bottom bar
+  // missing / menus behind / Ask-AI not visible until a re-render" cold-start bug).
+  const dvhSupported =
+    typeof window !== "undefined" &&
+    window.CSS &&
+    typeof window.CSS.supports === "function" &&
+    window.CSS.supports("height", "100dvh");
   const containerStyle = {
     position: "absolute",
     top: 0,
     left: 0,
     overflow: "hidden",
     fontFamily: appFont,
-    width: uiScale === 1 ? "100%" : `${(100 / uiScale).toFixed(4)}%`,
-    height: uiScale === 1 ? (appHeight > 0 ? `${appHeight}px` : "100%") : `${(100 / uiScale).toFixed(4)}%`,
+    width: "100%",
+    ...(dvhSupported ? {} : { height: appHeight > 0 ? `${appHeight}px` : "100%" }),
     paddingTop: "var(--safe-top)",
-    paddingBottom: "var(--safe-bottom)",
-    ...(uiScale !== 1 ? { transform: `scale(${uiScale})`, transformOrigin: "top left" } : {}),
+    // NOTE: no paddingBottom — the bottom bar is a flex child and manages its own
+    // safe-area inset so it can sit flush against the visual bottom edge.
+    // Desktop-only extra zoom: on mobile the viewport meta handles scaling
+    // (CSS zoom breaks taps there), so skip it on phones.
+    ...(uiScale !== 1 && !isMobile ? { zoom: uiScale } : {}),
+    // Flex column: the pager grows to fill, the bottom bar is a fixed flex child.
+    display: "flex",
+    flexDirection: "column",
   };
 
   // Disguise gate runs BEFORE the auth/loading screen so a Calculator/Notes
   // launcher opens straight into the disguise — never flashing "Connecting to
   // server". The profile is read synchronously from native storage, so this is
   // correct on the very first paint.
+
+  // Admin "force logout everyone except admins" switch. When the global flag
+  // (config/globalSettings.forceLogoutNonAdmins) is on, every non-admin client
+  // signs itself out so the user must log back in. Placed with the other hooks
+  // ABOVE every early return below — otherwise the loading/early-return render
+  // would skip this hook and the loaded render would run it, changing the hook
+  // count between renders and throwing React #310.
+  useEffect(() => {
+    if (!myUid) return;
+    const admin = auth.userDoc?.role === "admin" || auth.userDoc?.isAdmin === true;
+    if (globalSettings?.forceLogoutNonAdmins === true && !admin) {
+      try { auth.logOut(); } catch {}
+    }
+  }, [globalSettings?.forceLogoutNonAdmins, auth.userDoc, myUid]);
+
   if (disguiseKind === "calculator" && !disguiseUnlocked) {
     return (
       <CalculatorScreen
@@ -2564,13 +3233,16 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     );
   }
 
-  if (auth.loading) {
+  if (auth.loading && showSplash) {
     return <div style={{ ...containerStyle, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0B141A" }}>
       <img src={activeProfile.iconPath} alt="" style={{ width: 100, height: 100, objectFit: "contain", marginBottom: 20 }} onError={(e) => { e.target.style.display = "none"; }} />
       <div style={{ width: 40, height: 40, border: "4px solid rgba(16, 185, 129, 0.25)", borderTopColor: "#10B981", borderRadius: "50%", animation: "nextext-spin 0.9s linear infinite", marginBottom: 16 }} />
       <span style={{ color: "#fff", fontSize: 20, fontWeight: 700 }}>{activeProfile.label}</span>
       <style>{`@keyframes nextext-spin { to { transform: rotate(360deg); } }`}</style>
     </div>;
+  }
+  if (auth.loading) {
+    return <div style={{ ...containerStyle, background: "#0B141A" }} />;
   }
   if (!auth.user) {
     return <div style={containerStyle}><AuthScreen auth={auth} /></div>;
@@ -2583,7 +3255,6 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   return (
     <>
     <div
-      key={coldStartReady ? "ready" : "cold"}
       ref={shellRef}
       id="nextext-app-shell"
       style={{ ...containerStyle }}
@@ -2592,35 +3263,51 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       onTouchEnd={pagerTouchEnd}
       onTouchCancel={pagerTouchCancel}
     >
-        {orderedTabs.map((key, idx) => {
-          // Placement is ALWAYS derived from the live active tab (except while
-          // a swipe drag is in flight, where inline transforms drive it). This
-          // guarantees the first paint, every navigation, and every re-render
-          // land on the correct page — no first-render flag, no effect-ordering
-          // dependency, no stale pageIndex to strand the pager on cold start.
-          const activeIdx = currentTabIndex >= 0 ? currentTabIndex : pageIndex;
-          const effectiveIndex = pagerDragRef.current?.active ? pageIndex : activeIdx;
-          const pageStyle = {
-            position: "absolute", top: 0, bottom: 0, width: "100%",
-            overflow: "hidden",
-            // Pages are positioned with plain `left` offsets (no transforms,
-            // no willChange, no GPU compositor layers at rest). Promoting every
-            // page to its own compositor layer via translate3d re-triggered the
-            // WebView paint bug that left the app blank/dead on cold start
-            // until a forced re-render (v1.1.18 regression of the v1.1.12 fix).
-            // `left` is layout-only and paints reliably on every WebView load.
-            // Swipe drags still position pages directly (see pagerTouchMove).
-            left: `${(idx - effectiveIndex) * 100}%`,
-            // During a swipe drag: no CSS transition (we drive `left` directly).
-            // Right after a swipe ends (snapAnimating): the animated slide from
-            // the last drag offset to the snapped page.
-            // Tap jumps: animated only when animateOnTap is enabled.
-            transition: pagerDragging
-              ? "none"
-              : snapAnimating
-                ? (swipeAnimationEnabled() ? `left ${swipeDuration()}s ${swipeBezier()}` : "none")
-                : tapTransition(),
-          };
+         <div ref={pagerContainerRef} style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
+           {/* Overscroll glow bubble — fades in at the first/last tab edge while
+               swiping with the "Overscroll bounce" setting on. Positioned/sized
+               imperatively from pagerTouchMove via glowRef. */}
+           <div
+             ref={glowRef}
+             style={{
+               position: "absolute",
+               top: "50%",
+               transform: "translateY(-50%)",
+               width: 64,
+               height: 130,
+               borderRadius: 32,
+               pointerEvents: "none",
+               opacity: 0,
+               zIndex: 5,
+               background: "radial-gradient(circle, rgba(124,92,255,0.55) 0%, rgba(124,92,255,0.18) 45%, rgba(124,92,255,0) 72%)",
+             }}
+            />
+<div
+                ref={pagerRowRef}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  willChange: "transform",
+                  transform: `translateX(${-effectiveIndex * 100}%)`,
+                  transition: pagerDragging
+                    ? "none"
+                    : snapAnimating
+                      ? (swipeAnimationEnabled() ? `transform ${swipeDuration()}s ${swipeBezier()}` : "none")
+                      : tapTransition(),
+                }}
+              >
+              {orderedTabs.map((key, idx) => {
+              const pageStyle = {
+                position: "absolute",
+                top: 0,
+                left: `${idx * 100}%`,
+                width: "100%",
+                height: "100%",
+                overflow: "hidden",
+              };
           const pageRef = (el) => { pageRefs.current[key] = el; };
           if (key === "chats") return (
             <div key="chats" ref={pageRef} style={pageStyle}>
@@ -2646,7 +3333,9 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           if (key === "settings") return (
             <div key="settings" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Settings">
-                <SettingsScreen
+               <SettingsScreen
+                 auth={auth}
+                 onLaunchPageSelect={(key) => { setLaunchPage(key); localStorage.setItem("nextext_launch_page", key); navigateToTab(key); }}
                 myUid={myUid}
                 isAdmin={isAdmin}
                 themeKey={themeKey}
@@ -2687,6 +3376,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                 setSwipeSpeed={setSwipeSpeed}
                 swipeBounce={swipeBounce}
                 setSwipeBounce={setSwipeBounce}
+                navConfigLocked={navConfigLocked}
+                setNavConfigLocked={setNavConfigLocked}
                 scrollDownSize={scrollDownSize}
                 setScrollDownSize={setScrollDownSize}
                 scrollDownPos={scrollDownPos}
@@ -2709,14 +3400,20 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                 setVoicePlayerStyle={setVoicePlayerStyle}
                 autoUpdateCheckOn={autoUpdateCheckOn}
                 setAutoUpdateCheckOn={setAutoUpdateCheckOn}
-                linkPreviewsOn={linkPreviewsOn}
-                setLinkPreviewsOn={setLinkPreviewsOn}
-              />
+                 linkPreviewsOn={linkPreviewsOn}
+                 setLinkPreviewsOn={setLinkPreviewsOn}
+                 composerButtonOrder={composerButtonOrder}
+                 setComposerButtonOrder={setComposerButtonOrder}
+                 launchPage={launchPage}
+                 setLaunchPage={setLaunchPage}
+               />
               </PageErrorBoundary>
             </div>
           );
           return null;
         })}
+            </div>
+          </div>
 
       {screen === "chat" && activeChat && (
         <ConversationScreen
@@ -2766,7 +3463,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       {screen === "parental" && <ParentalControlsScreen myUid={myUid} onBack={() => setScreen("settings")} />}
       {screen === "feedback" && <FeedbackScreen myUid={myUid} myUsername={auth.userDoc?.username} onBack={() => setScreen("settings")} />}
       {screen === "admin" && isAdmin && <AdminDashboard myUid={myUid} onBack={() => setScreen("settings")} />}
-      {screen === "iconPicker" && <IconPickerScreen onBack={() => setScreen("settings")} restrictions={auth.userDoc?.restrictions} />}
+      {screen === "iconPicker" && <IconPickerScreen onBack={() => setScreen("settings")} restrictions={auth.userDoc?.restrictions} isAdmin={isAdmin} myUid={myUid} />}
       {screen === "aiChat" && (
         <AIChatScreen myUid={myUid} onBack={() => setScreen("list")} />
       )}
@@ -2775,9 +3472,9 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
         <AISidebarWidget myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenAI={() => setScreen("aiChat")} />
       )}
 
-      {showThemeSheet && (
-        <ThemeSheet current={themeKey} onSelect={(k) => { setThemeKey(k); setShowThemeSheet(false); }} onClose={() => setShowThemeSheet(false)} />
-      )}
+        {showThemeSheet && (
+          <ThemeSheet current={themeKey} onSelect={(k) => { setThemeKey(k); setShowThemeSheet(false); }} onClose={() => setShowThemeSheet(false)} />
+        )}
 
 
 
@@ -2788,26 +3485,12 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           groups: { icon: Users, label: "Groups" },
           settings: { icon: SettingsIcon, label: "Settings" },
         };
-        const navTabs = navConfig
-          .filter(({ key }) => {
-            if (key === "status" && userRestrictions?.blockStatus === true) return false;
-            if (key === "groups" && userRestrictions?.blockGroups === true) return false;
-            return ALL_TABS[key];
-          })
-          .map(({ key }) => ({ key, ...ALL_TABS[key] }));
-        // Force settings onto bottom bar when top bar is hidden
-        if (!topBarVisible && !navTabs.some((t) => t.key === "settings")) {
-          navTabs.push({ key: "settings", ...ALL_TABS.settings });
-        }
-        // Chats is always on: without this a malformed/legacy stored config
-        // could leave the whole bottom bar blank.
-        if (!navTabs.some((t) => t.key === "chats")) {
-          navTabs.unshift({ key: "chats", ...ALL_TABS.chats });
-        }
+        const effectiveTabs = getEffectiveTabs(navConfig, userRestrictions, topBarVisible);
+        const navTabs = effectiveTabs.map((key) => ({ key, ...ALL_TABS[key] }));
         if (!navTabs.length) return null;
         try {
-          return (
-          <div key={barEpoch} style={{ position: "fixed", bottom: 0, left: 0, right: 0, display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, transform: "translateZ(0)", paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
+              return (
+              <div key={barEpoch} style={{ flexShrink: 0, margin: "0 auto", width: "100%", display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
             {navTabs.map(({ key, icon: Icon, label }) => {
               const isActive = key === "settings" ? screen === "settings" : key === "status" ? screen === "status" : (screen === "list" && activeNavTab === key);
               return (
@@ -2825,7 +3508,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
               </div>
               );
             })}
-          </div>
+            </div>
           );
         } catch (e) {
           // If the bar ever throws (a bad config, a missing icon), never break
@@ -2833,7 +3516,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           // bar so the user can always navigate.
           console.error("[BottomBar fallback]", e);
           return (
-            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
+            <div style={{ flexShrink: 0, margin: "0 auto", width: "100%", display: "flex", background: t.surface, borderTop: `1px solid ${t.border}`, zIndex: 1000, paddingBottom: "max(0px, calc(var(--safe-bottom)))" }}>
               {[["chats", "Chats"], ["status", "Status"], ["settings", "Settings"]].map(([key, label]) => (
                 <div key={key} data-tour-nav={key} onClick={() => navigateToTab(key)} style={{ flex: 1, padding: "12px 0", textAlign: "center", color: t.text, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>{label}</div>
               ))}
@@ -2842,31 +3525,17 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
         }
       })()}
 
-      {createPortal(
-        repairCoverOn ? (
-          <div
-            style={{
-              position: "fixed", inset: 0, zIndex: 2147483400, background: "#121B22",
-              // Mounted ONLY while a recovery is in flight. Historically this
-              // layer was kept always-mounted at opacity 0 so it stayed part of
-              // the WebView's composite, but an always-present full-screen layer
-              // (even at opacity 0) is a latent input trap: if its pointer-events
-              // ever lags a state flip the whole app goes dead. Mounting it only
-              // when repairCoverOn is true removes that risk entirely.
-              opacity: 1,
-              pointerEvents: "auto",
-            }}
-            role="presentation"
-          />
-        ) : null,
-        document.body
+      {showBootDiag && !globalSettings?.hideDiagLog && (
+        <div onClick={() => setShowBootDiag(false)} style={{ position: "fixed", top: 6, left: 6, right: 6, zIndex: 1000001, background: "rgba(0,0,0,0.82)", color: "#5dff9b", fontSize: 10, lineHeight: 1.4, padding: "6px 9px", borderRadius: 8, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
+          {`BOOT DIAG — screen=${screen} tab=${activeNavTab} idx=${currentTabIndex} page=${pageIndex} ei=${effectiveIndex} tabs=[${orderedTabs.join(",")}]\n${pagerDebug}\nhideNav=${hideNav} story=${storyViewerOpen}`}
+        </div>
       )}
 
-      {createPortal(splashVisible && (
+      {createPortal((splashVisible && localStorage.getItem("nextext_splash_enabled") !== "off") && (
         <div
           onTransitionEnd={() => { if (splashFading) setSplashVisible(false); }}
           style={{
-            position: "fixed", inset: 0, zIndex: 999999, background: "#121B22",
+            position: "absolute", inset: 0, zIndex: 999999, background: "#121B22",
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 28,
             opacity: splashFading ? 0 : 1, transition: "opacity 0.6s ease-out",
             // Pointer-events MUST be "none" the moment fading starts. Previously
@@ -2883,6 +3552,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
         >
            <img src={activeProfile.iconPath} alt="" style={{ width: 180, height: 180, objectFit: "contain" }} />
            <div style={{ fontSize: 24, fontWeight: 800, color: "#fff", marginTop: -10, letterSpacing: 0.3 }}>{activeProfile.label}</div>
+           <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.65)" }}>v{getCurrentVersion()}</div>
           <div
             style={{
               width: 34, height: 34,
@@ -2905,7 +3575,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       ) : null, document.body)}
 
       {createPortal(lockPromptChat && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 999998, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 28 }}>
+        <div style={{ position: "absolute", inset: 0, zIndex: 999998, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 28 }}>
           <div style={{ width: "100%", maxWidth: 320, background: t.surface, borderRadius: 16, padding: 20, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
             <div style={{ fontWeight: 700, fontSize: 16, color: t.text, marginBottom: 4 }}>Locked chat</div>
             <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 12 }}>Enter your locked-chats password to open this conversation.</div>
@@ -2930,6 +3600,16 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           error={updateStatus || null}
         />
       )}
+
+      {!globalSettings?.hideDiagLog && showDiag && diagLine && createPortal(
+        <div style={{ position: "fixed", left: 6, right: 6, bottom: 6, zIndex: 999999, background: "rgba(0,0,0,0.82)", color: "#39FF14", fontFamily: "monospace", fontSize: 10.5, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(57,255,20,0.5)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <span style={{ fontWeight: 700, letterSpacing: 0.5 }}>DIAG LOG — copy &amp; send</span>
+            <span style={{ cursor: "pointer", color: "#fff", padding: "0 4px" }} onClick={() => setShowDiag(false)}>✕</span>
+          </div>
+          <textarea readOnly value={diagLine} onFocus={(e) => e.currentTarget.select()} style={{ width: "100%", height: 42, background: "#000", color: "#39FF14", fontFamily: "monospace", fontSize: 9.5, border: "none", outline: "none", resize: "none" }} />
+          <button onClick={() => { try { navigator.clipboard && navigator.clipboard.writeText(diagLine); } catch {} }} style={{ marginTop: 4, width: "100%", padding: "5px 0", borderRadius: 6, border: "1px solid rgba(57,255,20,0.5)", background: "transparent", color: "#39FF14", fontSize: 11, cursor: "pointer" }}>Copy</button>
+        </div>, document.body)}
     </div>
     </>
   );

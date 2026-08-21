@@ -71,7 +71,15 @@ const AI_CONTACT_OBJ = {
 
 export function getAIContact() { return AI_CONTACT_OBJ; }
 export function getAIChatId(userUid) { return `${AI_CHAT_PREFIX}${userUid}`; }
-export function getSystemPrompt(personalityKey) { return `${AI_IDENTITY_BLOCK}\n\n${PERSONALITIES[personalityKey]?.systemPrompt || PERSONALITIES.default.systemPrompt}`; }
+// Builds the system prompt. In Live Mode the tool-use instructions are appended
+// onto the existing identity block + personality so the AI retains its custom
+// name and app-specific knowledge while gaining live capabilities.
+export function getSystemPrompt(personalityKey, config) {
+  const base = `${AI_IDENTITY_BLOCK}\n\n${PERSONALITIES[personalityKey]?.systemPrompt || PERSONALITIES.default.systemPrompt}`;
+  const formatted = base + FORMATTING_GUIDANCE;
+  if (config?.aiMode === "live") return formatted + LIVE_TOOL_INSTRUCTIONS;
+  return formatted;
+}
 
 // ── Groq chat model selection (admin-controlled) ──
 // The admin can pin a specific Groq chat model in the Admin Dashboard; the
@@ -86,9 +94,44 @@ export const GROQ_MODEL_OPTIONS = [
   { id: "gemma2-9b-it", label: "Gemma 2 9B" },
 ];
 
-// The model actually used for a request: the app default unless the admin has
-// switched the default toggle off and pinned a specific model.
+// "Live Mode" routes to Groq Compound (agentic, with web search / website
+// visiting / Python execution tools). These are selectable by the admin.
+export const GROQ_LIVE_MODEL_OPTIONS = [
+  { id: "groq/compound", label: "Groq Live Search & Tools (groq/compound)" },
+  { id: "groq/compound-mini", label: "Groq Live Search Light (groq/compound-mini)" },
+];
+export const AI_MODE_OPTIONS = [
+  { id: "old", label: "Old Mode (legacy model + original prompt)" },
+  { id: "live", label: "New Live Mode (Groq Compound + tools)" },
+];
+
+// Appended to the EXISTING identity block ONLY in Live Mode, so the AI keeps
+// its custom name + app knowledge while gaining autonomous tool access.
+const LIVE_TOOL_INSTRUCTIONS =
+  "\n\nLIVE MODE TOOLS ENABLED — you have autonomous access to the following tools " +
+  "and should use them whenever they help answer the user's request:\n" +
+  "- Web Search: search the live internet for current information, news, and facts.\n" +
+  "- Website Visiting: open and read specific web pages to extract detailed information.\n" +
+  "- Python Code Execution: run Python code to compute, analyze data, or solve problems.\n" +
+  "Use these tools proactively and seamlessly when a question benefits from current or " +
+  "computed information, while always retaining your custom identity and NexText app knowledge above.";
+
+// Injected into EVERY reply so the AI's output is clean and readable: short
+// paragraphs, real bullet points, and minimal markdown noise (the previous
+// output was clogged with stray asterisks/bold). Applies to both modes.
+const FORMATTING_GUIDANCE =
+  "\n\nREPLY FORMATTING — keep answers clean and easy to scan:\n" +
+  "- Use short paragraphs and bullet points (•) for lists or multiple items.\n" +
+  "- Use **bold** sparingly — only for genuine emphasis. Do NOT wrap words in asterisks constantly.\n" +
+  "- For steps, options, or facts, prefer a clear bulleted or numbered list.\n" +
+  "- Be concise and well-structured; let whitespace and lists carry the layout.";
+
+// The model actually used for a request:
+//  - Live Mode → the pinned Compound model (groq/compound or groq/compound-mini).
+//  - Old Mode → the app default unless the admin has switched the default
+//    toggle off and pinned a specific legacy model.
 export function getEffectiveModel(config) {
+  if (config?.aiMode === "live") return config?.aiLiveModel || "groq/compound";
   if (config?.useDefaultModel !== false) return DEFAULT_GROQ_MODEL;
   return config?.groqModel || DEFAULT_GROQ_MODEL;
 }
@@ -98,13 +141,13 @@ const SYSTEM_CONFIG_REF = doc(db, "config", "system");
 export async function ensureSystemConfig() {
   const snap = await getDoc(SYSTEM_CONFIG_REF);
   if (!snap.exists()) {
-    await setDoc(SYSTEM_CONFIG_REF, { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true });
+    await setDoc(SYSTEM_CONFIG_REF, { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true, aiMode: "old", aiLiveModel: "groq/compound" });
   }
 }
 
 export async function getSystemConfig() {
   const snap = await getDoc(SYSTEM_CONFIG_REF);
-  return snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true };
+  return snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true, aiMode: "old", aiLiveModel: "groq/compound" };
 }
 
 export async function setSystemConfig(patch, adminUid) {
@@ -115,7 +158,7 @@ export function useSystemConfigHook() {
   const [config, setConfig] = useState(null);
   useEffect(() => {
     const unsub = onSnapshot(SYSTEM_CONFIG_REF, (snap) => {
-      setConfig(snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, tourDisabled: false, groqApiKey: "" });
+      setConfig(snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, tourDisabled: false, groqApiKey: "", aiMode: "old", aiLiveModel: "groq/compound" });
     }, () => {});
     return unsub;
   }, []);
@@ -216,21 +259,74 @@ async function callGroq(apiKey, messages, temperature = 0.7, model = DEFAULT_GRO
   return content.trim();
 }
 
-export async function sendAIMessage(userUid, messageText, chatHistory = []) {
+// Turns raw Groq/AI errors into a short, human-friendly sentence shown in the
+// chat instead of a raw JSON blob like "Groq API error (413): {...}".
+export function describeAIError(error) {
+  const raw = String(error?.message || error || "Unknown error");
+  const lower = raw.toLowerCase();
+  if (lower.includes("413") || lower.includes("request entity too large")) {
+    return "That message is too large for the AI to handle right now. Try a shorter message or start a new chat.";
+  }
+  if (lower.includes("429") || lower.includes("rate limit") || lower.includes("quota")) {
+    return "The AI is busy at the moment (rate limit reached). Please wait a few seconds and try again.";
+  }
+  if (lower.includes("not configured") || lower.includes("no api key")) {
+    return "AI isn't set up yet — an admin needs to add an API key in the Admin Dashboard.";
+  }
+  if (lower.includes("disabled by the administrator") || lower.includes("removed by the administrator")) {
+    return "AI is turned off by the administrator.";
+  }
+  if (lower.includes("empty response")) {
+    return "The AI didn't send a reply. Please try again.";
+  }
+  if (lower.includes("timeout") || lower.includes("network") || lower.includes("failed to fetch")) {
+    return "Couldn't reach the AI service. Check your connection and try again.";
+  }
+  return "Something went wrong with the AI. Please try again.";
+}
+
+export async function sendAIMessage(userUid, messageText, chatHistory = [], customInstructions = "") {
   const config = await getSystemConfigForCall();
   const personalityKey = await getPersonalityKey(userUid);
-  // Cap history to the last 20 messages — sending the whole unbounded chat
-  // log balloons the token cost of every request, which trips Groq's
-  // per-minute/token limits and makes "rate limit reached" fire far too early.
-  const history = (chatHistory || []).slice(-20);
-  const messages = [
-    { role: "system", content: getSystemPrompt(personalityKey) },
-    ...history
-      .map((m) => ({ role: m.senderId === AI_CONTACT_UID ? "assistant" : "user", content: m.text || "" }))
+  // Live Mode (groq/compound) has a tighter practical input limit, so feed it a
+  // smaller, trimmed history. Old Mode can take a bit more. Either way every
+  // message is truncated so a single huge paste can't blow the request size
+  // (Groq returns 413 "Request Entity Too Large" otherwise, on every message).
+  const MAX_HISTORY = config?.aiMode === "live" ? 8 : 18;
+  const MAX_MSG_CHARS = config?.aiMode === "live" ? 900 : 1500;
+  const MAX_SYS_CHARS = 4000;
+  const truncate = (s, n) => (s || "").length > n ? (s.slice(0, n) + "…") : (s || "");
+  // Long custom instructions can push the request body past the model's limit
+  // even for a one-word message (Groq then returns 413). Cap them so a short
+  // question never fails just because the system prompt is huge.
+  const safeCustom = truncate((customInstructions || ""), MAX_SYS_CHARS - 500);
+  const systemPrompt = truncate(safeCustom ? `${safeCustom}\n\n${getSystemPrompt(personalityKey, config)}` : getSystemPrompt(personalityKey, config), MAX_SYS_CHARS);
+
+  const buildMessages = (hist) => ([
+    { role: "system", content: systemPrompt },
+    ...hist
+      .map((m) => ({ role: m.senderId === AI_CONTACT_UID ? "assistant" : "user", content: truncate(m.text || "", MAX_MSG_CHARS) }))
       .filter((m) => m.content),
     { role: "user", content: messageText },
-  ];
-  return callGroq(config.key, messages, 0.7, config.model);
+  ]);
+
+  let hist = (chatHistory || []).slice(-MAX_HISTORY);
+  // Retry on 413 by progressively dropping the oldest history. This keeps a
+  // normal chat working instead of failing every message when the context is
+  // too large.
+  for (let attempt = 0; attempt <= 3; attempt++) {
+    try {
+      return await callGroq(config.key, buildMessages(hist), 0.7, config.model);
+    } catch (err) {
+      const is413 = String(err?.message || "").includes("413") || String(err?.message || "").toLowerCase().includes("request entity too large");
+      if (is413 && hist.length > 0 && attempt < 3) {
+        hist = hist.slice(Math.ceil(hist.length / 2));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("AI request was too large to process. Try a shorter message or start a new chat.");
 }
 
 // ── Message Translation (Groq) ──
@@ -353,7 +449,7 @@ export async function sendAIContextMessage(userUid, question, chatTranscript) {
   const messages = [
     {
       role: "system",
-      content: `You are NexText AI analyzing a chat conversation. ${getSystemPrompt(personalityKey)} The user will ask questions about the chat below. Be helpful and concise.`,
+      content: `You are NexText AI analyzing a chat conversation. ${getSystemPrompt(personalityKey, config)} The user will ask questions about the chat below. Be helpful and concise.`,
     },
     {
       role: "user",
@@ -376,7 +472,7 @@ async function getSystemConfigForCall() {
   if (config?.hideAiEverywhere) throw new Error("AI has been removed by the administrator.");
   const key = (config?.groqApiKey || "").trim();
   if (!key) throw new Error("AI is not configured. No API key found in Firestore /config/system.");
-  return { key, model: getEffectiveModel(config) };
+  return { key, model: getEffectiveModel(config), aiMode: config?.aiMode || "old" };
 }
 
 // Read API key fresh from Firestore on every call (no caching)
@@ -520,8 +616,13 @@ export async function analyzeImageWithGroq(userUid, input, question = "Describe 
 export async function transcribeVoiceNote(userUid, audioBlob) {
   const key = await getApiKeyFresh();
   if (!audioBlob) throw new Error("No audio provided for transcription.");
+  const blobType = (audioBlob?.type || "").toLowerCase();
+  const ext = blobType.includes("mp4") || blobType.includes("m4a") ? "m4a"
+    : blobType.includes("ogg") ? "ogg"
+    : blobType.includes("wav") ? "wav"
+    : "webm";
   const form = new FormData();
-  form.append("file", audioBlob, "voice.mp4");
+  form.append("file", audioBlob, `voice.${ext}`);
   form.append("model", "whisper-large-v3-turbo");
   form.append("response_format", "json");
   const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
@@ -570,7 +671,7 @@ export async function sendGroupAIMessage(userUid, chatId, messageText, chatHisto
   const messages = [
     {
       role: "system",
-      content: `You are NexText AI participating in a group chat. ${getSystemPrompt(personalityKey)} You are responding because someone mentioned you or asked a question. Be helpful, concise, and relevant to the conversation context. Keep responses under 3 sentences unless detail is requested.`,
+      content: `You are NexText AI participating in a group chat. ${getSystemPrompt(personalityKey, config)} You are responding because someone mentioned you or asked a question. Be helpful, concise, and relevant to the conversation context. Keep responses under 3 sentences unless detail is requested.`,
     },
     ...contextMessages,
     { role: "user", content: messageText },
@@ -593,7 +694,7 @@ export async function sendAIContextMessageWithActiveChat(userUid, question, chat
   const messages = [
     {
       role: "system",
-      content: `You are NexText AI analyzing chat conversations. ${getSystemPrompt(personalityKey)} The user will ask questions about the transcripts below. Be helpful and concise. You have access to both the full transcript and recent messages from the active chat.`,
+      content: `You are NexText AI analyzing chat conversations. ${getSystemPrompt(personalityKey, config)} The user will ask questions about the transcripts below. Be helpful and concise. You have access to both the full transcript and recent messages from the active chat.`,
     },
     {
       role: "user",

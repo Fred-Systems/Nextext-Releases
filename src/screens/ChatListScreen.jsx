@@ -9,6 +9,7 @@ import { usePresence, formatLastSeen } from "../firebase/presence";
 import { useStatuses } from "../firebase/status";
 import { useSystemConfigHook, getAIContact, AI_CONTACT_UID } from "../firebase/ai";
 import { useBroadcastLists, createBroadcastList, deleteBroadcastList, sendBroadcastText } from "../firebase/broadcast";
+import { useGlobalSettings } from "../firebase/config-settings";
 
 const VIEWED_KEY = "nextext_status_viewed";
 function getStoredViewed() {
@@ -80,6 +81,7 @@ function ChatRowMeta({ myUid, otherUid, chatId, t, compact, isGroup }) {
 
 export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroupInfo, onOpenSettings, hideNav, navTab, compactList, searchMode = "visible", topBarVisible = true, searchBarScale = 1, isActiveTab = true }) {
   const { t } = useTheme();
+  const globalSettings = useGlobalSettings();
   const { chats } = useChats(myUid);
   const { contacts } = useContacts(myUid);
   const [showAddContact, setShowAddContact] = useState(false);
@@ -102,6 +104,24 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [showSearch, setShowSearch] = useState(() => searchMode === "visible");
   const [searchQuery, setSearchQuery] = useState("");
   const [contextMenuChat, setContextMenuChat] = useState(null);
+  // When the user locks a chat but no locked-chats password exists yet, we
+  // prompt them to create one before the lock takes effect.
+  const [lockPassSetupChat, setLockPassSetupChat] = useState(null);
+  const [lockPassInput, setLockPassInput] = useState("");
+  const [lockPassConfirm, setLockPassConfirm] = useState("");
+  const [lockPassError, setLockPassError] = useState("");
+  // Unlocking an already-locked chat requires the locked-chats password.
+  const [unlockPassChat, setUnlockPassChat] = useState(null);
+  const [unlockPassInput, setUnlockPassInput] = useState("");
+  const [unlockPassError, setUnlockPassError] = useState("");
+  const tryUnlock = () => {
+    const val = unlockPassInput.trim();
+    if (!val) { setUnlockPassError("Enter the password."); return; }
+    if (val !== lockedChatsPassword) { setUnlockPassError("Wrong password."); return; }
+    toggleLocked(unlockPassChat.id, myUid, true).catch((e) => setMenuError(e?.message || "Couldn't unlock chat."));
+    setUnlockPassChat(null);
+    setUnlockPassInput("");
+  };
   const [menuError, setMenuError] = useState("");
   const [groupMenu, setGroupMenu] = useState(null);
   const [groupPictureFullscreen, setGroupPictureFullscreen] = useState(null);
@@ -133,6 +153,10 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   // it) to avoid a temporal dead zone crash on render.
   const [lockedChatsUnlocked, setLockedChatsUnlocked] = useState(false);
   const lockedChatsPassword = localStorage.getItem("nextext_locked_chats_password") || "";
+
+  // Global settings for hiding filter/share buttons
+  const showFilterButtons = !globalSettings?.hideFilterButton;
+  const showShareButton = !globalSettings?.hideShareButton;
 
   // A contact whose direct chat is locked is hidden from the contacts list
   // so the user can't bypass the lock by tapping the chat icon next to their
@@ -186,11 +210,6 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     } catch { return "recent"; }
   });
   const [showSortMenu, setShowSortMenu] = useState(false);
-  // Guard refs so the Android WebView tap (onTouchEnd) doesn't double-fire
-  // with the synthetic onClick. Without this, the menu opens and immediately
-  // closes on some Android WebView builds.
-  const sortTouchRef = useRef(0);
-  const chatSortTouchRef = useRef(0);
   useEffect(() => {
     try { localStorage.setItem("nextext_contact_sort", contactSort); } catch {}
   }, [contactSort]);
@@ -651,34 +670,36 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             </div>
           ))}
         </div>
-        <div style={{ position: "relative", flexShrink: 0 }}>
-          <button
-            type="button"
-            onClick={(e) => { if (chatSortTouchRef.current) return; const now = Date.now(); if (now - chatSortTouchRef.current < 300) return; chatSortTouchRef.current = now; setShowChatSortMenu((v) => !v); }}
-            title="Sort chats"
-            aria-label="Sort chats"
-            style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", touchAction: "manipulation" }}
-          >
-            <ArrowDownWideNarrow size={16} color={t.primary} />
-          </button>
-          {showChatSortMenu && createPortal(
-            <div onClick={() => setShowChatSortMenu(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-              <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 300, background: t.surface, borderRadius: 16, padding: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Sort chats</span>
-                  <X size={20} color={t.textMuted} onClick={() => setShowChatSortMenu(false)} style={{ cursor: "pointer" }} />
-                </div>
-                {CHAT_SORT_OPTIONS.map((o) => (
-                  <div key={o.key} onClick={() => { setChatSort(o.key); setShowChatSortMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderRadius: 10, fontSize: 13.5, fontWeight: chatSort === o.key ? 700 : 500, color: chatSort === o.key ? t.primary : t.text, cursor: "pointer", background: chatSort === o.key ? t.primaryLight : "transparent" }}>
-                    {chatSort === o.key && <span style={{ width: 14, color: t.primary }}>✓</span>}
-                    <span style={{ marginLeft: chatSort === o.key ? 0 : 22 }}>{o.label}</span>
+        {showFilterButtons && (
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => setShowChatSortMenu((v) => !v)}
+              title="Sort chats"
+              aria-label="Sort chats"
+              style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", touchAction: "manipulation" }}
+            >
+              <ArrowDownWideNarrow size={16} color={t.primary} />
+            </button>
+            {showChatSortMenu && createPortal(
+              <div onClick={() => setShowChatSortMenu(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+                <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 300, background: t.surface, borderRadius: 16, padding: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Sort chats</span>
+                    <X size={20} color={t.textMuted} onClick={() => setShowChatSortMenu(false)} style={{ cursor: "pointer" }} />
                   </div>
-                ))}
-              </div>
-            </div>,
-            document.body
-          )}
-        </div>
+                  {CHAT_SORT_OPTIONS.map((o) => (
+                    <div key={o.key} onClick={() => { setChatSort(o.key); setShowChatSortMenu(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderRadius: 10, fontSize: 13.5, fontWeight: chatSort === o.key ? 700 : 500, color: chatSort === o.key ? t.primary : t.text, cursor: "pointer", background: chatSort === o.key ? t.primaryLight : "transparent" }}>
+                      {chatSort === o.key && <span style={{ width: 14, color: t.primary }}>✓</span>}
+                      <span style={{ marginLeft: chatSort === o.key ? 0 : 22 }}>{o.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>,
+              document.body
+            )}
+          </div>
+        )}
         <div onClick={() => setShowNewListModal(true)} style={{ width: 30, height: 30, borderRadius: "50%", background: t.primary, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
           <Plus size={16} color="#fff" />
         </div>
@@ -794,10 +815,10 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           )}
           <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted, marginBottom: 8, marginTop: pendingContacts.length > 0 ? 16 : 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span>YOUR CONTACTS</span>
-            <div style={{ position: "relative" }}>
+            {showFilterButtons && (<div style={{ position: "relative" }}>
               <button
                 type="button"
-                onClick={(e) => { if (sortTouchRef.current) return; const now = Date.now(); if (now - sortTouchRef.current < 300) return; sortTouchRef.current = now; setShowSortMenu((v) => !v); }}
+                onClick={() => setShowSortMenu((v) => !v)}
                 title="Sort contacts"
                 aria-label="Sort contacts"
                 style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", touchAction: "manipulation" }}
@@ -821,7 +842,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
                 </div>,
                 document.body
               )}
-            </div>
+            </div>)}
           </div>
           {selfContact && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
@@ -982,7 +1003,28 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               <X size={18} color={t.textMuted} onClick={(e) => { e.stopPropagation(); setContextMenuChat(null); setMenuError(""); }} style={{ cursor: "pointer", flexShrink: 0 }} />
             </div>
             {menuError && <div style={{ padding: "8px 18px", fontSize: 12, color: "#FF3B30", background: "#FF3B3015" }}>{menuError}</div>}
-            <div onClick={() => { setMenuError(""); toggleLocked(contextMenuChat.id, myUid, !!contextMenuChat.lockedBy?.[myUid]).catch((e) => setMenuError(e?.message || "Couldn't lock/unlock chat.")); setContextMenuChat(null); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", cursor: "pointer" }}>
+            <div onClick={() => {
+              setMenuError("");
+              const chat = contextMenuChat;
+              const willLock = !chat.lockedBy?.[myUid];
+              setContextMenuChat(null);
+              // Locking without a password: make them set one first.
+              if (willLock && !lockedChatsPassword) {
+                setLockPassInput("");
+                setLockPassConfirm("");
+                setLockPassError("");
+                setLockPassSetupChat(chat);
+                return;
+              }
+              // Unlocking always requires the password.
+              if (!willLock) {
+                setUnlockPassInput("");
+                setUnlockPassError("");
+                setUnlockPassChat(chat);
+                return;
+              }
+              toggleLocked(chat.id, myUid, !willLock).catch((e) => setMenuError(e?.message || "Couldn't lock/unlock chat."));
+            }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", cursor: "pointer" }}>
               <Lock size={17} color={contextMenuChat.lockedBy?.[myUid] ? t.accent : t.text} />
               <span style={{ fontSize: 14.5, color: contextMenuChat.lockedBy?.[myUid] ? t.accent : t.text }}>{contextMenuChat.lockedBy?.[myUid] ? "Unlock chat" : "Lock chat"}</span>
             </div>
@@ -1006,6 +1048,50 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         </div>
       )}
 
+      {lockPassSetupChat && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: t.surface, borderRadius: 14, overflow: "hidden", width: "82%", maxWidth: 320, padding: 18, boxShadow: "0 4px 20px rgba(0,0,0,0.25)" }}>
+            <div style={{ fontWeight: 700, fontSize: 16, color: t.text, marginBottom: 6 }}>Set a lock password</div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 12 }}>
+              You're locking <b>{chatDisplayName(lockPassSetupChat)}</b>. Set a password now so only you can open it later.
+            </div>
+            <input type="password" value={lockPassInput} onChange={(e) => { setLockPassInput(e.target.value); setLockPassError(""); }} placeholder="Password or PIN" style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 14, boxSizing: "border-box", marginBottom: 8 }} />
+            <input type="password" value={lockPassConfirm} onChange={(e) => { setLockPassConfirm(e.target.value); setLockPassError(""); }} placeholder="Confirm password" style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 14, boxSizing: "border-box", marginBottom: 6 }} />
+            {lockPassError && <div style={{ fontSize: 12, color: "#FF3B30", marginBottom: 6 }}>{lockPassError}</div>}
+            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+              <button onClick={() => { setLockPassSetupChat(null); setLockPassInput(""); setLockPassConfirm(""); }} style={{ flex: 1, padding: "10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Cancel</button>
+              <button onClick={() => {
+                const val = lockPassInput.trim();
+                const conf = lockPassConfirm.trim();
+                if (val.length < 1) { setLockPassError("Enter a password."); return; }
+                if (val !== conf) { setLockPassError("Passwords don't match."); return; }
+                try { localStorage.setItem("nextext_locked_chats_password", val); } catch {}
+                toggleLocked(lockPassSetupChat.id, myUid, false).catch((e) => setMenuError(e?.message || "Couldn't lock chat."));
+                setLockPassSetupChat(null);
+                setLockPassInput("");
+                setLockPassConfirm("");
+              }} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Lock chat</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {unlockPassChat && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: t.surface, borderRadius: 14, overflow: "hidden", width: "82%", maxWidth: 320, padding: 18, boxShadow: "0 4px 20px rgba(0,0,0,0.25)" }}>
+            <div style={{ fontWeight: 700, fontSize: 16, color: t.text, marginBottom: 6 }}>Enter lock password</div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 12 }}>
+              Enter the password to unlock <b>{chatDisplayName(unlockPassChat)}</b>.
+            </div>
+            <input type="password" value={unlockPassInput} onChange={(e) => { setUnlockPassInput(e.target.value); setUnlockPassError(""); }} onKeyDown={(e) => { if (e.key === "Enter") { tryUnlock(); } }} placeholder="Lock code…" style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${unlockPassError ? "#FF3B30" : t.border}`, background: t.bg, color: t.text, fontSize: 14, boxSizing: "border-box", marginBottom: unlockPassError ? 6 : 12 }} />
+            {unlockPassError && <div style={{ fontSize: 12, color: "#FF3B30", marginBottom: 10 }}>{unlockPassError}</div>}
+            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+              <button onClick={() => { setUnlockPassChat(null); setUnlockPassInput(""); }} style={{ flex: 1, padding: "10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Cancel</button>
+              <button onClick={tryUnlock} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Unlock</button>
+            </div>
+          </div>
+        </div>
+      )}
       {showNewListModal && (
         <div onClick={() => { setShowNewListModal(false); setNewListName(""); }} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: t.surface, borderRadius: 16, padding: 20, width: "80%", maxWidth: 300, boxShadow: "0 4px 20px rgba(0,0,0,0.3)" }}>

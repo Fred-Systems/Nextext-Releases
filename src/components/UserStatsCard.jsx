@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Copy, Users } from "lucide-react";
+import { X, Copy, Users, ChevronDown, ChevronUp } from "lucide-react";
 import { BarChart2, RefreshCw, Share, MessagesSquare, Image, Film, Mic, MapPin, Paperclip, Contact, Clock, Timer, ArrowDownUp } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { useGlobalSettings } from "../firebase/config-settings";
@@ -160,19 +160,19 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <BarChart2 size={18} color={t.primary} />
         <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Your statistics</span>
-        {!loading && !error && (
-          <>
-            <button onClick={() => setMinimized((v) => !v)} style={{ marginLeft: "auto", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.textMuted, fontWeight: 600, background: "none", border: "none", padding: 0 }}>
-              {minimized ? "Show" : "Hide"}
-            </button>
-            <button onClick={shareStats} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, background: "none", border: "none", padding: 0 }}>
+{!globalSettings?.hideShareButton && (
+            <button onClick={shareStats} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, background: "none", border: "none", padding: 0, touchAction: "manipulation" }}>
               <Share size={13} /> {copiedShare ? "Copied!" : "Share"}
             </button>
-            <button onClick={load} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, color: t.primary, fontWeight: 600, background: "none", border: "none", padding: 0 }}>
-              <RefreshCw size={13} /> Refresh
-            </button>
-          </>
-        )}
+          )}
+        <button
+          onClick={() => setMinimized((m) => !m)}
+          aria-label={minimized ? "Show statistics" : "Hide statistics"}
+          title={minimized ? "Show statistics" : "Hide statistics"}
+          style={{ marginLeft: "auto", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, borderRadius: "50%", background: "transparent", border: "none", color: t.textMuted }}
+        >
+          {minimized ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+        </button>
       </div>
 
       {!minimized && (<>
@@ -261,7 +261,7 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
       </>)}
 
       {shareOpen && createPortal(
-        <div onClick={() => { setShareOpen(false); setShareMode("sheet"); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2147482000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, pointerEvents: shareArmed ? "auto" : "none" }}>
+        <div onClick={() => { setShareOpen(false); setShareMode("sheet"); }} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 2147482000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, pointerEvents: shareArmed ? "auto" : "none" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 320, background: t.surface, borderRadius: 16, padding: 18, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Share your statistics</span>

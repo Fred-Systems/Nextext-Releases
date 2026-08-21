@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   collection, query, where, orderBy, onSnapshot, doc, setDoc, addDoc,
   serverTimestamp, updateDoc, arrayUnion, arrayRemove, getDoc, getDocs, writeBatch, deleteField, deleteDoc, increment,
@@ -94,6 +94,7 @@ function saveChatsCache(myUid, rows) {
 export function useChats(myUid) {
   const [chats, setChats] = useState(() => loadChatsCache(myUid));
   const [loading, setLoading] = useState(true);
+  const prevSentAtRef = useRef({});
 
   useEffect(() => {
     if (!myUid) return;
@@ -105,6 +106,19 @@ export function useChats(myUid) {
       setChats(rows);
       saveChatsCache(myUid, rows);
       setLoading(false);
+
+      // Archived chats stay hidden and silent — but the moment a *new* message
+      // lands in one, it re-surfaces as a fresh chat (auto un-archived). We
+      // detect this by watching lastMessage.sentAt move forward for a chat that
+      // this user currently has archived.
+      const prev = prevSentAtRef.current;
+      rows.forEach((c) => {
+        const ts = c.lastMessage?.sentAt?.toMillis?.() || 0;
+        if ((c.archivedBy || []).includes(myUid) && ts > (prev[c.id] || 0)) {
+          updateDoc(doc(db, "chats", c.id), { archivedBy: arrayRemove(myUid) }).catch(() => {});
+        }
+        prev[c.id] = ts;
+      });
     }, (err) => {
       console.warn("[useChats] snapshot error:", err?.message || err);
       setLoading(false);
@@ -165,6 +179,13 @@ export async function snapshotSenderName(senderUid) {
 export async function sendTextMessage(chatId, senderUid, text, otherParticipants, options = {}) {
   const { replyTo = null, scheduledFor = null, statusRef = null } = options;
   const sender = await snapshotSenderName(senderUid);
+
+  // If this is a 1-on-1 chat whose doc was deleted (e.g. the other person
+  // hard-deleted it), recreate it with both participants so the conversation
+  // can resurface for the receiver on this new message.
+  if (otherParticipants && otherParticipants.length === 1) {
+    try { getOrCreateDirectChat(senderUid, otherParticipants[0]); } catch { /* non-fatal */ }
+  }
 
   await addDoc(collection(db, "chats", chatId, "messages"), {
     senderId: senderUid,
@@ -774,6 +795,33 @@ export async function addMembersToGroup(chatId, newUids) {
     participants: arrayUnion(...additions),
     unreadCount: unread,
   });
+}
+
+// Let any group member leave the chat (not just the creator/admin). Removes
+// the user from participants, unread counters, admin list, and all of their
+// per-user flags (mute, lock, archive, favorite). If the group is left with
+// no participants, the now-orphaned chat is deleted entirely.
+export async function leaveGroupChat(chatId, myUid) {
+  if (!chatId || !myUid) return;
+  const ref = doc(db, "chats", chatId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const data = snap.data() || {};
+  const patch = {
+    participants: arrayRemove(myUid),
+    archivedBy: arrayRemove(myUid),
+    favoritedBy: arrayRemove(myUid),
+    [`unreadCount.${myUid}`]: deleteField(),
+    [`mutedBy.${myUid}`]: deleteField(),
+    [`lockedBy.${myUid}`]: deleteField(),
+    [`deletedForSelf.${myUid}`]: true,
+  };
+  if ((data.groupAdmins || []).includes(myUid)) patch.groupAdmins = arrayRemove(myUid);
+  await updateDoc(ref, patch);
+  const after = await getDoc(ref);
+  if (!after.exists() || (after.data()?.participants || []).length === 0) {
+    await deleteChatCompletely(chatId).catch(() => {});
+  }
 }
 
 // Fetch the profile docs for a list of user uids in parallel. Returns

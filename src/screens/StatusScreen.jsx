@@ -9,6 +9,9 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import Avatar from "../components/Avatar";
 import StatusStoryViewer from "./StatusStoryViewer";
+import { getMicrophoneStream } from "../media/microphone";
+import { base64ToBlob } from "../media/base64";
+import { useGlobalSettings } from "../firebase/config-settings";
 
 const VIEWED_KEY = "nextext_status_viewed";
 
@@ -143,6 +146,9 @@ function StatusViewerModal({ statusId, contacts, onClose, t }) {
 export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChange, initialViewStatuses, statusOrigin, onConsumeInitialView }) {
   const { t } = useTheme();
   const { contacts } = useContacts(myUid);
+  const globalSettings = useGlobalSettings();
+  const hideStatusCamera = globalSettings?.hideStatusCamera === true;
+  const hideStatusVoiceNote = globalSettings?.hideStatusVoiceNote === true;
   const [blockStatus, setBlockStatus] = useState(false);
   useEffect(() => {
     if (!myUid) return;
@@ -451,10 +457,10 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
     e.target.value = "";
   };
 
-  const startCamera = async (captureMode, facing = cameraFacing) => {
-    setCameraError("");
-    try {
-      if (cameraStreamRef.current) {
+    const startCamera = async (captureMode, facing = cameraFacing) => {
+      setCameraError("");
+      try {
+        if (cameraStreamRef.current) {
         cameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
         cameraStreamRef.current = null;
       }
@@ -518,7 +524,37 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
     if (cameraTimerRef.current) { clearTimeout(cameraTimerRef.current); cameraTimerRef.current = null; }
   };
 
-  const stopVoiceRecording = () => {
+  const stopVoiceRecording = async () => {
+    const isNative = typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.();
+    const NextextNative = isNative ? window.Capacitor?.Plugins?.NextextNative : null;
+    if (isNative && NextextNative && typeof NextextNative.stopVoiceRecording === "function") {
+      // Native recording path — the recorder returns the audio as base64
+      // (the file is deleted right after), so decode it directly.
+      try {
+        const res = await NextextNative.stopVoiceRecording();
+        const b64 = res?.base64;
+        if (b64) {
+          const blob = base64ToBlob(b64, res?.mimeType || "audio/mp4");
+          setVoiceBlob(blob);
+          setVoiceDurationMs(res?.durationMs || 0);
+          setIsVoiceRecording(false);
+          if (voiceRecorderRef.current?._nativeTickInterval) {
+            clearInterval(voiceRecorderRef.current._nativeTickInterval);
+            voiceRecorderRef.current._nativeTickInterval = null;
+          }
+          return;
+        }
+        setPostError("Failed to read recorded audio.");
+      } catch (err) {
+        console.warn("Native stopVoiceRecording failed:", err);
+      }
+    }
+    // Clear native timer if any
+    if (voiceRecorderRef.current?._nativeTickInterval) {
+      clearInterval(voiceRecorderRef.current._nativeTickInterval);
+      voiceRecorderRef.current._nativeTickInterval = null;
+    }
+    // WebView MediaRecorder fallback
     if (voiceRecorderRef.current && voiceRecorderRef.current.state === "recording") {
       voiceRecorderRef.current.stop();
     }
@@ -534,11 +570,44 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       setPostError("Voice recording isn't supported on this device.");
       return;
     }
+    const isNative = typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.();
+    const NextextNative = isNative ? window.Capacitor?.Plugins?.NextextNative : null;
+    if (isNative && NextextNative && typeof NextextNative.startVoiceRecording === "function") {
+      // Use native Android recording (same as regular voice notes) — avoids WebView
+      // MediaRecorder NotReadableError on devices like the Duoqin F21 Pro.
+      try {
+        await NextextNative.startVoiceRecording();
+        setIsVoiceRecording(true);
+        setVoiceBlob(null);
+        setVoiceDurationMs(0);
+        // Start timer for native recording to show duration
+        const nativeStartTime = Date.now();
+        voiceRecorderRef.current = voiceRecorderRef.current || {};
+        voiceRecorderRef.current._nativeTickInterval = setInterval(() => {
+          setVoiceDurationMs(Date.now() - nativeStartTime);
+        }, 200);
+        // The actual blob will be retrieved when stopVoiceRecording is called
+        return;
+      } catch (err) {
+        console.warn("Native status voice recording failed, falling back to WebView:", err);
+        // Fall through to WebView fallback
+      }
+    }
+    // WebView MediaRecorder fallback
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await getMicrophoneStream({ audio: true });
       voiceStreamRef.current = stream;
       const chunks = [];
-      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/ogg;codecs=opus" });
+      let recorder;
+      try {
+        const mt = MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" :
+          (MediaRecorder.isTypeSupported("audio/m4a") ? "audio/m4a" :
+          (MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" :
+          (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus") ? "audio/ogg;codecs=opus" : "")));
+        recorder = mt ? new MediaRecorder(stream, { mimeType: mt }) : new MediaRecorder(stream);
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
       voiceRecorderRef.current = recorder;
       const startTime = Date.now();
       setIsVoiceRecording(true);
@@ -551,7 +620,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
         voiceStreamRef.current = null;
         voiceRecorderRef.current = null;
         setIsVoiceRecording(false);
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/mp4" });
         setVoiceBlob(blob);
         setVoiceDurationMs(Date.now() - startTime);
       };
@@ -719,52 +788,51 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       )}
 
       {/* Camera overlay */}
-      {showCamera && createPortal(
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "calc(12px + var(--safe-top)) 16px 12px", minHeight: 44, flexShrink: 0 }}>
-            <X size={22} color="#fff" onClick={() => { setShowCamera(false); stopCameraStream(); }} style={{ cursor: "pointer" }} />
-            <div onClick={flipCamera} style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-              <RefreshCw size={20} color="#fff" />
+        {showCamera && (
+          <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "calc(12px + var(--safe-top)) 16px 12px", minHeight: 44, flexShrink: 0, position: "relative", zIndex: 10 }}>
+              <X size={22} color="#fff" onClick={() => { setShowCamera(false); stopCameraStream(); }} style={{ cursor: "pointer" }} />
+              <div onClick={flipCamera} style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                <RefreshCw size={20} color="#fff" />
+              </div>
             </div>
-          </div>
-          <video
-            ref={(el) => {
-              cameraVideoRef.current = el;
-              if (el && cameraStreamRef.current && !el.srcObject) {
-                el.srcObject = cameraStreamRef.current;
-                el.play().catch(() => {});
-              }
-            }}
-            autoPlay
-            playsInline
-            muted
-            style={{ flex: 1, width: "100%", height: "100%", objectFit: "contain", minHeight: 0, background: "#000" }}
-          />
-          {cameraError && <div style={{ position: "absolute", bottom: 100, left: 0, right: 0, textAlign: "center", color: "#FF3B30", fontSize: 13, fontWeight: 600 }}>{cameraError}</div>}
-          <div style={{ position: "absolute", bottom: "calc(28px + var(--safe-bottom))", left: 0, right: 0, display: "flex", justifyContent: "center", gap: "min(28px, 7vw)", zIndex: 10 }}>
-            <div onClick={capturePhotoFromCamera} style={{ width: "min(64px, 16vw)", height: "min(64px, 16vw)", borderRadius: "50%", border: "4px solid #fff", background: "rgba(255,255,255,0.15)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Camera size={26} color="#fff" />
-            </div>
-            <div
-              onClick={() => {
-                if (cameraRecordingRef.current && cameraRecordingRef.current.state === "recording") {
-                  cameraRecordingRef.current.stop();
-                } else {
-                  startCamera("video");
+            <video
+              ref={(el) => {
+                cameraVideoRef.current = el;
+                if (el && cameraStreamRef.current && !el.srcObject) {
+                  el.srcObject = cameraStreamRef.current;
+                  el.play().catch(() => {});
                 }
               }}
-              style={{ width: "min(64px, 16vw)", height: "min(64px, 16vw)", borderRadius: "50%", border: "4px solid #FF3B30", background: cameraRecordingRef.current?.state === "recording" ? "rgba(255,59,48,0.3)" : "rgba(255,255,255,0.15)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-            >
-              <Video size={26} color="#FF3B30" />
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+              autoPlay
+              playsInline
+              muted
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", background: "#000", zIndex: 1 }}
+            />
+           {cameraError && <div style={{ position: "absolute", bottom: 100, left: 0, right: 0, textAlign: "center", color: "#FF3B30", fontSize: 13, fontWeight: 600 }}>{cameraError}</div>}
+           <div style={{ position: "absolute", bottom: "calc(28px + var(--safe-bottom))", left: 0, right: 0, display: "flex", justifyContent: "center", gap: "min(28px, 7vw)", zIndex: 10 }}>
+             <div onClick={capturePhotoFromCamera} style={{ width: "min(64px, 16vw)", height: "min(64px, 16vw)", borderRadius: "50%", border: "4px solid #fff", background: "rgba(255,255,255,0.15)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+               <Camera size={26} color="#fff" />
+             </div>
+             <div
+               onClick={() => {
+                 if (cameraRecordingRef.current && cameraRecordingRef.current.state === "recording") {
+                   cameraRecordingRef.current.stop();
+                 } else {
+                   startCamera("video");
+                 }
+               }}
+               style={{ width: "min(64px, 16vw)", height: "min(64px, 16vw)", borderRadius: "50%", border: "4px solid #FF3B30", background: cameraRecordingRef.current?.state === "recording" ? "rgba(255,59,48,0.3)" : "rgba(255,255,255,0.15)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+             >
+               <Video size={26} color="#FF3B30" />
+             </div>
+           </div>
+         </div>
+       )}
 
       {/* Post status sheet */}
       {showPost && createPortal(
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.4)", zIndex: 2147481000, display: "flex", alignItems: "flex-end" }} onClick={() => { setShowPost(false); setPostMedia(null); setPostText(""); setPostMode("text"); }}>
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.4)", zIndex: 2147481000, display: "flex", alignItems: "flex-end" }} onClick={() => { setShowPost(false); setPostMedia(null); setPostText(""); setPostMode("text"); }}>
           <div style={{ background: t.surface, width: "100%", boxSizing: "border-box", borderRadius: "20px 20px 0 0", padding: "20px 24px 30px", maxHeight: "92vh", overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <span style={{ fontWeight: 700, fontSize: 17, color: t.text }}>New Status</span>
@@ -874,14 +942,18 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
                     <Video size={16} color={t.primary} />
                     <span style={{ fontSize: 13, fontWeight: 600, color: t.primary }}>Video</span>
                   </div>
-                  <div onClick={() => startCamera("photo")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
-                    <Camera size={16} color={t.primary} />
-                    <span style={{ fontSize: 13, fontWeight: 600, color: t.primary }}>Camera</span>
-                  </div>
-                  <div onClick={() => { try { startVoiceRecording(); } catch (e) { setPostError(e?.message || "Could not start voice recording."); } }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primary, cursor: "pointer", border: `1px solid ${t.primary}` }}>
-                    <Mic size={16} color={t.bubbleMeText} />
-                    <span style={{ fontSize: 13, fontWeight: 700, color: t.bubbleMeText }}>🎙️ Voice Note</span>
-                  </div>
+                  {!hideStatusCamera && (
+                    <div onClick={() => startCamera("photo")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
+                      <Camera size={16} color={t.primary} />
+                      <span style={{ fontSize: 13, fontWeight: 600, color: t.primary }}>Camera</span>
+                    </div>
+                  )}
+                  {!hideStatusVoiceNote && (
+                    <div onClick={() => { try { startVoiceRecording(); } catch (e) { setPostError(e?.message || "Could not start voice recording."); } }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primary, cursor: "pointer", border: `1px solid ${t.primary}` }}>
+                      <Mic size={16} color={t.bubbleMeText} />
+                      <span style={{ fontSize: 13, fontWeight: 700, color: t.bubbleMeText }}>🎙️ Voice Note</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Voice note preview — shown when the user has recorded audio.

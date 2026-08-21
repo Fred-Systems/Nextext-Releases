@@ -56,8 +56,8 @@ export default function ForwardPicker({ t, myUid, contacts, myProfile, onClose, 
 
   return createPortal(
     <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2147481400 }} />
-      <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, background: t.surface, borderTopLeftRadius: 18, borderTopRightRadius: 18, zIndex: 2147481401, maxHeight: "78vh", display: "flex", flexDirection: "column", padding: "16px 18px calc(20px + var(--safe-bottom))" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2147481400 }} />
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, background: t.surface, borderTopLeftRadius: 18, borderTopRightRadius: 18, zIndex: 2147481401, maxHeight: "78vh", display: "flex", flexDirection: "column", padding: "16px 18px calc(20px + var(--safe-bottom))" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
           <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Forward to</span>
           <X size={20} color={t.textMuted} onClick={onClose} style={{ cursor: "pointer" }} />

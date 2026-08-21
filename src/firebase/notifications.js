@@ -4,6 +4,7 @@ import { getMessaging, getToken, onMessage } from "firebase/messaging";
 import { app } from "./config";
 import { doc, updateDoc, arrayUnion, arrayRemove } from "firebase/firestore";
 import { db } from "./config";
+import { playChime, isChimeId } from "../utils/pingSounds";
 
 const NextextNative = registerPlugin("NextextNative");
 
@@ -93,14 +94,59 @@ export function triggerNotificationVibration() {
   } catch {}
 }
 
+// Vibration presets the user can pick in Settings, plus a per-user override.
+// NOTE: a `null` pattern means "no vibration" — the native layer and the JS
+// helpers treat `null` (not an empty array) as the signal to stay silent.
+// (An empty array `[]` is still "an array", so it would be passed to the
+// native waveform call instead of being skipped, which is why "No vibration"
+// used to buzz.) Keep `none` as `null`.
+export const VIBRATION_PRESETS = {
+  default: [200, 100, 200],
+  short: [120, 60, 120],
+  long: [300, 100, 300, 100, 300],
+  heartbeat: [80, 60, 80, 60, 200],
+  none: null,
+};
+
+// Ping (sound) options. "default" uses the system notification sound, "none"
+// is silent, and ping1/ping2/ping3 are distinct tones played by the native
+// bridge via ToneGenerator (no bundled audio assets required).
+export const SOUND_OPTIONS = ["default", "none", "ping1", "ping2", "ping3"];
+
+function readGlobalNotifPrefs() {
+  try {
+    const vibOn = localStorage.getItem("nextext_notif_vibrate_on") !== "false";
+    const soundOn = localStorage.getItem("nextext_notif_sound_on") !== "false";
+    const vibKey = localStorage.getItem("nextext_notif_vibration") || "default";
+    const soundKey = localStorage.getItem("nextext_notif_sound") || "default";
+    const custom = localStorage.getItem("nextext_notif_vibration_custom");
+    let pattern = VIBRATION_PRESETS[vibKey];
+    if (vibKey === "custom" && custom) {
+      try { pattern = JSON.parse(custom); } catch { pattern = VIBRATION_PRESETS.default; }
+    }
+    if (!Array.isArray(pattern) && pattern !== null) pattern = VIBRATION_PRESETS.default;
+    // Master switches: vibration off → no pattern; sound off → silent.
+    if (!vibOn) pattern = null;
+    const sound = soundOn ? soundKey : "none";
+    return { vibrationPattern: pattern, sound };
+  } catch {
+    return { vibrationPattern: VIBRATION_PRESETS.default, sound: "default" };
+  }
+}
+
 export function showLocalNotification(title, body, tag = "nextext-msg", info = {}) {
-  triggerNotificationVibration();
+  const prefs = readGlobalNotifPrefs();
+  // info.vibrationPattern / info.sound may be passed explicitly (e.g. a
+  // per-user override resolved by the caller); fall back to global prefs.
+  const vibrationPattern = info.vibrationPattern !== undefined ? info.vibrationPattern : prefs.vibrationPattern;
+  const sound = info.sound !== undefined ? info.sound : prefs.sound;
+  const senderColor = info.senderColor || "#7C5CFF";
+  const imageUrl = info.imageUrl || "";
+  // Chime ids are Web Audio tones the native layer can't synthesize — play them
+  // from JS (foreground only) and tell native to stay silent on sound so we
+  // don't double up. Native still handles the status-bar notification + vibration.
+  const nativeSound = isChimeId(sound) ? "none" : (sound || "default");
   if (Capacitor.isNativePlatform()) {
-    // HTML5 Notification is a silent no-op inside the Capacitor WebView on
-    // modern Android, so route through the native bridge which posts a real
-    // status-bar notification on the nextext-messages channel. The title/body
-    // the caller passes are used as fallbacks; the native side prefers the
-    // structured senderName/groupName/messageText fields it also receives.
     try {
       NextextNative.showLocalNotification({
         title: title || "NexText",
@@ -112,9 +158,16 @@ export function showLocalNotification(title, body, tag = "nextext-msg", info = {
         messageText: info.messageText || "",
         // Locked chat / app lock: hide the message body on the lock screen.
         private: info.private === true,
+        vibrationPattern: Array.isArray(vibrationPattern) ? vibrationPattern : null,
+        sound: nativeSound,
+        senderColor,
+        imageUrl,
       }).catch(() => {});
     } catch (e) {
       console.warn("[notifications] native notification error:", e);
+    }
+    if (isChimeId(sound)) {
+      try { playChime(sound); } catch {}
     }
     return;
   }
@@ -125,12 +178,35 @@ export function showLocalNotification(title, body, tag = "nextext-msg", info = {
         icon: "/icon.png",
         badge: "/icon.png",
         tag,
-        vibrate: [200, 100, 200],
+        vibrate: Array.isArray(vibrationPattern) ? vibrationPattern : undefined,
       });
     }
   } catch (e) {
     console.warn("[notifications] Notification error:", e);
   }
+}
+
+// Preview the chosen vibration + sound instantly when the user taps an option
+// in Settings / a contact profile. Chime ids (the Web Audio voice-note chimes)
+// are played by the JS layer; everything else (default/none/ping1-3) is handled
+// natively. Vibration always goes through the native layer.
+export function previewNotificationFeedback(pattern, sound) {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    if (isChimeId(sound)) {
+      playChime(sound);
+      // Native plays vibration only for chimes (it can't synthesize Web Audio).
+      NextextNative.previewNotificationFeedback({
+        vibrationPattern: Array.isArray(pattern) ? pattern : null,
+        sound: "none",
+      }).catch(() => {});
+      return;
+    }
+    NextextNative.previewNotificationFeedback({
+      vibrationPattern: Array.isArray(pattern) ? pattern : null,
+      sound: sound || "default",
+    }).catch(() => {});
+  } catch {}
 }
 
 export async function initNotifications(myUid) {
@@ -144,7 +220,7 @@ export async function initNotifications(myUid) {
       // no-op and harmless.
       try {
         await PushNotifications.createChannel({
-          id: "nextext-messages",
+          id: "nextext_messages_v2",
           name: "Messages",
           description: "New chat messages",
           importance: 4,           // IMPORTANCE_HIGH (heads-up)

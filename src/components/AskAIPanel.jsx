@@ -4,12 +4,15 @@
 // context, then lets the user chat with the AI about that context. The
 // context is passed to sendAIMessage as chat history so the AI "sees" it.
 import React, { useState, useEffect, useRef } from "react";
-import { X, Send, Bot } from "lucide-react";
+import { X, Send, Bot, Mic } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { sendAIMessage, AI_CONTACT_UID } from "../firebase/ai";
+import VoiceToTextButton from "../components/VoiceToTextButton";
 
 export default function AskAIPanel({ myUid, otherName, contextMessages, onClose }) {
-  const { t } = useTheme();
+  const { t, composerButtonOrder } = useTheme();
+  const sttEnabled = localStorage.getItem("nextext_stt_enabled") !== "off";
+  const sttAutoSend = localStorage.getItem("nextext_stt_autosend") === "on";
   const [aiMessages, setAiMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -37,6 +40,13 @@ export default function AskAIPanel({ myUid, otherName, contextMessages, onClose 
       setAiMessages([...next, { id: `a${Date.now()}`, senderId: AI_CONTACT_UID, text: `Error: ${err?.message || "request failed"}` }]);
     }
     setSending(false);
+  };
+
+  const handleSttResult = (text, { autoSend } = {}) => {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+    setInput((prev) => (prev ? (prev.endsWith(" ") ? prev : prev + " ") : "") + trimmed);
+    if (autoSend) handleSend(trimmed);
   };
 
   const renderBubble = (m, isContext) => {
@@ -70,7 +80,7 @@ export default function AskAIPanel({ myUid, otherName, contextMessages, onClose 
   };
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 60, background: t.bg, display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 2147483000, background: t.bg, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 12px", borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
         <div style={{ width: 34, height: 34, borderRadius: "50%", background: "linear-gradient(135deg, #7C5CFF, #53BDEB)", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <span style={{ fontSize: 18 }}>🤖</span>
@@ -94,7 +104,7 @@ export default function AskAIPanel({ myUid, otherName, contextMessages, onClose 
         )}
       </div>
 
-      <div ref={chatScrollRef} style={{ flex: 1, overflowY: "auto", padding: 14 }}>
+      <div ref={chatScrollRef} style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 14 }}>
         {aiMessages.length === 0 && (
           <div style={{ textAlign: "center", color: t.textMuted, fontSize: 13, marginTop: 24, padding: "0 24px", lineHeight: 1.5 }}>
             Ask the AI anything about the selected message and the conversation around it.
@@ -117,13 +127,33 @@ export default function AskAIPanel({ myUid, otherName, contextMessages, onClose 
           placeholder="Ask about this message…"
           style={{ flex: 1, padding: "10px 14px", borderRadius: 20, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 14, outline: "none" }}
         />
-        <button
-          disabled={!input.trim() || sending}
-          onClick={handleSend}
-          style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: input.trim() && !sending ? t.primary : t.border, color: t.bubbleMeText, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "not-allowed" }}
-        >
-          <Send size={18} />
-        </button>
+        {composerButtonOrder === "voice-stt" ? (
+          <>
+            {sttEnabled ? (
+              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={38} useRealtime />
+            ) : null}
+            <button
+              disabled={!input.trim() || sending}
+              onClick={handleSend}
+              style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: input.trim() && !sending ? t.primary : t.border, color: t.bubbleMeText, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "not-allowed" }}
+            >
+              <Send size={18} />
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              disabled={!input.trim() || sending}
+              onClick={handleSend}
+              style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: input.trim() && !sending ? t.primary : t.border, color: t.bubbleMeText, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "not-allowed" }}
+            >
+              <Send size={18} />
+            </button>
+            {sttEnabled ? (
+              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={38} useRealtime />
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   );

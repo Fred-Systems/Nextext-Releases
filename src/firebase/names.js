@@ -1,4 +1,4 @@
-import { doc, getDoc, updateDoc, query, where, getDocs, collection } from "firebase/firestore";
+import { doc, getDoc, updateDoc, deleteField, query, where, getDocs, collection } from "firebase/firestore";
 import { db } from "./config";
 
 // Updates a user's display name + username (optionally phone). Pushes the
@@ -33,7 +33,45 @@ export async function changeNames(uid, { username, displayName, phone }) {
     update.phoneNumber = String(phone).trim();
     update.phoneNumberNormalized = digits || null;
   }
+  // Keep the display-name search index in sync with the user's chosen
+  // visibility. If they allow discovery by display name we (re)publish the
+  // lowercased name; otherwise we strip the searchable copy so searches can't
+  // surface them by name.
+  const vis = cur.searchVisibility || {};
+  if (vis.displayName && displayName) update.searchDisplayName = String(displayName).toLowerCase();
+  else update.searchDisplayName = deleteField();
   await updateDoc(ref, update);
+}
+
+// Controls which fields other users can find this account by when they search.
+// `username` is ALWAYS searchable (it's the account's primary handle). The
+// returned object is stored as `searchVisibility` on the user doc. We mirror
+// the enabled fields into dedicated index fields (searchDisplayName / searchEmail
+// / searchPhone) — they only exist when the user opted in, so a search that
+// queries them simply never matches users who disabled that field.
+export async function updateSearchVisibility(uid, { displayName, email, number, exactUsername }) {
+  if (!uid) throw new Error("Not signed in.");
+  const ref = doc(db, "users", uid);
+  const snap = await getDoc(ref);
+  const cur = snap.exists() ? snap.data() : {};
+  const update = {
+    searchVisibility: {
+      displayName: !!displayName,
+      email: !!email,
+      number: !!number,
+      exactUsername: !!exactUsername,
+    },
+  };
+  // (Re)publish or strip each searchable field based on the new choices.
+  if (displayName && cur.displayName) update.searchDisplayName = String(cur.displayName).toLowerCase();
+  else update.searchDisplayName = deleteField();
+  if (email && cur.email) update.searchEmail = String(cur.email).toLowerCase();
+  else update.searchEmail = deleteField();
+  if (number && (cur.phoneNumberNormalized || cur.phoneNumber)) {
+    update.searchPhone = (cur.phoneNumberNormalized || String(cur.phoneNumber)).replace(/[^\d+]/g, "");
+  } else update.searchPhone = deleteField();
+  await updateDoc(ref, update);
+  return update.searchVisibility;
 }
 
 // True when the user is globally or individually blocked from changing their

@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -33,6 +34,7 @@
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -46,8 +48,8 @@
              MainActivity is the visible launcher entry (the "default" profile).
              setAppIcon() in NextextNativePlugin toggles exactly one alias on,
              kills the process, and the launcher re-reads the icon. Aliases
-             1-5 keep the "NexText" label (same app, different wallpaper).
-             Alias 6 shows up as "Calculator" and Alias 7 as "Notes" — the
+             1-5, 8-11 keep the "NexText" label (same app, different wallpaper).
+             Alias 6 and 12 show up as "Calculator" and Alias 7 and 13 as "Notes" — the
              WebView still loads index.html, but the JS side reads the active
              profile and renders a calculator / notepad gate that hides the
              real chat list behind a PIN (or keyword) entry. -->
@@ -135,6 +137,84 @@
             android:label="Notes"
             android:icon="@mipmap/ic_icon7"
             android:roundIcon="@mipmap/ic_icon7"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityAlias8"
+            android:targetActivity=".MainActivity"
+            android:label="NexText"
+            android:icon="@mipmap/ic_icon8"
+            android:roundIcon="@mipmap/ic_icon8"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityAlias9"
+            android:targetActivity=".MainActivity"
+            android:label="NexText"
+            android:icon="@mipmap/ic_icon9"
+            android:roundIcon="@mipmap/ic_icon9"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityAlias10"
+            android:targetActivity=".MainActivity"
+            android:label="NexText"
+            android:icon="@mipmap/ic_icon10"
+            android:roundIcon="@mipmap/ic_icon10"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityAlias11"
+            android:targetActivity=".MainActivity"
+            android:label="NexText"
+            android:icon="@mipmap/ic_icon11"
+            android:roundIcon="@mipmap/ic_icon11"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityAlias12"
+            android:targetActivity=".MainActivity"
+            android:label="Calculator"
+            android:icon="@mipmap/ic_icon12"
+            android:roundIcon="@mipmap/ic_icon12"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityAlias13"
+            android:targetActivity=".MainActivity"
+            android:label="Notes"
+            android:icon="@mipmap/ic_icon13"
+            android:roundIcon="@mipmap/ic_icon13"
             android:exported="true"
             android:enabled="false">
             <intent-filter>

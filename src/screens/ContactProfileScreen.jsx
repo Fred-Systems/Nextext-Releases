@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Ban, Flag, FileText, Camera, X, UserPlus, BarChart2 } from "lucide-react";
+import { ChevronLeft, Ban, Flag, FileText, Camera, X, UserPlus, BarChart2, Lock } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
-import { doc, onSnapshot, updateDoc, collection, query, orderBy } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, getDoc, collection, query, orderBy } from "firebase/firestore";
 import { addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
 import Avatar from "../components/Avatar";
 import AvatarColorPicker from "../components/AvatarColorPicker";
 import { getContactDisplayName, getContactRealName, setContactNickname } from "../firebase/contacts";
+import { previewNotificationFeedback, VIBRATION_PRESETS } from "../firebase/notifications";
+import { PING_SOUNDS } from "../utils/pingSounds";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { useStatuses } from "../firebase/status";
 import { uploadChatFile } from "../supabase/media";
-import { isMediaExpired, sendContactMessage, getOrCreateDirectChat } from "../firebase/chats";
+import { isMediaExpired, sendContactMessage, getOrCreateDirectChat, toggleLocked } from "../firebase/chats";
 import { useContacts } from "../firebase/contacts";
 import { AI_CONTACT_UID } from "../firebase/ai";
 import ContactSharePicker from "../components/ContactSharePicker";
@@ -108,6 +110,33 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [nickname, setNickname] = useState(() => contact?.nickname || "");
   const [savingNickname, setSavingNickname] = useState(false);
+  // Per-user notification overrides: this contact's pings/vibrations can differ
+  // from the global Settings choice.
+  const [notifVib, setNotifVib] = useState(() => contact?.notifVibrate || "default");
+  const [notifSnd, setNotifSnd] = useState(() => contact?.notifSound || "default");
+  const saveNotifPrefs = async () => {
+    try { await updateDoc(doc(db, "users", myUid, "contacts", otherUid), { notifVibrate: notifVib, notifSound: notifSnd }); } catch {}
+  };
+  const handleContactLockToggle = async () => {
+    const directChatId = [myUid, otherUid].sort().join("_");
+    const snap = await getDoc(doc(db, "chats", directChatId));
+    const isLocked = !!snap.data()?.lockedBy?.[myUid];
+    const pwd = localStorage.getItem("nextext_locked_chats_password") || "";
+    if (isLocked) {
+      const entered = window.prompt("Enter lock password to unlock:");
+      if (!entered || entered !== pwd) { alert(entered ? "Wrong password." : "Cancelled."); return; }
+      await toggleLocked(directChatId, myUid, true);
+    } else {
+      if (!pwd) {
+        const p1 = window.prompt("Set a lock password:");
+        if (!p1) return;
+        const p2 = window.prompt("Confirm password:");
+        if (p1 !== p2) { alert("Passwords don't match."); return; }
+        localStorage.setItem("nextext_locked_chats_password", p1);
+      }
+      await toggleLocked(directChatId, myUid, false);
+    }
+  };
   const [showContactShare, setShowContactShare] = useState(false);
   const [shareSent, setShareSent] = useState(false);
   const { contacts: myContacts } = useContacts(myUid);
@@ -230,11 +259,11 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
   return (
     <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 40 }}>
       {fullscreenImage && createPortal(
-        <div onClick={() => setFullscreenImage(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 999999, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+        <div onClick={() => setFullscreenImage(null)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 999999, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", padding: 16 }}>
             <img src={fullscreenImage} alt="Full" style={{ maxWidth: "100%", maxHeight: "80vh", borderRadius: 12, objectFit: "contain", display: "block" }} />
           </div>
-          <div onClick={() => setFullscreenImage(null)} style={{ position: "fixed", top: 16, right: 16, width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.25)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 1000000 }}>
+          <div onClick={() => setFullscreenImage(null)} style={{ position: "absolute", top: 16, right: 16, width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.25)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 1000000 }}>
             <X size={24} color="#fff" strokeWidth={3} />
           </div>
         </div>,
@@ -326,23 +355,48 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
                   {savingNickname ? "Saving…" : "Save"}
                 </button>
               </div>
-              {hasNickname && (
-                <div style={{ marginTop: 6, fontSize: 12, color: t.textMuted }}>
-                  Real name: {realName}
+               {hasNickname && (
+                 <div style={{ marginTop: 6, fontSize: 12, color: t.textMuted }}>
+                   Real name: {realName}
+                 </div>
+               )}
+             </div>
+           )}
+           {/* Per-user notification sound + vibration */}
+           {!isSelfProfile && !isAIContact && (
+             <div style={{ marginTop: 16, padding: "0 16px" }}>
+               <div style={{ fontSize: 13.5, fontWeight: 600, color: t.text, marginBottom: 8 }}>Notifications for {getContactDisplayName(contact) || realName}</div>
+               <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8 }}>Override the global ping/vibration just for this person.</div>
+               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                 {[["default", "Global"], ["short", "Short"], ["long", "Long"], ["heartbeat", "Heartbeat"], ["none", "No vibe"]].map(([k, l]) => (
+                   <div key={k} onClick={() => { setNotifVib(k); previewNotificationFeedback(VIBRATION_PRESETS[k] || null, notifSnd === "default" ? "default" : notifSnd); }} style={{ padding: "7px 12px", borderRadius: 16, fontSize: 12.5, fontWeight: notifVib === k ? 700 : 500, cursor: "pointer", background: notifVib === k ? t.primary : t.surface, color: notifVib === k ? t.bubbleMeText : t.text, border: `1px solid ${notifVib === k ? t.primary : t.border}` }}>{l}</div>
+                 ))}
+               </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                  {[["default", "Global"], ["none", "No sound"], ...PING_SOUNDS.map((s) => [s.id, s.label])].map(([k, l]) => (
+                    <div key={k} onClick={() => { setNotifSnd(k); previewNotificationFeedback(notifVib === "none" ? null : (VIBRATION_PRESETS[notifVib] || null), k); }} style={{ padding: "7px 12px", borderRadius: 16, fontSize: 12.5, fontWeight: notifSnd === k ? 700 : 500, cursor: "pointer", background: notifSnd === k ? t.primary : t.surface, color: notifSnd === k ? t.bubbleMeText : t.text, border: `1px solid ${notifSnd === k ? t.primary : t.border}` }}>{l}</div>
+                  ))}
                 </div>
-              )}
-            </div>
-          )}
-          {!isSelfProfile && !isAIContact && (
-            <div style={{ marginTop: 14, padding: "0 16px", display: "flex", flexDirection: "column", gap: 8 }}>
-              <div
-                onClick={() => setShowContactShare(true)}
-                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 12, border: `1px solid ${t.primary}`, background: "transparent", color: t.primary, fontSize: 14, fontWeight: 700, cursor: "pointer" }}
-              >
-                <UserPlus size={17} />
-                {shareSent ? "Contact shared ✓" : "Share Contact"}
-              </div>
-              {isAdmin && (
+               <button onClick={saveNotifPrefs} style={{ padding: "10px 16px", borderRadius: 8, background: t.primary, color: t.bubbleMeText, border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Save notification settings</button>
+             </div>
+           )}
+{!isSelfProfile && !isAIContact && (
+              <div style={{ marginTop: 14, padding: "0 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div
+                  onClick={() => setShowContactShare(true)}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 12, border: `1px solid ${t.primary}`, background: "transparent", color: t.primary, fontSize: 14, fontWeight: 700, cursor: "pointer" }}
+                >
+                  <UserPlus size={17} />
+                  {shareSent ? "Contact shared ✓" : "Share Contact"}
+                </div>
+                <div
+                  onClick={handleContactLockToggle}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 12, border: `1px solid ${t.border}`, background: t.surface, color: t.text, fontSize: 14, fontWeight: 700, cursor: "pointer" }}
+                >
+                  <Lock size={17} color={t.text} />
+                  Lock / Unlock chat
+                </div>
+                {isAdmin && (
                 <div
                   onClick={() => { loadStats(); setShowStats(true); }}
                   style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px", borderRadius: 12, border: `1px solid ${t.border}`, background: t.surface, color: t.text, fontSize: 14, fontWeight: 700, cursor: "pointer" }}
@@ -468,7 +522,7 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
         />
       )}
       {showStats && (
-        <div onClick={() => setShowStats(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147481500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div onClick={() => setShowStats(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147481500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: t.surface, borderRadius: 16, padding: 20, maxWidth: 350, width: "100%", maxHeight: "85%", overflowY: "auto" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
               <div style={{ fontWeight: 700, fontSize: 16, color: t.text }}>Statistics</div>

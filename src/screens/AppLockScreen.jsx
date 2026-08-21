@@ -21,7 +21,7 @@ export default function AppLockScreen({ onUnlock }) {
   };
 
   const lockScreen = (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "#0B141A", zIndex: 2147483000, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18 }}>
+    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "#0B141A", zIndex: 2147483000, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18 }}>
       <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#00A88422", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Lock size={28} color="#00A884" />
       </div>

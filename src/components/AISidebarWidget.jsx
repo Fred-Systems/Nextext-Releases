@@ -11,7 +11,7 @@ export default function AISidebarWidget({ userDoc, onOpenAI }) {
     <div
       onClick={() => onOpenAI()}
       style={{
-        position: "fixed",
+        position: "absolute",
         top: "50%",
         right: 16,
         transform: "translateY(-50%)",

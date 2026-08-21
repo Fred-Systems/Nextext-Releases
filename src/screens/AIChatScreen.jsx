@@ -1,11 +1,32 @@
 import React, { useState, useEffect, useRef } from "react";
 import { ChevronLeft, Send, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive, Copy, Forward, MessageSquare } from "lucide-react";
+import VoiceToTextButton from "../components/VoiceToTextButton";
 import { useTheme } from "../theme/ThemeContext";
+import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, useSystemConfigHook } from "../firebase/ai";
+import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, useSystemConfigHook, describeAIError } from "../firebase/ai";
 import { toggleArchive } from "../firebase/chats";
 import { uploadChatFile, deleteChatFile } from "../supabase/media";
+
+function ThinkingDots({ color = "#000" }) {
+  return (
+    <div style={{ display: "flex", gap: 3 }}>
+      {[0, 1, 2].map((i) => (
+        <div key={i} style={{
+          width: 6, height: 6, borderRadius: "50%", background: color,
+          animation: `thinking-bounce 0.6s ease-in-out ${i * 0.15}s infinite`,
+        }} />
+      ))}
+      <style jsx>{`
+        @keyframes thinking-bounce {
+          0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+          40% { transform: scale(1.2); opacity: 1; }
+        }
+      `}</style>
+    </div>
+  );
+}
 
 const MSG_FIELDS = {
   mediaURL: null, mediaThumbURL: null, mediaDurationSeconds: null, mediaSizeBytes: null,
@@ -82,7 +103,8 @@ function formatAIDateDivider(date) {
 }
 
 export default function AIChatScreen({ myUid, onBack }) {
-  const { t } = useTheme();
+  const { t, composerButtonOrder } = useTheme();
+  const globalSettings = useGlobalSettings();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -91,6 +113,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [showProfile, setShowProfile] = useState(false);
   const [userDoc, setUserDoc] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [thinking, setThinking] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
   const [showChatPicker, setShowChatPicker] = useState(false);
   const [allChats, setAllChats] = useState([]);
@@ -104,6 +127,13 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [activeMsgRect, setActiveMsgRect] = useState(null);
   const messageMenuRef = useRef(null);
   const longPressTimer = useRef(null);
+  // Swipe-right-to-reply-with-quote (WhatsApp-style), mirroring the regular chat.
+  const [replyTo, setReplyTo] = useState(null);
+  const [replyDrag, setReplyDrag] = useState(null);
+  const dragStartRef = useRef({});
+  const dragBubbleRef = useRef(null);
+  const dragRafRef = useRef(null);
+  const longPressFiredRef = useRef(false);
   const [pendingForwardMsg, setPendingForwardMsg] = useState(null);
   const [chatPickerMode, setChatPickerMode] = useState(null); // 'forward' | 'summarize'
   const [aiTextScale, setAiTextScale] = useState(() => {
@@ -216,17 +246,20 @@ export default function AIChatScreen({ myUid, onBack }) {
     }
   };
 
-  const handleSend = async () => {
-    const text = input.trim();
+  const handleSend = async (overrideText) => {
+    const text = (typeof overrideText === "string" ? overrideText : (input || "")).trim();
     if (!text || sending) return;
     setInput("");
     setSending(true);
+    setThinking(true);
     try {
       await ensureChatExists();
       await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
-        senderId: myUid, type: "text", text,
+        senderId: myUid, type: "text", text, replyTo,
       }));
-      const aiResponse = await sendAIMessage(myUid, text, messages);
+      const customInstructions = (typeof window !== "undefined" && localStorage.getItem("nextext_ai_custom_instructions_enabled") !== "off") ? (localStorage.getItem("nextext_ai_custom_instructions") || "") : "";
+      const aiResponse = await sendAIMessage(myUid, text, messages, customInstructions);
+      setThinking(false);
       await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
         senderId: AI_CONTACT_UID, type: "text", text: aiResponse,
       }));
@@ -234,11 +267,22 @@ export default function AIChatScreen({ myUid, onBack }) {
         lastMessage: { text: aiResponse.slice(0, 80) + (aiResponse.length > 80 ? "…" : ""), senderId: AI_CONTACT_UID, sentAt: serverTimestamp(), type: "text" },
       });
     } catch (err) {
+      setThinking(false);
       await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
-        senderId: AI_CONTACT_UID, type: "text", text: `Error: ${err.message}`,
+        senderId: AI_CONTACT_UID, type: "text", text: describeAIError(err),
       }));
     }
+    setReplyTo(null);
     setSending(false);
+  };
+
+  const sttEnabled = localStorage.getItem("nextext_stt_enabled") !== "off";
+  const sttAutoSend = localStorage.getItem("nextext_stt_autosend") === "on";
+  const handleSttResult = (text, { autoSend } = {}) => {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+    setInput((prev) => (prev ? (prev.endsWith(" ") ? prev : prev + " ") : "") + trimmed);
+    if (autoSend) handleSend(trimmed);
   };
 
   const deleteAIMediaMessage = async (messageId, mediaPath) => {
@@ -281,7 +325,10 @@ export default function AIChatScreen({ myUid, onBack }) {
         document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, ta.value.length);
         document.execCommand("copy"); document.body.removeChild(ta);
       }
-      setActiveMessageId(null);
+      // Show feedback
+      try { navigator.vibrate(10); } catch {}
+      // Small delay so user sees the menu close after the action
+      setTimeout(() => setActiveMessageId(null), 50);
     } catch { /* ignore */ }
   };
 
@@ -329,6 +376,74 @@ export default function AIChatScreen({ myUid, onBack }) {
     setShowChatPicker(false);
   };
 
+  // ── Swipe-right to reply with a quote ─────────────────────────────
+  const startReply = (m) => {
+    const preview = m.text
+      ? m.text.slice(0, 120)
+      : (m.type === "image" ? "📷 Photo" : m.type === "voice" ? "🎤 Voice note" : "[media]");
+    setReplyTo({ id: m.id, previewText: preview, senderName: m.senderId === myUid ? "Me" : "AI" });
+    setActiveMessageId(null);
+  };
+
+  const onAIMsgTouchStart = (m, e) => {
+    const t0 = e.touches && e.touches[0];
+    if (!t0) return;
+    dragStartRef.current = { id: m.id, y: t0.clientY, x: t0.clientX, time: Date.now(), moved: false };
+    dragBubbleRef.current = e.currentTarget.querySelector("[data-bubble]");
+    longPressFiredRef.current = false;
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    // Long-press copies the message text (kept from the original behavior).
+    longPressTimer.current = setTimeout(() => {
+      if (dragStartRef.current.id === m.id) {
+        longPressFiredRef.current = true;
+        copyMessageText(m.text);
+      }
+    }, 500);
+  };
+
+  const onAIMsgTouchMove = (m, e) => {
+    const t = e.touches && e.touches[0];
+    if (!t) return;
+    const dx = dragStartRef.current.x ? t.clientX - dragStartRef.current.x : 0;
+    const dy = t.clientY - dragStartRef.current.y;
+    if (Math.abs(dy) > 10 || Math.abs(dx) > 12) {
+      dragStartRef.current.moved = true;
+      if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+    }
+    if (longPressFiredRef.current) return;
+    if (dragStartRef.current.id !== m.id) return;
+    // Swipe RIGHT only: bubble follows the finger with rubber-band resistance.
+    // We mutate the DOM node directly (no React state) so the gesture never
+    // triggers a re-render of the whole chat — keeping it smooth even mid-drag.
+    const x = Math.min(140, Math.max(0, dx * 0.6));
+    const bubbleEl = dragBubbleRef.current;
+    if (bubbleEl) { bubbleEl.style.transition = "none"; bubbleEl.style.transform = `translateX(${x}px)`; }
+  };
+
+  const onAIMsgTouchEnd = (m, e) => {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+    if (dragRafRef.current) { cancelAnimationFrame(dragRafRef.current); dragRafRef.current = null; }
+    if (longPressFiredRef.current) { longPressFiredRef.current = false; return; }
+    const t1 = e.changedTouches && e.changedTouches[0];
+    if (!t1) { setReplyDrag(null); return; }
+    const dx = t1.clientX - dragStartRef.current.x;
+    const dt = Date.now() - dragStartRef.current.time;
+    if (dragStartRef.current.id === m.id && dx > 40 && dt < 800) {
+      startReply(m);
+    }
+    const bubbleEl = dragBubbleRef.current;
+    if (bubbleEl) {
+      bubbleEl.style.transition = "transform 0.28s cubic-bezier(0.22,1,0.36,1)";
+      bubbleEl.style.transform = "translateX(0px)";
+      // Clear any inline transform left on OTHER bubbles so only the dragged
+      // one animates and stale offsets never persist.
+      const all = document.querySelectorAll("[data-bubble]");
+      all.forEach((el) => { if (el !== bubbleEl) el.style.transform = "translateX(0px)"; });
+    }
+    dragStartRef.current = { id: null, y: 0, x: 0, time: 0, moved: false };
+    dragBubbleRef.current = null;
+  };
+
   const askAIAboutMessage = (msg) => {
     // Pre-fill input with quoted message + placeholder for user's question
     const quoted = `���� Quoted message:\n"${msg.text}"\n\n��� Your question:`;
@@ -365,7 +480,7 @@ export default function AIChatScreen({ myUid, onBack }) {
       });
     } catch (err) {
       await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
-        senderId: AI_CONTACT_UID, type: "text", text: `Error analyzing image: ${err.message}`,
+        senderId: AI_CONTACT_UID, type: "text", text: describeAIError(err),
       }));
     }
     setAnalyzing(false);
@@ -388,7 +503,7 @@ export default function AIChatScreen({ myUid, onBack }) {
       });
     } catch (err) {
       await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
-        senderId: AI_CONTACT_UID, type: "text", text: `Error summarizing: ${err.message}`,
+        senderId: AI_CONTACT_UID, type: "text", text: describeAIError(err),
       }));
     }
     setSummarizing(false);
@@ -470,7 +585,7 @@ export default function AIChatScreen({ myUid, onBack }) {
       });
     } catch (err) {
       await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
-        senderId: AI_CONTACT_UID, type: "text", text: `Error summarizing external chat: ${err.message}`,
+        senderId: AI_CONTACT_UID, type: "text", text: describeAIError(err),
       }));
     }
     setSummarizingExternal(false);
@@ -605,11 +720,19 @@ export default function AIChatScreen({ myUid, onBack }) {
                 <div style={{ display: "flex", justifyContent: isMine ? "flex-end" : "flex-start", marginTop: 8 }}>
                   <div style={{ position: "relative", maxWidth: "78%" }}>
                     <div
-                      onTouchStart={() => { longPressTimer.current = setTimeout(() => copyMessageText(m.text), 500); }}
-                      onTouchEnd={() => { clearTimeout(longPressTimer.current); }}
-                      onTouchCancel={() => { clearTimeout(longPressTimer.current); }}
-                      style={{ padding: "10px 14px", borderRadius: isMine ? "14px 14px 4px 14px" : "14px 14px 14px 4px", background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText, fontSize: 14 * aiTextScale, lineHeight: 1.4, boxShadow: "0 1px 2px rgba(0,0,0,0.08)", wordBreak: "break-word", overflowWrap: "break-word", minWidth: 0 }}
+                      data-bubble
+                      onTouchStart={(e) => onAIMsgTouchStart(m, e)}
+                      onTouchMove={(e) => onAIMsgTouchMove(m, e)}
+                      onTouchEnd={(e) => onAIMsgTouchEnd(m, e)}
+                      onTouchCancel={(e) => onAIMsgTouchEnd(m, e)}
+                      style={{ padding: "10px 14px", borderRadius: isMine ? "14px 14px 4px 14px" : "14px 14px 14px 4px", background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText, fontSize: 14 * aiTextScale, lineHeight: 1.4, boxShadow: "0 1px 2px rgba(0,0,0,0.08)", wordBreak: "break-word", overflowWrap: "break-word", minWidth: 0, transform: "translate3d(0,0,0)", willChange: "transform" }}
                     >
+                      {m.replyTo && (
+                        <div style={{ borderLeft: `3px solid ${isMine ? "rgba(255,255,255,0.55)" : t.primary}`, paddingLeft: 8, marginBottom: 6, opacity: 0.9 }}>
+                          <div style={{ fontSize: 11.5, fontWeight: 700, color: isMine ? "rgba(255,255,255,0.9)" : t.primary }}>{m.replyTo.senderName || (m.replyTo.senderId === myUid ? "Me" : "AI")}</div>
+                          <div style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200 }}>{m.replyTo.previewText}</div>
+                        </div>
+                      )}
                       {m.text}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                         <span style={{ fontSize: 10.5, opacity: 0.55 }}>
@@ -632,7 +755,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                             <X size={15} color={t.textMuted} />
                           </div>
                         </div>
-                        <div onClick={() => copyMessageText(m.text)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", cursor: "pointer", fontSize: 13.5, color: t.text }}>
+                        <div onClick={() => copyMessageText(m.text)} onTouchEnd={(e) => { e.preventDefault(); copyMessageText(m.text); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", cursor: "pointer", fontSize: 13.5, color: t.text }}>
                           <Copy size={14} /> Copy
                         </div>
                         <div style={{ height: 1, background: t.border }} />
@@ -660,6 +783,15 @@ export default function AIChatScreen({ myUid, onBack }) {
         )}
       </div>
 
+      {thinking && (
+        <div style={{ display: "flex", justifyContent: "flex-start", marginTop: 8 }}>
+          <div style={{ position: "relative", maxWidth: "78%" }}>
+            <div style={{ padding: "10px 14px", borderRadius: "14px 14px 14px 4px", background: t.bubbleThem, color: t.bubbleThemText, fontSize: 14 * aiTextScale, lineHeight: 1.4, boxShadow: "0 1px 2px rgba(0,0,0,0.08)" }}>
+              <ThinkingDots color={t.bubbleThemText} />
+            </div>
+          </div>
+        </div>
+      )}
       {showEmojiPicker && (
         <div style={{ padding: "8px 12px", borderTop: `1px solid ${t.border}`, background: t.surface, maxHeight: 180, overflowY: "auto" }}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
@@ -667,6 +799,15 @@ export default function AIChatScreen({ myUid, onBack }) {
               <span key={emoji} onClick={() => { setInput((prev) => prev + emoji); setShowEmojiPicker(false); }} style={{ fontSize: 22, cursor: "pointer", padding: "4px 5px", borderRadius: 6 }}>{emoji}</span>
             ))}
           </div>
+        </div>
+      )}
+      {replyTo && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderTop: `1px solid ${t.border}`, background: t.primaryLight }}>
+          <div style={{ flex: 1, minWidth: 0, borderLeft: `3px solid ${t.primary}`, paddingLeft: 8 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: t.primary }}>Replying to {replyTo.senderName}</div>
+            <div style={{ fontSize: 12.5, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{replyTo.previewText}</div>
+          </div>
+          <X size={18} color={t.textMuted} onClick={() => setReplyTo(null)} style={{ cursor: "pointer", flexShrink: 0 }} />
         </div>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderTop: `1px solid ${t.border}`, background: t.surface }}>
@@ -687,9 +828,25 @@ export default function AIChatScreen({ myUid, onBack }) {
           disabled={sending}
           style={{ flex: 1, padding: "10px 14px", borderRadius: 20, border: `1px solid ${t.border}`, fontSize: 14, background: t.bg, color: t.text, outline: "none" }}
         />
-        <div onClick={handleSend} style={{ width: 38, height: 38, borderRadius: "50%", background: input.trim() && !sending ? t.primary : t.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "default" }}>
-          <Send size={17} color={input.trim() && !sending ? "#fff" : t.textMuted} />
-        </div>
+        {composerButtonOrder === "voice-stt" ? (
+          <>
+            {sttEnabled && !globalSettings?.hideStt && (
+              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} autoSend={sttAutoSend} size={34} useRealtime />
+            )}
+            <div onClick={handleSend} style={{ width: 38, height: 38, borderRadius: "50%", background: input.trim() && !sending ? t.primary : t.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "default" }}>
+              <Send size={17} color={input.trim() && !sending ? "#fff" : t.textMuted} />
+            </div>
+          </>
+        ) : (
+          <>
+            <div onClick={handleSend} style={{ width: 38, height: 38, borderRadius: "50%", background: input.trim() && !sending ? t.primary : t.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "default" }}>
+              <Send size={17} color={input.trim() && !sending ? "#fff" : t.textMuted} />
+            </div>
+            {sttEnabled && !globalSettings?.hideStt && (
+              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} autoSend={sttAutoSend} size={34} useRealtime />
+            )}
+          </>
+        )}
       </div>
 
       {/* External chat picker overlay */}
@@ -732,7 +889,7 @@ export default function AIChatScreen({ myUid, onBack }) {
 
       {/* Profile modal */}
       {showProfile && (
-        <div onClick={() => setShowProfile(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div onClick={() => setShowProfile(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: t.surface, borderRadius: 18, width: "100%", maxWidth: 320, maxHeight: "80vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "16px 20px" }}>
               <div style={{ background: "linear-gradient(135deg, #7C5CFF, #53BDEB)", borderRadius: "50%", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -770,7 +927,7 @@ export default function AIChatScreen({ myUid, onBack }) {
 
       {/* Fullscreen image viewer */}
       {fullscreenImage && (
-        <div onClick={() => setFullscreenImage(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div onClick={() => setFullscreenImage(null)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <X size={26} color="#fff" onClick={() => setFullscreenImage(null)} style={{ position: "absolute", top: 18, right: 18, cursor: "pointer" }} />
           <img src={fullscreenImage} alt="Fullscreen" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 12, objectFit: "contain" }} />
         </div>
@@ -779,7 +936,7 @@ export default function AIChatScreen({ myUid, onBack }) {
       {/* In-app confirm for clearing the AI chat (window.confirm is disabled
           inside the Capacitor WebView, so we use our own dialog). */}
       {showClearConfirm && (
-        <div onClick={() => setShowClearConfirm(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div onClick={() => setShowClearConfirm(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 300, background: t.surface, borderRadius: 16, padding: 18, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
             <div style={{ fontWeight: 700, fontSize: 16, color: t.text, marginBottom: 8 }}>Clear AI chat?</div>
             <div style={{ fontSize: 13.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 16 }}>This permanently deletes all messages in this AI conversation. This cannot be undone.</div>

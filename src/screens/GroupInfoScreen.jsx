@@ -5,7 +5,7 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import {
   getOrCreateDirectChat, addMembersToGroup, updateGroupProfile,
-  isGroupAdmin, getUsersByUids, setGroupNickname, setGroupAdmin,
+  isGroupAdmin, getUsersByUids, setGroupNickname, setGroupAdmin, leaveGroupChat,
 } from "../firebase/chats";
 import { useContacts, sendContactRequest } from "../firebase/contacts";
 import { uploadChatFile } from "../supabase/media";
@@ -149,6 +149,13 @@ export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onO
       await addMembersToGroup(chatId, [uid]);
       setShowAddMember(false);
     } catch { /* silent */ }
+  };
+
+  // Any member (not just the creator/admin) can leave the group.
+  const doLeaveGroup = async () => {
+    if (!window.confirm("Leave this group? You'll stop receiving its messages and it will disappear from your chat list.")) return;
+    try { await leaveGroupChat(chatId, myUid); } catch { /* silent */ }
+    onBack();
   };
 
   // Promote a member to group admin, or revoke it. The creator can never be
@@ -324,6 +331,13 @@ export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onO
             <Plus size={18} /> Add Member
           </div>
         )}
+
+        <div
+          onClick={doLeaveGroup}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 14, padding: 13, borderRadius: 12, background: "#FFE5E5", color: "#FF3B30", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+        >
+          <X size={18} /> Leave Group
+        </div>
       </div>
 
       {/* Add Member sheet */}

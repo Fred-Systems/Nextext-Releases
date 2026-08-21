@@ -152,17 +152,9 @@ export default function CalculatorScreen({ onUnlock }) {
   const [memory, setMemory] = useState(0);
   const [justEvaluated, setJustEvaluated] = useState(false);
   const unlockRef = useRef(onUnlock);
+  const unlockingRef = useRef(false);
 
   useEffect(() => { unlockRef.current = onUnlock; }, [onUnlock]);
-
-  useEffect(() => {
-    try {
-      if (calculatorPinMatches(expression)) {
-        const t = setTimeout(() => { try { unlockRef.current && unlockRef.current(); } catch {} }, 120);
-        return () => clearTimeout(t);
-      }
-    } catch { /* PIN check is best-effort */ }
-  }, [expression]);
 
   const press = useCallback((label) => {
     setExpression((prev) => {
@@ -187,15 +179,26 @@ export default function CalculatorScreen({ onUnlock }) {
         if (!Number.isFinite(num)) return prev;
         return head + (num / 100).toString();
       }
-      if (label === "=") {
-        const result = evaluate(prev);
-        if (result == null || Number.isNaN(result)) {
-          setJustEvaluated(true);
-          return "Error";
-        }
-        setJustEvaluated(true);
-        return formatResult(result);
-      }
+               if (label === "=") {
+                 // The calculator code only unlocks when the user presses "=".
+                 // We never auto-unlock mid-typing (that would let someone see
+                 // the code "work" before they finish entering it). Requires
+                 // the exact stored code, then presses "=" to confirm.
+                 if (calculatorPinMatches(prev)) {
+                   if (!unlockingRef.current) {
+                     unlockingRef.current = true;
+                     try { unlockRef.current && unlockRef.current(); } catch {}
+                   }
+                   return "";
+                 }
+                 const result = evaluate(prev);
+                 if (result == null || Number.isNaN(result)) {
+                   setJustEvaluated(true);
+                   return "Error";
+                 }
+                 setJustEvaluated(true);
+                 return formatResult(result);
+               }
       if ("+-×÷−".includes(label)) {
         setJustEvaluated(false);
         if (!prev) {
@@ -269,7 +272,7 @@ export default function CalculatorScreen({ onUnlock }) {
   return (
     <div
       style={{
-        position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+        position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
         width: "100%", height: "100dvh",
         background: bgCol, color: inkCol,
         display: "flex", flexDirection: "column",

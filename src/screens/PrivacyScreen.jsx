@@ -4,6 +4,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useContacts } from "../firebase/contacts";
+import { updateSearchVisibility } from "../firebase/names";
 import Avatar from "../components/Avatar";
 
 function OptionGroup({ t, value, setValue, options }) {
@@ -17,6 +18,22 @@ function OptionGroup({ t, value, setValue, options }) {
           <div><div style={{ color: t.text, fontSize: 14, fontWeight: 600 }}>{label}</div>{sub && <div style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }}>{sub}</div>}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function CheckRow({ t, title, sub, on, onClick, disabled }) {
+  return (
+    <div onClick={() => { if (!disabled) onClick(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 2px", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.6 : 1 }}>
+      <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${on ? t.primary : t.border}`, background: on ? t.primary : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        {on && (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+        )}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: t.text }}>{title}</div>
+        {sub && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 1 }}>{sub}</div>}
+      </div>
     </div>
   );
 }
@@ -38,14 +55,38 @@ function ToggleRow({ t, title, sub, on, onClick }) {
 export default function PrivacyScreen({ myUid, onBack }) {
   const { t } = useTheme();
   const [privacy, setPrivacy] = useState(null);
+  const [searchVis, setSearchVis] = useState({ displayName: false, email: false, number: false, exactUsername: false });
+  const [savingVis, setSavingVis] = useState(false);
   const [saveError, setSaveError] = useState("");
   const { contacts } = useContacts(myUid);
   const [showExceptList, setShowExceptList] = useState(false);
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, "users", myUid), (snap) => setPrivacy(snap.data()?.privacy || {}));
+    const unsub = onSnapshot(doc(db, "users", myUid), (snap) => {
+      const d = snap.data() || {};
+      setPrivacy(d.privacy || {});
+      setSearchVis({
+        displayName: !!d.searchVisibility?.displayName,
+        email: !!d.searchVisibility?.email,
+        number: !!d.searchVisibility?.number,
+        exactUsername: !!d.searchVisibility?.exactUsername,
+      });
+    });
     return unsub;
   }, [myUid]);
+
+  const updateSearchVis = async (patch) => {
+    setSavingVis(true);
+    setSaveError("");
+    try {
+      const next = await updateSearchVisibility(myUid, { ...searchVis, ...patch });
+      setSearchVis(next);
+    } catch (e) {
+      setSaveError("Couldn't save visibility: " + e.message);
+    } finally {
+      setSavingVis(false);
+    }
+  };
 
   const update = async (patch) => {
     setSaveError("");
@@ -102,6 +143,19 @@ export default function PrivacyScreen({ myUid, onBack }) {
         <OptionGroup t={t} value={privacy.statusVisibility} setValue={(v) => update({ statusVisibility: v })} options={[
           ["everyone", "Everyone"], ["contacts", "My contacts"],
         ]} />
+
+        {/* Search visibility — what other users can find this account by */}
+        <div style={{ fontWeight: 700, color: t.text, fontSize: 14, marginBottom: 8, marginTop: 14 }}>Who can find me when searching</div>
+        <div style={{ background: t.surface, borderRadius: 14, padding: 12, marginBottom: 14 }}>
+          <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+            Your <strong>@username</strong> is always searchable — it's your account handle. Choose any extra fields other people can find you by.
+          </div>
+          <CheckRow t={t} title="Display name" sub="Let people find you by your display name" on={searchVis.displayName} disabled={savingVis} onClick={() => updateSearchVis({ displayName: !searchVis.displayName })} />
+          <CheckRow t={t} title="Email" sub="Let people find you by your email address" on={searchVis.email} disabled={savingVis} onClick={() => updateSearchVis({ email: !searchVis.email })} />
+          <CheckRow t={t} title="Phone number" sub="Let people find you by your phone number" on={searchVis.number} disabled={savingVis} onClick={() => updateSearchVis({ number: !searchVis.number })} />
+          <div style={{ borderTop: `1px solid ${t.border}`, marginTop: 8, paddingTop: 8 }} />
+          <CheckRow t={t} title="Require full username" sub="Only appear in results when someone types your complete @username (no smart/prefix search)" on={searchVis.exactUsername} disabled={savingVis} onClick={() => updateSearchVis({ exactUsername: !searchVis.exactUsername })} />
+        </div>
 
         {/* My Contacts Except... */}
         <div style={{ fontWeight: 700, color: t.text, fontSize: 14, marginBottom: 8, marginTop: 10 }}>My Contacts Except...</div>

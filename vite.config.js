@@ -23,10 +23,15 @@ export default defineConfig({
     {
       name: 'convert-module-to-classic',
       transformIndexHtml(html) {
+        // Only strip `type="module"` in the production build (the Android
+        // WebView needs a classic IIFE script). In `npm run dev` we MUST keep
+        // `type="module"` or the React entry throws "Cannot use import statement
+        // outside a module" and nothing renders.
+        if (process.env.NODE_ENV !== 'production') return html;
         return html.replace(
           /<script type="module" src="([^"]+)"><\/script>/,
           '<script defer src="$1"></script>'
-        )
+        );
       },
     },
   ],
