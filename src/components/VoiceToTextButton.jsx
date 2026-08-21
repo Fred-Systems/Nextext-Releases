@@ -57,7 +57,12 @@ export default function VoiceToTextButton({ myUid, onResult, onAutoSend, autoSen
       sub = NextextNative.addListener("voiceLevel", (d) => {
         const v = typeof d?.level === "number" ? d.level : 0;
         setLevel(v);
-        if (v > 0.04) resetSilence();
+        // Only treat this as speech activity (and reset the auto-stop timer) when
+        // the level clearly indicates real voice, not ambient room noise. The
+        // native peak-amplitude is noisy, so a low threshold (e.g. 0.04) made the
+        // silence timer reset forever on background hum and the mic never
+        // auto-stopped. 0.12 ~ a soft but real voice floor.
+        if (v > 0.12) resetSilence();
       });
     } catch {}
     return () => { try { sub?.remove && sub.remove(); } catch {} };

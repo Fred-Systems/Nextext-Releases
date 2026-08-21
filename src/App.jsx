@@ -43,6 +43,7 @@ import PageErrorBoundary from "./components/PageErrorBoundary";
 import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, openDownloadUrl, saveApkToDevice, setLastSeenRelease } from "./updater/updateChecker";
 import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
 import { updateGlobalSettings, useGlobalSettings } from "./firebase/config-settings";
+import { runPreWarmPing } from "./firebase/prewarm";
 import { useSystemInsets } from "./utils/useSystemInsets";
 import { changeNames, isNameChangeBlocked, isUsernameAvailable } from "./firebase/names";
 
@@ -1625,8 +1626,8 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           </div>
         </div>
 )}
-      {credModal && (
-        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999999, padding: 20 }} onClick={() => !credBusy && setCredModal(null)}>
+      {credModal && createPortal(
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999999, padding: 20 }} onClick={() => !credBusy && setCredModal(null)}>
           <div style={{ background: t.surface, borderRadius: 16, padding: 18, width: "100%", maxWidth: 340, boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontSize: 17, fontWeight: 700, color: t.text, marginBottom: 14 }}>{credModal === "password" ? "Change password" : "Change email"}</div>
             {credModal === "password" ? (
@@ -1648,7 +1649,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
       </div>
     </div>
   );
@@ -1825,6 +1826,19 @@ function AppShell({ appLocked, setAppLocked }) {
   useSystemInsets();
   const globalSettings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
+  // Stealth pre-warm: keep the Render FCM worker awake while users are active.
+  // Runs on app launch and again whenever the app returns to the foreground
+  // (e.g. user switches back to it an hour later). No-ops when an admin has the
+  // feature disabled server-side.
+  useEffect(() => {
+    runPreWarmPing();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") runPreWarmPing();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // DIAG overlay: surfaces the latest DIAG line on-device (USB debugging is
   // often blocked) so it can be copied and pasted. Admins can hide it globally.
   const [diagLine, setDiagLine] = useState("");
@@ -2960,11 +2974,15 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTabKey, screen, orderedTabs.join(",")]);
 
-  // Absolute guarantee: on the list screen with Chats active, pageIndex is 0,
-  // so both the resting render AND any drag start land on Chats.
+  // Absolute guarantee: on the list screen with Chats active, pageIndex points
+  // at the Chats page. Chats is NOT always index 0 (the user can reorder the
+  // bottom bar), so resolve its real index instead of hardcoding 0 — otherwise
+  // a launch-page of "Chats" would snap to whatever tab is actually at index 0
+  // (e.g. Groups) while the bottom bar highlighted Chats.
   useEffect(() => {
     if (screen === "list" && activeNavTab === "chats" && !pagerDragRef.current?.active) {
-      setPageIndex(0);
+      const chatsIdx = orderedTabs.indexOf("chats");
+      if (chatsIdx >= 0) setPageIndex(chatsIdx);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, activeNavTab, orderedTabs.join(",")]);

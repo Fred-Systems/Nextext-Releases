@@ -3323,12 +3323,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         />
       )}
       {askAI && (
-        <AskAIPanel
-          myUid={myUid}
-          otherName={contact?.profile?.displayName || contact?.displayName || "Them"}
-          contextMessages={askAI.context}
-          onClose={() => setAskAI(null)}
-        />
+         <AskAIPanel
+           myUid={myUid}
+           otherName={contact?.profile?.displayName || contact?.displayName || "Them"}
+           contextMessages={askAI.context}
+           contacts={convoContacts}
+           onClose={() => setAskAI(null)}
+         />
       )}
       {showSchedule && <ScheduleSendSheet t={t} onClose={() => setShowSchedule(false)} onSchedule={sendScheduled} />}
 

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic } from "lucide-react";
+import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { AI_CONTACT_UID, PERSONALITIES } from "../firebase/ai";
 import { getOrCreateDirectChat } from "../firebase/chats";
 import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings } from "../firebase/config-settings";
+import { getPreWarmConfig, setPreWarmEnabled } from "../firebase/prewarm";
 import { getUserMessageStats, formatActiveTime, formatBytes } from "../firebase/stats";
 import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest } from "../firebase/ai";
 
@@ -36,6 +37,10 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [groupAIPersonality, setGroupAIPersonality] = useState("default");
   const settings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
+  const [preWarmOn, setPreWarmOn] = useState(false);
+  useEffect(() => {
+    getPreWarmConfig().then((c) => setPreWarmOn(!!c.preWarmEnabled)).catch(() => {});
+  }, []);
   const [aiModeDraft, setAiModeDraft] = useState(sysConfig?.aiMode || "old");
   const [aiLiveDraft, setAiLiveDraft] = useState(sysConfig?.aiLiveModel || "groq/compound");
   const [aiSaved, setAiSaved] = useState(false);
@@ -1093,6 +1098,28 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
               <span style={{ fontWeight: 700, fontSize: 14, color: settings?.forceLogoutNonAdmins ? "#fff" : t.text }}>
                 {settings?.forceLogoutNonAdmins ? "FORCE LOGOUT IS LIVE — non-admins are signed out" : "Force logout off"}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Zap size={18} color="#FF9500" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Keep FCM Worker Awake (Pre-warm)</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              When ON, every app launch / foreground return writes a tiny silent ping to Firestore so the Render FCM worker stays active and keeps delivering notifications. Off by default. The pings send no notifications and are ignored by the worker.
+            </div>
+            <div onClick={() => {
+              const next = !preWarmOn;
+              setPreWarmOn(next);
+              setPreWarmEnabled(next).catch(() => {});
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: preWarmOn ? "#FF9500" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: preWarmOn ? "#FF9500" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: preWarmOn ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: preWarmOn ? "#fff" : t.text }}>
+                {preWarmOn ? "PRE-WARM IS LIVE — worker stays awake" : "Pre-warm off"}
               </span>
             </div>
           </div>
