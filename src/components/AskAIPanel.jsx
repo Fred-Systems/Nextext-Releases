@@ -9,7 +9,6 @@
 // shell), which keeps the panel full-height and scrollable instead of
 // growing with its content.
 import React, { useState, useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
 import { X, Send, Bot, Mic, UserPlus } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { sendAIMessage, AI_CONTACT_UID } from "../firebase/ai";
@@ -20,7 +19,7 @@ import VoiceToTextButton from "../components/VoiceToTextButton";
 export default function AskAIPanel({ myUid, otherName, contextMessages, contacts = [], onClose }) {
   const { t, composerButtonOrder } = useTheme();
   const sttEnabled = localStorage.getItem("nextext_stt_enabled") !== "off";
-  const sttAutoSend = localStorage.getItem("nextext_stt_autosend") === "on";
+  const sttAutoSend = localStorage.getItem("nextext_stt_autosend") !== "off";
   const [aiMessages, setAiMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -228,5 +227,5 @@ export default function AskAIPanel({ myUid, otherName, contextMessages, contacts
     </div>
   );
 
-  return createPortal(panel, document.body);
+  return panel;
 }

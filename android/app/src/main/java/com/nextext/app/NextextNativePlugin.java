@@ -241,6 +241,11 @@ public class NextextNativePlugin extends Plugin {
         final String chatId = call.getString("chatId", "");
         final String tag = call.getString("tag", "nextext");
         final boolean isPrivate = call.getBoolean("private", false);
+        // Manual dark-theme override: when true, force a dark, high-contrast
+        // notification palette (the Duoqin Android 11 build has no system dark
+        // mode, so we colorize the notification with a near-black background and
+        // let the OS auto-pick light text for contrast).
+        final boolean dark = call.getBoolean("dark", false);
         // Vibration pattern (ms on/off pairs) and ping sound choice, both
         // configurable per-user / globally from Settings. A null pattern means
         // "use the channel default"; an explicit empty array means silent.
@@ -324,26 +329,41 @@ public class NextextNativePlugin extends Plugin {
                     builder = new android.app.Notification.Builder(ctx);
                 }
                 builder.setSmallIcon(R.drawable.ic_stat_nextext)
-                    .setColor(0xFF10B981)
+                    .setColor(dark && android.os.Build.VERSION.SDK_INT >= 26 ? 0xFF121217 : 0xFF10B981)
                     .setContentTitle(title)
                     .setContentText(body)
                     .setAutoCancel(true)
                     .setWhen(System.currentTimeMillis())
                     .setPriority(android.app.Notification.PRIORITY_HIGH)
                     .setCategory(android.app.Notification.CATEGORY_MESSAGE);
+                // Manual dark-theme override: colorize the notification with a
+                // near-black background so it reads as a dark, high-contrast card
+                // on devices (e.g. Duoqin Android 11) without system dark mode.
+                if (dark && android.os.Build.VERSION.SDK_INT >= 26) {
+                    try { builder.setColorized(true); } catch (Exception ignored) {}
+                }
                 // Disable channel defaults entirely — we set sound + vibration
                 // explicitly below, per-notification. setDefaults(DEFAULT_*)
                 // would override our setVibrate()/setSound() and lock the
                 // channel's behaviour, which is exactly the bug we're fixing.
                 builder.setDefaults(0);
                 // Sound: "none" silences; "default" uses the system notification
-                // sound; ping1/ping2/ping3 play a distinct ToneGenerator beep
-                // (no bundled assets needed).
+                // sound; ping1/ping2/ping3 play a bundled raw beep asset so the
+                // SAME tone plays in both foreground (this builder) and background
+                // (FCM references the raw resource by name). Using a real asset
+                // (instead of ToneGenerator) is what lets the worker reproduce
+                // the exact ping when the app is killed.
                 if ("none".equals(soundKey)) {
                     builder.setSound(null);
                 } else if ("ping1".equals(soundKey) || "ping2".equals(soundKey) || "ping3".equals(soundKey)) {
-                    builder.setSound(null);
-                    try { playPingTone(soundKey); } catch (Exception ignored) {}
+                    try {
+                        int resId = ctx.getResources().getIdentifier(soundKey, "raw", ctx.getPackageName());
+                        if (resId != 0) {
+                            builder.setSound(android.net.Uri.parse("android.resource://" + ctx.getPackageName() + "/" + resId));
+                        } else {
+                            builder.setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION));
+                        }
+                    } catch (Exception ignored) { builder.setSound(null); }
                 } else {
                     try {
                         builder.setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION));
@@ -527,7 +547,13 @@ public class NextextNativePlugin extends Plugin {
         } catch (Exception ignored) {}
         if ("none".equals(soundKey)) { /* silent */ }
         else if ("ping1".equals(soundKey) || "ping2".equals(soundKey) || "ping3".equals(soundKey)) {
-            try { playPingTone(soundKey); } catch (Exception ignored) {}
+            try {
+                int resId = getContext().getResources().getIdentifier(soundKey, "raw", getContext().getPackageName());
+                android.net.Uri uri = resId != 0 ? android.net.Uri.parse("android.resource://" + getContext().getPackageName() + "/" + resId)
+                                                 : android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION);
+                android.media.Ringtone r = android.media.RingtoneManager.getRingtone(getContext(), uri);
+                if (r != null) { r.play(); }
+            } catch (Exception ignored) {}
         } else {
             try {
                 android.net.Uri uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION);

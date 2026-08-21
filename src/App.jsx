@@ -18,6 +18,7 @@ import AuthScreen from "./screens/AuthScreen";
 import CompleteProfileScreen from "./screens/CompleteProfileScreen";
 import ChatListScreen from "./screens/ChatListScreen";
 import ConversationScreen from "./screens/ConversationScreen";
+import AskAIPanel from "./components/AskAIPanel";
 import PrivacyScreen from "./screens/PrivacyScreen";
 import ParentalControlsScreen from "./screens/ParentalControlsScreen";
 import FeedbackScreen from "./screens/FeedbackScreen";
@@ -330,6 +331,14 @@ function NotificationPrefsRow({ t }) {
   const [soundKey, setSoundKey] = useState(() => localStorage.getItem("nextext_notif_sound") || "default");
   const [vibOn, setVibOn] = useState(() => localStorage.getItem("nextext_notif_vibrate_on") !== "false");
   const [soundOn, setSoundOn] = useState(() => localStorage.getItem("nextext_notif_sound_on") !== "false");
+  const [darkNotif, setDarkNotif] = useState(() => localStorage.getItem("nextext_notif_dark") === "on");
+  // Mirror notification prefs into the Firestore user doc so the FCM worker can
+  // honour them for background (app-killed) notifications, not just foreground.
+  const syncNotif = (patch) => {
+    const uid = auth?.user?.uid;
+    if (!uid) return;
+    try { updateDoc(doc(db, "users", uid), patch).catch(() => {}); } catch {}
+  };
   const vibOptions = [
     { key: "default", label: "Default (2 short)" },
     { key: "short", label: "Short (1 buzz)" },
@@ -337,10 +346,14 @@ function NotificationPrefsRow({ t }) {
     { key: "heartbeat", label: "Heartbeat" },
     { key: "none", label: "No vibration" },
   ];
+  // Native system tones — these are bundled raw assets (ping1/2/3) that play
+  // identically whether the app is open or killed, unlike Web Audio chimes.
   const soundOptions = [
     { key: "default", label: "Default system sound" },
     { key: "none", label: "No sound" },
-    ...PING_SOUNDS.map((s) => ({ key: s.id, label: s.label })),
+    { key: "ping1", label: "Ping 1 (low)" },
+    { key: "ping2", label: "Ping 2 (mid)" },
+    { key: "ping3", label: "Ping 3 (high)" },
   ];
   const Toggle = ({ label, value, onChange }) => (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderTop: `1px solid ${t.border}` }}>
@@ -373,10 +386,11 @@ function NotificationPrefsRow({ t }) {
   };
   return (
     <>
-      <Toggle label="Vibrate on new message" value={vibOn} onChange={(v) => { setVibOn(v); try { localStorage.setItem("nextext_notif_vibrate_on", String(v)); } catch {} if (v) preview(vibKey, soundKey); }} />
-      <Toggle label="Play sound on new message" value={soundOn} onChange={(v) => { setSoundOn(v); try { localStorage.setItem("nextext_notif_sound_on", String(v)); } catch {} if (v) preview(soundKey, soundKey); }} />
-      <Picker label="Vibration style" value={vibKey} options={vibOptions} onPick={(k) => { setVibKey(k); try { localStorage.setItem("nextext_notif_vibration", k); } catch {} preview(k, soundKey); }} />
-      <Picker label="Ping sound" value={soundKey} options={soundOptions} onPick={(k) => { setSoundKey(k); try { localStorage.setItem("nextext_notif_sound", k); } catch {} preview(vibKey, k); }} />
+      <Toggle label="Vibrate on new message" value={vibOn} onChange={(v) => { setVibOn(v); try { localStorage.setItem("nextext_notif_vibrate_on", String(v)); } catch {} syncNotif({ notifVibrateOn: v }); if (v) preview(vibKey, soundKey); }} />
+      <Toggle label="Play sound on new message" value={soundOn} onChange={(v) => { setSoundOn(v); try { localStorage.setItem("nextext_notif_sound_on", String(v)); } catch {} syncNotif({ notifSoundOn: v }); if (v) preview(soundKey, soundKey); }} />
+      <Picker label="Vibration style" value={vibKey} options={vibOptions} onPick={(k) => { setVibKey(k); try { localStorage.setItem("nextext_notif_vibration", k); } catch {} syncNotif({ notifVibration: k }); preview(k, soundKey); }} />
+      <Picker label="Ping sound" value={soundKey} options={soundOptions} onPick={(k) => { setSoundKey(k); try { localStorage.setItem("nextext_notif_sound", k); } catch {} syncNotif({ notifSound: k }); preview(vibKey, k); }} />
+      <Toggle label="Dark notification theme" value={darkNotif} onChange={(v) => { setDarkNotif(v); try { localStorage.setItem("nextext_notif_dark", v ? "on" : "off"); } catch {} syncNotif({ notifDark: v ? "on" : "off" }); }} />
       <div style={{ padding: "4px 16px 12px", fontSize: 11.5, color: t.textMuted }}>
         Tip: open a chat, tap the contact's name → "Notifications for …" to give one person a different ping/vibration. Tap a style above to feel/hear it instantly.
       </div>
@@ -471,7 +485,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     </div>
   );
   const [sttEnabled, setSttEnabled] = useState(() => localStorage.getItem("nextext_stt_enabled") !== "off");
-  const [sttAutoSend, setSttAutoSend] = useState(() => localStorage.getItem("nextext_stt_autosend") === "on");
+  const [sttAutoSend, setSttAutoSend] = useState(() => localStorage.getItem("nextext_stt_autosend") !== "off");
   const [sttShowInterim, setSttShowInterim] = useState(() => localStorage.getItem("nextext_stt_show_interim") === "on");
   const [hideVersion, setHideVersion] = useState(() => localStorage.getItem("nextext_hide_version") === "on");
   const [useCustomPrompt, setUseCustomPrompt] = useState(() => localStorage.getItem("nextext_ai_custom_instructions_enabled") !== "off");
@@ -912,10 +926,10 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                   <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Send your speech immediately when you stop talking instead of reviewing it first.</div>
                 </div>
                 <div
-                  onClick={() => { const next = localStorage.getItem("nextext_stt_autosend") !== "on"; localStorage.setItem("nextext_stt_autosend", next ? "on" : "off"); forceSettingsRerender(); }}
-                  style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_stt_autosend") === "on" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                  onClick={() => { const next = localStorage.getItem("nextext_stt_autosend") === "off"; localStorage.setItem("nextext_stt_autosend", next ? "on" : "off"); forceSettingsRerender(); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_stt_autosend") !== "off" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
                 >
-                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_stt_autosend") === "on" ? 23 : 3, transition: "left 0.15s" }} />
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_stt_autosend") !== "off" ? 23 : 3, transition: "left 0.15s" }} />
                 </div>
               </div>
             )}
@@ -1669,12 +1683,11 @@ function getEffectiveTabs(navConfig, userRestrictions, topBarVisible) {
     })
     .map(({ key }) => key);
   if (!topBarVisible && !tabs.includes("settings")) tabs.push("settings");
-  // Chats MUST be the first (left-most) tab so a cold start ALWAYS lands on the
-  // chat list, never Groups/Status/Settings. Remove any existing "chats" entry
-  // first so it is guaranteed to end up at index 0 regardless of navConfig order.
-  const withoutChats = tabs.filter((k) => k !== "chats");
-  withoutChats.unshift("chats");
-  return withoutChats;
+  // Chats must always be reachable; if a (bad) navConfig dropped it, append it.
+  // NOTE: we no longer force chats to the front — that broke the user's chosen
+  // launch page (cold start must open on launchPage, not always the chat list).
+  if (!tabs.includes("chats")) tabs.push("chats");
+  return tabs;
 }
 
 // Coerce any stored shape of the bottom-nav config (older builds persisted a
@@ -1929,6 +1942,10 @@ function AppShell({ appLocked, setAppLocked }) {
   const [showThemeSheet, setShowThemeSheet] = useState(false);
   const [launchPage, setLaunchPage] = useState(() => localStorage.getItem("nextext_launch_page") || "groups");
   const [activeNavTab, setActiveNavTab] = useState(() => localStorage.getItem("nextext_launch_page") || "groups");
+  // Lifted "Ask AI about this" panel: rendered at the App-shell level (not inside
+  // a scrollable/conversation subtree) so its position:fixed inset:0 resolves to
+  // the fixed-size phone shell instead of a content-grown container.
+  const [askAIGlobal, setAskAIGlobal] = useState(null);
   const [userRestrictions, setUserRestrictions] = useState(null);
   const [liveUserDoc, setLiveUserDoc] = useState(auth.userDoc);
   const [navConfig, setNavConfig] = useState(() => {
@@ -2918,7 +2935,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // is ALWAYS index 0; otherwise it's the active tab's index (or the last
   // resting pageIndex when on a non-tab screen). Both the page render and the
   // boot diag read this, so they can never disagree.
-  const effectiveIndex = (screen === "list" && activeNavTab === "chats") ? 0 : (currentTabIndex >= 0 ? currentTabIndex : pageIndex);
+  const chatsIndex = orderedTabs.indexOf("chats");
+  const effectiveIndex = (screen === "list" && activeNavTab === "chats" && chatsIndex >= 0) ? chatsIndex : (currentTabIndex >= 0 ? currentTabIndex : pageIndex);
 
 // BULLETPROOF pager position: after every render where the active tab (or
   // tab order) changes, imperatively force the row's transform to match
@@ -3452,6 +3470,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           emojiAnimations={emojiAnimations}
           emojiBigOn={emojiBigOn}
           recordingBarScale={recordingBarScale}
+          onOpenAskAI={setAskAIGlobal}
         />
       )}
       {screen === "contactProfile" && activeChat && (
@@ -3547,6 +3566,16 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
         <div onClick={() => setShowBootDiag(false)} style={{ position: "fixed", top: 6, left: 6, right: 6, zIndex: 1000001, background: "rgba(0,0,0,0.82)", color: "#5dff9b", fontSize: 10, lineHeight: 1.4, padding: "6px 9px", borderRadius: 8, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
           {`BOOT DIAG — screen=${screen} tab=${activeNavTab} idx=${currentTabIndex} page=${pageIndex} ei=${effectiveIndex} tabs=[${orderedTabs.join(",")}]\n${pagerDebug}\nhideNav=${hideNav} story=${storyViewerOpen}`}
         </div>
+      )}
+
+      {askAIGlobal && (
+        <AskAIPanel
+          myUid={auth.user?.uid}
+          otherName={askAIGlobal.otherName}
+          contextMessages={askAIGlobal.context}
+          contacts={contacts}
+          onClose={() => setAskAIGlobal(null)}
+        />
       )}
 
       {createPortal((splashVisible && localStorage.getItem("nextext_splash_enabled") !== "off") && (

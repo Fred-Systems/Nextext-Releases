@@ -128,9 +128,10 @@ function readGlobalNotifPrefs() {
     // Master switches: vibration off → no pattern; sound off → silent.
     if (!vibOn) pattern = null;
     const sound = soundOn ? soundKey : "none";
-    return { vibrationPattern: pattern, sound };
+    const dark = localStorage.getItem("nextext_notif_dark") === "on";
+    return { vibrationPattern: pattern, sound, dark };
   } catch {
-    return { vibrationPattern: VIBRATION_PRESETS.default, sound: "default" };
+    return { vibrationPattern: VIBRATION_PRESETS.default, sound: "default", dark: false };
   }
 }
 
@@ -142,10 +143,9 @@ export function showLocalNotification(title, body, tag = "nextext-msg", info = {
   const sound = info.sound !== undefined ? info.sound : prefs.sound;
   const senderColor = info.senderColor || "#7C5CFF";
   const imageUrl = info.imageUrl || "";
-  // Chime ids are Web Audio tones the native layer can't synthesize — play them
-  // from JS (foreground only) and tell native to stay silent on sound so we
-  // don't double up. Native still handles the status-bar notification + vibration.
-  const nativeSound = isChimeId(sound) ? "none" : (sound || "default");
+  // Notification pings are now native tones (default / none / ping1-3) that play
+  // identically in foreground and background, so no JS-side chime fallback.
+  const nativeSound = sound || "default";
   if (Capacitor.isNativePlatform()) {
     try {
       NextextNative.showLocalNotification({
@@ -162,12 +162,11 @@ export function showLocalNotification(title, body, tag = "nextext-msg", info = {
         sound: nativeSound,
         senderColor,
         imageUrl,
+        // Manual dark-theme override for devices without system dark mode.
+        dark: prefs.dark === true,
       }).catch(() => {});
     } catch (e) {
       console.warn("[notifications] native notification error:", e);
-    }
-    if (isChimeId(sound)) {
-      try { playChime(sound); } catch {}
     }
     return;
   }

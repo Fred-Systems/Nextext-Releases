@@ -277,7 +277,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   };
 
   const sttEnabled = localStorage.getItem("nextext_stt_enabled") !== "off";
-  const sttAutoSend = localStorage.getItem("nextext_stt_autosend") === "on";
+  const sttAutoSend = localStorage.getItem("nextext_stt_autosend") !== "off";
   const handleSttResult = (text, { autoSend } = {}) => {
     const trimmed = (text || "").trim();
     if (!trimmed) return;

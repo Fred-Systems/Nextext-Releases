@@ -30,7 +30,6 @@ import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoi
 import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
 import ContactSharePicker from "../components/ContactSharePicker";
 import ForwardPicker from "../components/ForwardPicker";
-import AskAIPanel from "../components/AskAIPanel";
 import VoiceToTextButton from "../components/VoiceToTextButton";
 
 
@@ -484,7 +483,7 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
   );
 }
 
-export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, recordingBarScale = 1, userDoc, emojiAnimations = true, emojiBigOn = true }) {
+export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, recordingBarScale = 1, userDoc, emojiAnimations = true, emojiBigOn = true, onOpenAskAI }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth, composerButtonOrder } = useTheme();
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
@@ -494,7 +493,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [chatId, setChatId] = useState(initialChatId);
   const [input, setInput] = useState("");
   const [activeMsg, setActiveMsg] = useState(null);
-  const [askAI, setAskAI] = useState(null);
   const [reactionFx, setReactionFx] = useState(null);
   const [forwardMsg, setForwardMsg] = useState(null);
   const [forwardBusy, setForwardBusy] = useState(false);
@@ -811,7 +809,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
   // ── Feature: STT (voice-to-text) button in composer ──────────────
   const sttEnabled = localStorage.getItem("nextext_stt_enabled") !== "off";
-  const sttAutoSend = localStorage.getItem("nextext_stt_autosend") === "on";
+  const sttAutoSend = localStorage.getItem("nextext_stt_autosend") !== "off";
 
   // Fallback: fetch the other user's profile photo directly from Firestore so
   // "View Profile Picture" always has the image even if the contact object is stale.
@@ -1530,7 +1528,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         text: m.text || (m.type === "image" ? "[image]" : m.type === "voice" ? "[voice note]" : m.type === "location" ? "[location]" : m.type === "contact" ? "[contact card]" : m.type === "poll" ? "[poll]" : "[media]"),
       }));
     }
-    setAskAI({ context: ctx });
+    onOpenAskAI?.({ context: ctx, otherName: contact?.profile?.displayName || contact?.displayName || "Them" });
     setActiveMsg(null);
   };
   const handleDeleteSelf = async () => { if (!chatId || !activeMsg) return; try { await deleteMessageForSelf(chatId, activeMsg.id, myUid); } catch (e) { setSendError("Couldn't delete: " + (e.message || "server rejected the write")); } setActiveMsg(null); };
@@ -3107,7 +3105,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             )}
             {input.trim() || editingMsg ? (
               <button
-                onClick={editingMsg ? saveEdit : send}
+                onClick={() => (editingMsg ? saveEdit() : send())}
                 onMouseDown={() => { if (!editingMsg && input.trim()) longPressTimer.current = setTimeout(() => setShowSchedule(true), 500); }}
                 onMouseUp={() => clearTimeout(longPressTimer.current)}
                 onMouseLeave={() => clearTimeout(longPressTimer.current)}
@@ -3321,15 +3319,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           onClose={() => { if (!forwardBusy) { setForwardMsg(null); setForwardingSelection(false); } }}
           onForward={handleForwardTo}
         />
-      )}
-      {askAI && (
-         <AskAIPanel
-           myUid={myUid}
-           otherName={contact?.profile?.displayName || contact?.displayName || "Them"}
-           contextMessages={askAI.context}
-           contacts={convoContacts}
-           onClose={() => setAskAI(null)}
-         />
       )}
       {showSchedule && <ScheduleSendSheet t={t} onClose={() => setShowSchedule(false)} onSchedule={sendScheduled} />}
 
