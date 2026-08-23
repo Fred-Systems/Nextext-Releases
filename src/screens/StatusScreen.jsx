@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic } from "lucide-react";
 import { useTheme, FONTS } from "../theme/ThemeContext";
@@ -213,6 +213,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   const [cameraFacing, setCameraFacing] = useState("user");
   const [cameraMode, setCameraMode] = useState("photo");
   const [cameraFilter, setCameraFilter] = useState("");
+  const [cameraStreamKey, setCameraStreamKey] = useState(0);
   const photoInputRef = useRef(null);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [showZoomHint, setShowZoomHint] = useState(false);
@@ -483,10 +484,10 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
         audio: captureMode === "video",
       });
       cameraStreamRef.current = stream;
+      setCameraStreamKey((k) => k + 1);
       setCameraFacing(facing);
       setCameraMode(captureMode);
       setShowCamera(true);
-      if (cameraVideoRef.current) cameraVideoRef.current.srcObject = stream;
       if (captureMode === "video") {
         cameraRecordingRef.current = new MediaRecorder(stream, { mimeType: "video/webm" });
         const chunks = [];
@@ -511,6 +512,20 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
     if (cameraRecordingRef.current && cameraRecordingRef.current.state === "recording") return;
     startCamera(cameraMode, cameraFacing === "user" ? "environment" : "user");
   };
+
+  // Robustly attach the live stream to the <video> preview and start playback.
+  // Runs after the stream is (re)started (cameraStreamKey changes on every
+  // startCamera, including flips/mode switches) and whenever the camera opens.
+  useLayoutEffect(() => {
+    const v = cameraVideoRef.current;
+    if (!showCamera || !v || !cameraStreamRef.current) return;
+    try {
+      v.muted = true;
+      if (v.srcObject !== cameraStreamRef.current) v.srcObject = cameraStreamRef.current;
+      const p = v.play();
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch { /* noop */ }
+  }, [showCamera, cameraStreamKey]);
 
   const capturePhotoFromCamera = () => {
     const video = cameraVideoRef.current;
@@ -823,13 +838,8 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
               </div>
             </div>
             <video
-              ref={(el) => {
-                cameraVideoRef.current = el;
-                if (el && cameraStreamRef.current && !el.srcObject) {
-                  el.srcObject = cameraStreamRef.current;
-                  el.play().catch(() => {});
-                }
-              }}
+              key={cameraStreamKey}
+              ref={(el) => { cameraVideoRef.current = el; }}
               autoPlay
               playsInline
               muted
