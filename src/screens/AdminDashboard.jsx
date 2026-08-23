@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
-import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { AI_CONTACT_UID, PERSONALITIES } from "../firebase/ai";
 import { getOrCreateDirectChat } from "../firebase/chats";
@@ -54,8 +54,73 @@ export default function AdminDashboard({ myUid, onBack }) {
   }, [sysConfig?.aiMode, sysConfig?.aiLiveModel]);
   const aiRequests = useAIRequestsHook();
   const groupAIRequests = useGroupAIRequestsHook();
+  const emptyDbConfirmRef = useRef(null);
+  const [emptyDbLoading, setEmptyDbLoading] = useState(false);
+  const [emptyDbResult, setEmptyDbResult] = useState(null);
 
   useEffect(() => { ensureGlobalSettingsExist(); ensureSystemConfig(); }, []);
+
+  const handleEmptyDatabase = async () => {
+    const confirmText = emptyDbConfirmRef.current?.value || "";
+    if (confirmText !== "DELETE EVERYTHING") {
+      setEmptyDbResult({ success: false, message: "Confirmation text does not match. Type exactly: DELETE EVERYTHING" });
+      return;
+    }
+    setEmptyDbLoading(true);
+    setEmptyDbResult(null);
+    try {
+      // Delete all user documents (except admins)
+      const usersSnap = await getDocs(collection(db, "users"));
+      const batch = writeBatch(db);
+      let deletedCount = 0;
+      for (const docSnap of usersSnap.docs) {
+        const userData = docSnap.data();
+        if (userData.role === "admin") continue;
+        batch.delete(docSnap.ref);
+        deletedCount++;
+      }
+      await batch.commit();
+
+      // Delete all chats and messages
+      const chatsSnap = await getDocs(collection(db, "chats"));
+      const chatBatch = writeBatch(db);
+      let chatDeleted = 0;
+      for (const chatSnap of chatsSnap.docs) {
+        // Delete messages subcollection
+        const msgsSnap = await getDocs(collection(db, "chats", chatSnap.id, "messages"));
+        for (const msgSnap of msgsSnap.docs) {
+          chatBatch.delete(msgSnap.ref);
+        }
+        chatBatch.delete(chatSnap.ref);
+        chatDeleted++;
+      }
+      await chatBatch.commit();
+
+      // Delete other collections
+      const collectionsToDelete = [
+        "status", "reports", "feedback", "systemMessages", "broadcastLists",
+        "messageLimits", "aiRequests", "groupAIRequests"
+      ];
+      for (const collName of collectionsToDelete) {
+        const collSnap = await getDocs(collection(db, collName));
+        const cBatch = writeBatch(db);
+        for (const docSnap of collSnap.docs) {
+          cBatch.delete(docSnap.ref);
+        }
+        await cBatch.commit();
+      }
+
+      // Note: Supabase storage files are not deleted here (would need server-side function)
+      // The app will no longer reference them after the Firestore data is gone.
+
+      setEmptyDbResult({ success: true, message: `Database emptied. Deleted ${deletedCount} non-admin users, ${chatDeleted} chats, and all related data. Supabase storage files still exist but are no longer referenced.` });
+    } catch (err) {
+      console.error("Empty database error:", err);
+      setEmptyDbResult({ success: false, message: `Error: ${err.message}` });
+    } finally {
+      setEmptyDbLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (settings) {
@@ -594,7 +659,7 @@ export default function AdminDashboard({ myUid, onBack }) {
             <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>WhatsApp-style instant media delete (1:1 chats)</div>
               <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
-                When ON, media in one-on-one chats is downloaded to the recipient's device and the Supabase server copy is deleted immediately after, keeping storage near zero. Group chats are excluded (they keep the normal {settings?.mediaExpiryDays == null ? "permanent" : `${settings.mediaExpiryDays}-day`} cleanup). OFF by default.
+                When ON, media in one-on-one chats is downloaded to the recipient's device and the Supabase server copy is deleted immediately after, keeping storage near zero. Group chats are excluded (they keep the normal {settings?.mediaExpiryDays == null ? "permanent" : `${settings.mediaExpiryDays}-day`} cleanup). ON by default for users.
               </div>
               <div onClick={() => {
                 const newVal = !settings?.mediaAutoDelete;
@@ -607,6 +672,51 @@ export default function AdminDashboard({ myUid, onBack }) {
                   {settings?.mediaAutoDelete ? "INSTANT MEDIA DELETE ON" : "Instant media delete off"}
                 </span>
               </div>
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}` }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>User-facing toggle for instant media delete</div>
+                <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                  When ON, users can enable/disable instant media delete in their Settings. When OFF, the setting is hidden from users and the admin-chosen fallback behavior applies.
+                </div>
+                <div onClick={() => {
+                  const newVal = !settings?.mediaAutoDeleteUserVisible;
+                  updateGlobalSettings({ mediaAutoDeleteUserVisible: newVal }, myUid);
+                }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.mediaAutoDeleteUserVisible ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+                  <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.mediaAutoDeleteUserVisible ? "#34C759" : t.border, position: "relative" }}>
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.mediaAutoDeleteUserVisible ? 23 : 3, transition: "left 0.15s" }} />
+                  </div>
+                  <span style={{ fontWeight: 700, fontSize: 14, color: settings?.mediaAutoDeleteUserVisible ? "#fff" : t.text }}>
+                    {settings?.mediaAutoDeleteUserVisible ? "USER TOGGLE VISIBLE" : "USER TOGGLE HIDDEN"}
+                  </span>
+                </div>
+              </div>
+              {(settings?.mediaAutoDeleteUserVisible === false) && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>Fallback when user toggle hidden</div>
+                  <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                    Choose the behavior for all users when the instant media delete toggle is hidden from them.
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {["expiry", "whatsapp"].map((mode) => (
+                      <div
+                        key={mode}
+                        onClick={() => updateGlobalSettings({ mediaAutoDeleteFallback: mode }, myUid)}
+                        style={{
+                          padding: "10px 16px",
+                          borderRadius: 10,
+                          background: settings?.mediaAutoDeleteFallback === mode ? t.primary : t.primaryLight,
+                          color: settings?.mediaAutoDeleteFallback === mode ? t.bubbleMeText : t.text,
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          border: `1px solid ${settings?.mediaAutoDeleteFallback === mode ? t.primary : t.border}`,
+                        }}
+                      >
+                        {mode === "expiry" ? "📅 3-day auto-delete" : "⚡ WhatsApp-style instant delete"}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1515,6 +1625,33 @@ export default function AdminDashboard({ myUid, onBack }) {
                 {settings?.hideAskAI ? "\"ASK AI\" HIDDEN EVERYWHERE" : "\"Ask AI\" visible"}
               </span>
             </div>
+          </div>
+
+          {/* Empty Database (nuclear option) */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14, border: "2px solid #FF3B30" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Trash2 size={18} color="#FF3B30" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: "#FF3B30" }}>Empty Database (Nuclear Option)</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              <strong>IRREVERSIBLE.</strong> This will permanently delete ALL data: messages, media, statuses, contacts, announcements, AI requests, user stats, and Supabase storage files. Only admin accounts will remain. Type <strong>"DELETE EVERYTHING"</strong> in the box below to confirm.
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <input
+                ref={emptyDbConfirmRef}
+                type="text"
+                placeholder="Type DELETE EVERYTHING to confirm"
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 13 }}
+              />
+            </div>
+            <button
+              onClick={handleEmptyDatabase}
+              disabled={emptyDbLoading || (emptyDbConfirmRef.current?.value || "") !== "DELETE EVERYTHING"}
+              style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: (emptyDbConfirmRef.current?.value || "") === "DELETE EVERYTHING" ? "#FF3B30" : t.border, color: (emptyDbConfirmRef.current?.value || "") === "DELETE EVERYTHING" ? "#fff" : t.textMuted, fontWeight: 700, fontSize: 14, cursor: ((emptyDbConfirmRef.current?.value || "") === "DELETE EVERYTHING" && !emptyDbLoading) ? "pointer" : "not-allowed", opacity: emptyDbLoading ? 0.7 : 1 }}
+            >
+              {emptyDbLoading ? "Deleting…" : "EMPTY DATABASE NOW"}
+            </button>
+            {emptyDbResult && <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: emptyDbResult.success ? "#E5F9E7" : "#FFE5E5", color: emptyDbResult.success ? "#28A745" : "#FF3B30", fontSize: 12.5, fontWeight: 600 }}>{emptyDbResult.message}</div>}
           </div>
 
         </div>

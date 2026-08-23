@@ -418,6 +418,26 @@ function NotificationPrefsRow({ t, auth, myUid }) {
         ]}
         onPick={(k) => { setDarkNotif(k); try { localStorage.setItem("nextext_notif_dark", k); } catch {} syncNotif({ notifDark: k }); }}
       />
+      <div style={{ padding: "12px 16px", borderTop: `1px solid ${t.border}` }}>
+        <div onClick={async () => {
+          const p = vibOn ? (VIBRATION_PRESETS[vibKey] || VIBRATION_PRESETS.default) : null;
+          const s = soundOn ? soundKey : "none";
+          await showLocalNotification("Test notification", "This is a test notification using your current settings.", "nextext-test", {
+            chatId: "test",
+            senderName: "NexText",
+            groupName: "",
+            messageText: "Test notification",
+            private: false,
+            vibrationPattern: p,
+            sound: s,
+            senderColor: t.primary,
+            imageUrl: "",
+            dark: darkNotif === "off" ? "off" : darkNotif,
+          });
+        }} style={{ padding: "12px 16px", borderRadius: 10, background: t.primaryLight, color: t.primary, fontSize: 13.5, fontWeight: 600, cursor: "pointer", textAlign: "center", border: `1px solid ${t.border}` }}>
+          🔔 Send test notification
+        </div>
+      </div>
       <div style={{ padding: "4px 16px 12px", fontSize: 11.5, color: t.textMuted }}>
         Tip: open a chat, tap the contact's name → "Notifications for …" to give one person a different ping/vibration. Tap a style above to feel/hear it instantly.
         <br />
@@ -934,6 +954,32 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               );
             })()}
           </div>
+
+          {/* WhatsApp-style instant media delete (user toggle, enabled by default) */}
+          {(globalSettings?.mediaAutoDeleteUserVisible !== false) && (
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Instant media delete (1:1 chats)</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>When ON, media in one-on-one chats is downloaded to your device and the server copy is deleted immediately after. Group chats use the normal auto-delete timer. ON by default.</div>
+              <div
+                onClick={() => {
+                  const next = !(globalSettings?.mediaAutoDelete ?? true);
+                  updateGlobalSettings({ mediaAutoDelete: next }, myUid);
+                }}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", cursor: "pointer" }}
+              >
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Instant media delete</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Delete server copy after you download media in 1:1 chats</div>
+                </div>
+                <div
+                  style={{ width: 46, height: 26, borderRadius: 13, background: (globalSettings?.mediaAutoDelete ?? true) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (globalSettings?.mediaAutoDelete ?? true) ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            </div>
+          )}
+
         </SectionCard>
 
         {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}
@@ -2744,8 +2790,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                 dark: getNotifDark(),
               });
             } else {
-              const senderColor = (otherContact?.avatarColor || otherContact?.color || "#7C5CFF");
-              const imageUrl = otherContact?.photoURL || otherContact?.profilePic || "";
+              const senderColor = (otherContact?.profile?.avatarColor || otherContact?.profile?.color || otherContact?.avatarColor || otherContact?.color || "#7C5CFF");
+              const imageUrl = otherContact?.profile?.photoURL || otherContact?.photoURL || otherContact?.profilePic || "";
               showLocalNotification(chatName, body.length > 60 ? body.slice(0, 60) + "…" : body, chatId, {
                 chatId,
                 senderName,

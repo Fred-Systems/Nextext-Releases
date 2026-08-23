@@ -2,7 +2,7 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 import { app } from "./config";
-import { doc, updateDoc, arrayUnion, arrayRemove } from "firebase/firestore";
+import { doc, updateDoc, arrayRemove } from "firebase/firestore";
 import { db } from "./config";
 import { playChime, isChimeId } from "../utils/pingSounds";
 
@@ -255,7 +255,7 @@ export async function initNotifications(myUid) {
 
       PushNotifications.addListener("registration", ({ value }) => {
         if (value) {
-          updateDoc(doc(db, "users", myUid), { fcmTokens: arrayUnion(value) }).catch(() => {});
+          updateDoc(doc(db, "users", myUid), { fcmTokens: [value] }).catch(() => {});
         }
       }).catch(() => {});
       PushNotifications.addListener("registrationError", ({ err }) => {
@@ -294,7 +294,7 @@ export async function initNotifications(myUid) {
     const token = await getToken(messaging, { vapidKey: VAPID_KEY }).catch(() => null);
     if (token) {
       await updateDoc(doc(db, "users", myUid), {
-        fcmTokens: arrayUnion(token),
+        fcmTokens: [token],
       });
     }
     onMessage(messaging, (payload) => {

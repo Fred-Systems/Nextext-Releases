@@ -502,19 +502,6 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
         setCameraFacing(facing);
         setCameraMode(captureMode);
         setShowCamera(true);
-        // Attach the stream after the <video> is mounted. A short delay avoids
-        // a WebView timing bug where the preview stays black if srcObject is
-        // set synchronously during the same commit that creates the element.
-        setTimeout(() => {
-          const v = cameraVideoRef.current;
-          if (v && cameraStreamRef.current) {
-            try {
-              v.muted = true;
-              if (v.srcObject !== cameraStreamRef.current) v.srcObject = cameraStreamRef.current;
-              v.play().catch(() => {});
-            } catch { /* noop */ }
-          }
-        }, 80);
         if (captureMode === "video") {
           let recorder;
           try { recorder = new MediaRecorder(stream, { mimeType: "video/webm" }); }
@@ -555,6 +542,16 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       const p = v.play();
       if (p && typeof p.catch === "function") p.catch(() => {});
     } catch { /* noop */ }
+    // Also set up a small interval to re-attach if the stream gets detached
+    const interval = setInterval(() => {
+      if (v && cameraStreamRef.current && v.srcObject !== cameraStreamRef.current) {
+        try {
+          v.srcObject = cameraStreamRef.current;
+          v.play().catch(() => {});
+        } catch { /* noop */ }
+      }
+    }, 500);
+    return () => clearInterval(interval);
   }, [showCamera, cameraStreamKey]);
 
   const capturePhotoFromCamera = () => {
@@ -869,7 +866,16 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
             </div>
             <video
               key={cameraStreamKey}
-              ref={(el) => { cameraVideoRef.current = el; }}
+              ref={(el) => {
+                cameraVideoRef.current = el;
+                if (el && cameraStreamRef.current) {
+                  try {
+                    el.muted = true;
+                    if (el.srcObject !== cameraStreamRef.current) el.srcObject = cameraStreamRef.current;
+                    el.play().catch(() => {});
+                  } catch { /* noop */ }
+                }
+              }}
               autoPlay
               playsInline
               muted

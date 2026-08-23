@@ -353,7 +353,7 @@ function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, is
     if (!isAutoPlayTarget || !autoPlayToken || !audioRef.current) return;
     onPlayStart?.(msgId);
     if (audioRef.current.readyState >= 1) {
-      audioRef.current.currentTime = 0;
+      try { audioRef.current.currentTime = 0; } catch {}
       audioRef.current.play().catch(() => setError(true));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -369,8 +369,10 @@ function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, is
   }, [nowPlayingId, msgId]);
 
   const seekTo = (fraction) => {
-    if (!audioRef.current || !totalDuration) return;
-    audioRef.current.currentTime = fraction * totalDuration;
+    if (!audioRef.current || !totalDuration || !isFinite(totalDuration)) return;
+    const targetTime = fraction * totalDuration;
+    if (!isFinite(targetTime)) return;
+    audioRef.current.currentTime = targetTime;
     setCurrentTime(audioRef.current.currentTime);
   };
 
@@ -399,7 +401,7 @@ function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, is
     return `${m}:${String(s % 60).padStart(2, "0")}`;
   };
 
-  const progress = totalDuration > 0 ? Math.min(currentTime / totalDuration, 1) : 0;
+  const progress = (isFinite(totalDuration) && totalDuration > 0) ? Math.min(currentTime / totalDuration, 1) : 0;
   const heights = wave || PLACEHOLDER_WAVE;
   const idleColor = mine ? "rgba(255,255,255,0.45)" : (t.textMuted + "88");
   const playedColor = mine ? "rgba(255,255,255,0.9)" : t.primary;
@@ -414,7 +416,7 @@ function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, is
         onPause={() => { setPlaying(false); }}
         onEnded={() => { setPlaying(false); onPlayStart?.(null); onEnded?.(msgId); }}
         onError={() => setError(true)}
-        onLoadedMetadata={() => { if (audioRef.current) setTotalDuration(audioRef.current.duration || duration || 0); }}
+        onLoadedMetadata={() => { if (audioRef.current) { const d = audioRef.current.duration; setTotalDuration(isFinite(d) && d > 0 ? d : (isFinite(duration) ? duration : 0)); } }}
         onTimeUpdate={() => { if (!dragging.current && audioRef.current) setCurrentTime(audioRef.current.currentTime); }}
       />
       <div onClick={toggle} style={{ width: 30, height: 30, borderRadius: "50%", background: mine ? "rgba(255,255,255,0.25)" : t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
@@ -2556,7 +2558,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const renderBubble = (m) => {
     const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays);
     // WhatsApp-style instant media delete (one-on-one only).
-    const autoDelete = globalSettings?.mediaAutoDelete === true;
+    // Voice notes are EXCLUDED from instant delete — they always use the 3-day expiry model.
+    const autoDelete = globalSettings?.mediaAutoDelete === true && m.type !== "voice";
     const suppressExpiry = autoDelete && !isGroup;
     const localSrc = (autoDelete && !isGroup) ? localMediaUrls[m.id] : null;
     const needDownload = (autoDelete && !isGroup) && !localSrc && m.senderId !== myUid;
@@ -2836,7 +2839,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     (async () => {
       const updates = {};
       for (const m of displayMessages) {
-        if (!["image", "video", "voice", "file"].includes(m.type)) continue;
+        // Voice notes are excluded from instant delete — they use the 3-day expiry model
+        if (!["image", "video", "file"].includes(m.type)) continue;
         if (localMediaUrls[m.id]) continue;
         const url = await getLocalMediaUrl(m.id);
         if (url && !cancelled) updates[m.id] = url;

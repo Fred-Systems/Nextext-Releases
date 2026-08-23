@@ -14,11 +14,14 @@ export async function ensureGlobalSettingsExist() {
         editWindowMinutes: 20,
         forceLogoutNonAdmins: false, // admin kill-switch: sign out all non-admins until turned off
         hideStt: false, // admin toggle: hide the speech-to-text button + its settings in every chat
+        mediaAutoDelete: false, // WhatsApp-style instant media delete (1:1 only)
+        mediaAutoDeleteUserVisible: true, // admin toggle: whether users can see/change the mediaAutoDelete setting
+        mediaAutoDeleteFallback: "expiry", // admin choice when user setting hidden: "expiry" (3-day) or "whatsapp" (instant)
         updatedBy: null,
         updatedAt: null,
       });
     }
-}
+  }
 
 export function useGlobalSettings() {
   const [settings, setSettings] = useState(null);

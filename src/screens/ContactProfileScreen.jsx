@@ -14,6 +14,7 @@ import { useGlobalSettings } from "../firebase/config-settings";
 import { useStatuses } from "../firebase/status";
 import { uploadChatFile } from "../supabase/media";
 import { isMediaExpired, sendContactMessage, getOrCreateDirectChat, toggleLocked } from "../firebase/chats";
+import { getLocalMediaUrl } from "../media/localMediaCache";
 import { useContacts } from "../firebase/contacts";
 import { AI_CONTACT_UID } from "../firebase/ai";
 import ContactSharePicker from "../components/ContactSharePicker";
@@ -144,6 +145,23 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
   const { items: sharedMedia, loading: mediaLoading } = useSharedMedia(myUid, otherUid, tab);
 
   const [otherUserDoc, setOtherUserDoc] = useState(null);
+  const [localMediaUrls, setLocalMediaUrls] = useState({});
+
+  useEffect(() => {
+    const fetchLocalUrls = async () => {
+      const urls = {};
+      for (const m of sharedMedia) {
+        if ((m.type === "image" || m.type === "video") && m.id) {
+          try {
+            const localUrl = await getLocalMediaUrl(m.id);
+            if (localUrl) urls[m.id] = localUrl;
+          } catch {}
+        }
+      }
+      if (Object.keys(urls).length > 0) setLocalMediaUrls(urls);
+    };
+    if (sharedMedia.length > 0) fetchLocalUrls();
+  }, [sharedMedia]);
 
   useEffect(() => {
     if (!otherUid || otherUid === myUid) return;
@@ -453,14 +471,16 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
                 const suppressExpiry = globalSettings?.mediaAutoDelete === true;
                 const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays);
                 const expired = isMediaExpired(m, globalSettings?.mediaExpiryDays);
+                const localSrc = localMediaUrls[m.id];
+                const displaySrc = localSrc || m.mediaURL;
                 return (
-                  <div key={m.id} style={{ position: "relative", cursor: !expired && m.type === "image" ? "pointer" : "default", aspectRatio: "1", overflow: "hidden", borderRadius: 6, background: t.border }} onClick={() => !expired && m.type === "image" && setFullscreenImage(m.mediaURL)}>
+                  <div key={m.id} style={{ position: "relative", cursor: !expired && m.type === "image" ? "pointer" : "default", aspectRatio: "1", overflow: "hidden", borderRadius: 6, background: t.border }} onClick={() => !expired && m.type === "image" && setFullscreenImage(displaySrc)}>
                     {expired ? (
                       <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: t.border, color: t.textMuted, fontSize: 10, fontWeight: 700 }}>Expired</div>
                     ) : m.type === "image" ? (
-                      <img src={m.mediaURL} alt="Shared" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      <img src={displaySrc} alt="Shared" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
-                      <video src={m.mediaURL} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      <video src={displaySrc} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     )}
                     {!expired && expiryText && !suppressExpiry && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.55)", color: "#fff", fontSize: 9, padding: "2px 4px", textAlign: "center" }}>{expiryText}</div>}
                   </div>
