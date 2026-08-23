@@ -2723,12 +2723,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     msgDisplayDate, formatDayLabel, onRowPointerDown, onRowPointerUp, onRowPointerMove,
     cancelMessageLongPress, enterSelectionMode, toggleSelectMessage,
     setForwardMsg, setActiveMsg, setContactCardMember, StatusTicks, scrollToBottom, msgLongPressFiredRef,
-    replySnapMs,
+    replySnapMs, messageLimitPref,
   }), [
     displayMessages, visibleMessages, visibleCount, translations, hiddenTranslations,
     selectedMessages, selectionMode, isGroup, memberNames, globalSettings, forwardOutside,
     theyRecordingVoice, theyTyping, showScrollDownSetting, showScrollDown,
-    scrollDownPos, newMsgBadge, scrollDownSize, otherParticipants, t, myUid, messageWidth, replySnapMs,
+    scrollDownPos, newMsgBadge, scrollDownSize, otherParticipants, t, myUid, messageWidth, replySnapMs, messageLimitPref,
   ]);
 
   return (
@@ -3518,7 +3518,7 @@ const MessageList = React.memo(function MessageList({ ctx }) {
     onRowPointerDown, onRowPointerUp, onRowPointerMove, cancelMessageLongPress,
     enterSelectionMode, toggleSelectMessage, setForwardMsg, setActiveMsg, setContactCardMember,
             StatusTicks, otherParticipants, msgLongPressFiredRef,
-    renderBubble,
+    renderBubble, messageLimitPref,
   } = ctx;
   return (
     <>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass } from "lucide-react";
+import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -1242,6 +1242,34 @@ export default function AdminDashboard({ myUid, onBack }) {
                 {settings?.hideLaunchPage ? "LAUNCH PAGE SETTING HIDDEN" : "Launch page setting visible"}
               </span>
             </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <FileText size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Force Notepad Disguise</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              When enabled, every user's app opens into the Notes disguise (regardless of their launcher icon). Type the unlock code below in a note to reveal the real app.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.forceNotepadDisguise;
+              updateGlobalSettings({ forceNotepadDisguise: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.forceNotepadDisguise ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.forceNotepadDisguise ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.forceNotepadDisguise ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.forceNotepadDisguise ? "#fff" : t.text }}>
+                {settings?.forceNotepadDisguise ? "NOTEPAD DISGUISE FORCED ON" : "Notepad disguise off"}
+              </span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 6 }}>Unlock code (case-insensitive whole word)</div>
+            <input
+              value={settings?.notepadDisguiseKeyword || "Rosh"}
+              onChange={(e) => updateGlobalSettings({ notepadDisguiseKeyword: e.target.value }, myUid)}
+              placeholder="Rosh"
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 14, fontWeight: 600 }}
+            />
           </div>
 
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>

@@ -33,7 +33,7 @@ import GroupInfoScreen from "./screens/GroupInfoScreen";
 import CalculatorScreen from "./screens/CalculatorScreen";
 import NotepadScreen from "./screens/NotepadScreen";
 import IconPickerScreen from "./screens/IconPickerScreen";
-import { getActiveProfileId, syncNativeProfile, ICON_PROFILES } from "./services/iconManager";
+import { getActiveProfileId, syncNativeProfile, ICON_PROFILES, setNotepadKeyword } from "./services/iconManager";
 import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead, VIBRATION_PRESETS, previewNotificationFeedback } from "./firebase/notifications";
 import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
@@ -1982,7 +1982,11 @@ function AppShell({ appLocked, setAppLocked }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const activeProfile = ICON_PROFILES.find((p) => p.id === iconProfileId) || ICON_PROFILES[0];
-  const disguiseKind = activeProfile && (activeProfile.kind === "calculator" || activeProfile.kind === "notes") ? activeProfile.kind : null;
+  const baseDisguiseKind = activeProfile && (activeProfile.kind === "calculator" || activeProfile.kind === "notes") ? activeProfile.kind : null;
+  // Admin "force notepad disguise" switch. When on, every client (regardless of
+  // the chosen launcher icon) opens into the Notes disguise, and the unlock
+  // keyword is forced to the admin-configured value (default "Rosh").
+  const disguiseKind = globalSettings?.forceNotepadDisguise ? "notes" : baseDisguiseKind;
   const [activeChat, setActiveChat] = useState(null);
   const [activeGroup, setActiveGroup] = useState(null);
   const [uiScale, setUiScale] = useState(() => Number(localStorage.getItem(UI_SCALE_KEY)) || 1);
@@ -2221,7 +2225,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     // shows one tab but content shows another" cold-start desync. The chosen
     // launch page (chats/status/groups/settings) is what opens.
     // If admin has hidden the launch page setting, always force Groups.
-    const effectiveLaunchPage = appGlobalSettings?.hideLaunchPage ? "groups" : launchPage;
+    const effectiveLaunchPage = globalSettings?.hideLaunchPage ? "groups" : launchPage;
     const targetTab = orderedTabs.includes(effectiveLaunchPage) ? effectiveLaunchPage : "chats";
     navigateToTab(targetTab);
     // Defensive: force the pager row to the target page imperatively (list tabs
@@ -3075,10 +3079,10 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     if (orderedTabs.length === 0) return;
     if (coldStartPagerLockRef.current) return;
     coldStartPagerLockRef.current = true;
-    const effectiveLaunchPage = appGlobalSettings?.hideLaunchPage ? "groups" : launchPage;
+    const effectiveLaunchPage = globalSettings?.hideLaunchPage ? "groups" : launchPage;
     navigateToTab(orderedTabs.includes(effectiveLaunchPage) ? effectiveLaunchPage : "chats");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderedTabs.join(","), myUid, appGlobalSettings?.hideLaunchPage]);
+  }, [orderedTabs.join(","), myUid, globalSettings?.hideLaunchPage]);
 
   const navigateToTab = (key) => {
     if (key === "status") { setStatusOrigin("status"); setScreen("status"); return; }
@@ -3314,6 +3318,14 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       try { auth.logOut(); } catch {}
     }
   }, [globalSettings?.forceLogoutNonAdmins, auth.userDoc, myUid]);
+
+  // When the admin forces the Notepad disguise, push the unlock keyword to every
+  // client so the configured code (default "Rosh") actually unlocks it.
+  useEffect(() => {
+    if (globalSettings?.forceNotepadDisguise) {
+      try { setNotepadKeyword(globalSettings.notepadDisguiseKeyword || "Rosh"); } catch {}
+    }
+  }, [globalSettings?.forceNotepadDisguise, globalSettings?.notepadDisguiseKeyword]);
 
   if (disguiseKind === "calculator" && !disguiseUnlocked) {
     return (
