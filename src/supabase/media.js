@@ -1,5 +1,5 @@
 import { supabase, MEDIA_BUCKET, MAX_UPLOAD_BYTES } from "./config";
-import { compressImage, assertUnderSizeLimit, FileTooLargeError } from "../media/mediaCompression";
+import { compressImage, assertUnderSizeLimit, FileTooLargeError, generateBlurData } from "../media/mediaCompression";
 
 // Uploads a file into a chat's folder in the shared bucket. Path structure
 // is {chatId}/{uploaderUid}/{timestamp}-{filename} -- the uploaderUid
@@ -22,8 +22,13 @@ export async function uploadChatFile(chatId, senderUid, file, { compress = false
   });
   if (uploadError) throw uploadError;
 
+  let blurData = null;
+  if (toUpload.type.startsWith("image/")) {
+    blurData = await generateBlurData(toUpload);
+  }
+
   const { data } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path);
-  return { url: data.publicUrl, path, sizeBytes: toUpload.size, fileName: file.name };
+  return { url: data.publicUrl, path, sizeBytes: toUpload.size, fileName: file.name, blurData };
 }
 
 export async function deleteChatFile(path) {

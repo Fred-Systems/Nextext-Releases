@@ -55,6 +55,45 @@ export async function processVideo(file, quality = "standard") {
   };
 }
 
+// Generates a tiny 16x16 JPEG data URL from an image file. Used as a
+// lightweight color-blur placeholder so recipients see a blurred preview
+// before the (auto-deleting) full media is downloaded. Returns null for
+// non-images or if the browser can't decode the file.
+export async function generateBlurData(file, size = 16) {
+  if (!file || typeof file.type !== "string" || !file.type.startsWith("image/")) {
+    return null;
+  }
+  try {
+    let bitmap;
+    if (typeof createImageBitmap === "function") {
+      bitmap = await createImageBitmap(file);
+    } else {
+      const url = URL.createObjectURL(file);
+      try {
+        bitmap = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = url;
+        });
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0, size, size);
+    if (bitmap.close) bitmap.close();
+
+    return canvas.toDataURL("image/jpeg", 0.6);
+  } catch {
+    return null;
+  }
+}
+
 // Single entry point used by the attach-media UI — picks the right handler
 // by file type and returns a consistent shape: { file, wasCompressed, note }
 export async function prepareMediaForUpload(file, { hdVideo = false } = {}) {

@@ -340,6 +340,7 @@ export async function sendForwardedMessage(targetChatId, senderUid, sourceMsg, o
     reactions: {},
     poll: null,
     statusRef: null,
+    metadata: sourceMsg.metadata || null,
     // Forward stamp — the receiver uses this to render the "Forwarded" badge.
     forwardedFrom: { mid: sourceMsg.id, chatId: sourceMsg.sourceChatId || null, at: Date.now() },
   };
@@ -500,6 +501,9 @@ export async function sendMediaMessage(chatId, senderUid, type, uploadResult, ot
     reactions: {},
     poll: null,
     statusRef,
+    // Tiny 16x16 blur placeholder (image only). Scrubbed to null by the
+    // recipient once the media is downloaded and purged from storage.
+    metadata: { blurData: uploadResult.blurData || null },
   });
   await updateDoc(doc(db, "chats", chatId), {
     lastMessage: { text: text ? (text.length > 40 ? text.slice(0, 40) + "…" : text) : mediaLabel(type), senderId: senderUid, sentAt: serverTimestamp(), type },

@@ -2535,15 +2535,23 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       const url = await getLocalMediaUrl(m.id);
       if (url) setLocalMediaUrls((prev) => ({ ...prev, [m.id]: url }));
       // Swap the UI to the local copy BEFORE purging the server file.
+      let purged = false;
       if (m.mediaPath) {
-        try { await deleteChatFile(m.mediaPath); } catch { /* ignore */ }
+        try { await deleteChatFile(m.mediaPath); purged = true; } catch { /* ignore */ }
+      }
+      // Maximum privacy: once the file is cached locally AND purged from
+      // storage, scrub the tiny blur placeholder string from the database.
+      if (purged && m.metadata?.blurData) {
+        try {
+          await updateDoc(doc(db, "chats", chatId, "messages", m.id), { "metadata.blurData": null });
+        } catch { /* best-effort */ }
       }
     } catch {
       setSendError?.("Couldn't download this media. Try again.");
     } finally {
       cachingInFlight.current.delete(m.id);
     }
-  }, [setLocalMediaUrls, setSendError]);
+  }, [setLocalMediaUrls, setSendError, chatId]);
 
   const renderBubble = (m) => {
     const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays);
@@ -2654,9 +2662,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
         {needDownload ? (
-          <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: t.textMuted }}>
-            <Download size={30} />
-            <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tap to download</span>
+          <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: t.textMuted }}>
+            {m.metadata?.blurData && (
+              <img src={m.metadata.blurData} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(12px)", position: "absolute", top: 0, left: 0, pointerEvents: "none" }} />
+            )}
+            <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              <Download size={30} />
+              <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tap to download</span>
+            </div>
           </div>
         ) : (
           <div onClick={(e) => { e.stopPropagation(); setFullscreenImage(localSrc || m.mediaURL); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)" }}>
@@ -2671,9 +2684,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
         {needDownload ? (
-          <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: t.textMuted }}>
-            <Download size={30} />
-            <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tap to download</span>
+          <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: t.textMuted }}>
+            {m.metadata?.blurData && (
+              <img src={m.metadata.blurData} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(12px)", position: "absolute", top: 0, left: 0, pointerEvents: "none" }} />
+            )}
+            <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              <Download size={30} />
+              <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tap to download</span>
+            </div>
           </div>
         ) : (
           <div style={{ width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)", position: "relative" }}>

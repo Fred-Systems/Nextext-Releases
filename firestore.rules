@@ -182,9 +182,12 @@ service cloud.firestore {
                       // translate a message they can read; persisted so it
                       // survives leaving/reopening the chat)
                       'translatedText', 'translatedLang',
-                      // live-location coordinates can be refreshed by any
-                      // participant while the share is active
-                      'lat', 'lng', 'accuracy', 'liveUntil'])
+                       // live-location coordinates can be refreshed by any
+                       // participant while the share is active
+                       'lat', 'lng', 'accuracy', 'liveUntil',
+                       // media blur placeholder (image) is scrubbed to null by
+                       // the recipient once the media is downloaded + purged
+                       'metadata'])
         );
         allow delete: if isChatParticipant(chatId);
       }
