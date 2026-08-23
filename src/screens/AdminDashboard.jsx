@@ -1303,6 +1303,31 @@ export default function AdminDashboard({ myUid, onBack }) {
             </div>
           </div>
 
+          {/* Chat feed virtualization (KEY PERFORMANCE SETTING).
+              ON by default: only visible messages render (dynamic row heights,
+              scroll anchoring on load-earlier, stick-to-bottom on new messages). */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Zap size={18} color="#FF9500" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Chat Feed Virtualization</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Renders only the visible portion of a chat (dynamic row heights, scroll anchoring when loading earlier messages, and stick-to-bottom on new messages). Improves performance in long chats. ON by default.
+            </div>
+            <div onClick={() => {
+              const on = settings?.enableChatVirtualization !== false;
+              const newVal = !on;
+              updateGlobalSettings({ enableChatVirtualization: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: (settings?.enableChatVirtualization !== false) ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: (settings?.enableChatVirtualization !== false) ? "#34C759" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (settings?.enableChatVirtualization !== false) ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: (settings?.enableChatVirtualization !== false) ? "#fff" : t.text }}>
+                {(settings?.enableChatVirtualization !== false) ? "CHAT VIRTUALIZATION ON (recommended)" : "Chat virtualization off"}
+              </span>
+            </div>
+          </div>
+
           {/* App version override (admin can pin a version number to block updates) */}
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>

@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {   ChevronLeft, Copy, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Bot, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff, Forward, Languages } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import {
@@ -2723,12 +2724,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     msgDisplayDate, formatDayLabel, onRowPointerDown, onRowPointerUp, onRowPointerMove,
     cancelMessageLongPress, enterSelectionMode, toggleSelectMessage,
     setForwardMsg, setActiveMsg, setContactCardMember, StatusTicks, scrollToBottom, msgLongPressFiredRef,
-    replySnapMs, messageLimitPref,
+    replySnapMs, messageLimitPref, scrollRef,
+    enableVirtualization: globalSettings?.enableChatVirtualization !== false,
   }), [
     displayMessages, visibleMessages, visibleCount, translations, hiddenTranslations,
     selectedMessages, selectionMode, isGroup, memberNames, globalSettings, forwardOutside,
     theyRecordingVoice, theyTyping, showScrollDownSetting, showScrollDown,
-    scrollDownPos, newMsgBadge, scrollDownSize, otherParticipants, t, myUid, messageWidth, replySnapMs, messageLimitPref,
+    scrollDownPos, newMsgBadge, scrollDownSize, otherParticipants, t, myUid, messageWidth, replySnapMs, messageLimitPref, scrollRef,
   ]);
 
   return (
@@ -2850,7 +2852,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative" }}>
         <div ref={scrollRef} onScroll={handleScroll} onTouchStart={onMessagesTouchStart} onTouchMove={onMessagesTouchMove} onTouchEnd={onMessagesTouchEnd} style={{
-          flex: 1, overflowY: "auto", overflowX: "hidden", padding: "14px 10px", display: "flex", flexDirection: "column",
+          flex: 1, overflowY: "auto", overflowX: "hidden", padding: (globalSettings?.enableChatVirtualization !== false) ? "0 10px" : "14px 10px", display: "flex", flexDirection: "column", position: "relative",
           touchAction: pinchEnabled() ? "pan-y" : "auto",
           backgroundImage: wallpaper ? `url(${wallpaper})` : "none", backgroundSize: "cover", backgroundPosition: "center",
         }}>
@@ -3517,48 +3519,43 @@ const MessageList = React.memo(function MessageList({ ctx }) {
     renderOutsideActions, canForward, replyToSenderName, msgDisplayDate, formatDayLabel,
     onRowPointerDown, onRowPointerUp, onRowPointerMove, cancelMessageLongPress,
     enterSelectionMode, toggleSelectMessage, setForwardMsg, setActiveMsg, setContactCardMember,
-            StatusTicks, otherParticipants, msgLongPressFiredRef,
-    renderBubble, messageLimitPref,
+    StatusTicks, otherParticipants, msgLongPressFiredRef,
+    renderBubble, messageLimitPref, scrollRef, enableVirtualization,
   } = ctx;
-  return (
-    <>
-      {visibleMessages.length > visibleCount && (
-        <div style={{ display: "flex", justifyContent: "center", margin: "8px 0 12px", flexShrink: 0 }}>
-          <button onClick={() => setVisibleCount((c) => c + (messageLimitPref === Infinity ? 200 : messageLimitPref))} style={{ fontSize: 12.5, fontWeight: 600, color: t.primary, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 16, padding: "6px 16px", cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.08)" }}>
-            Load earlier messages{visibleMessages.length - visibleCount > 0 ? ` (${visibleMessages.length - visibleCount} more)` : ""}
-          </button>
-        </div>
-      )}
-      {displayMessages.map((m, i) => {
-        const prev = displayMessages[i - 1];
-        const next = displayMessages[i + 1];
-        const groupedWithPrev = prev && prev.senderId === m.senderId && !prev.deletedForEveryone;
-        const groupedWithNext = next && next.senderId === m.senderId && !next.deletedForEveryone;
-        const isMine = m.senderId === myUid;
-        const mDate = msgDisplayDate(m);
-        const prevDate = msgDisplayDate(prev);
-        const newDay = mDate && (!prevDate || prevDate.toDateString() !== mDate.toDateString());
-        return (
-        <React.Fragment key={m.id}>
-          {newDay && (
-            <div style={{ display: "flex", justifyContent: "center", margin: "16px 0 4px", flexShrink: 0 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 12, padding: "4px 12px", boxShadow: "0 1px 2px rgba(0,0,0,0.08)", textTransform: "capitalize" }}>{formatDayLabel(mDate)}</span>
-            </div>
-          )}
-          <div className="nextext-message-in" style={{ display: "flex", justifyContent: isMine ? "flex-end" : "flex-start", marginTop: groupedWithPrev ? 2 : 12 }}>
-            {isMine && forwardOutside && renderOutsideActions(m, "left")}
-            <div
-              onClick={() => {
-                if (msgLongPressFiredRef.current) { msgLongPressFiredRef.current = false; return; }
-                if (selectionMode) { toggleSelectMessage(m); return; }
-                if (!m.deletedForEveryone) setActiveMsg(m);
-              }}
-              onPointerDown={(e) => { onRowPointerDown(e, m); }}
-              onPointerUp={(e) => { onRowPointerUp(e, m); }}
-              onPointerMove={(e) => { onRowPointerMove(e, m); }}
-              onPointerLeave={cancelMessageLongPress}
-              onContextMenu={(e) => { e.preventDefault(); if (!selectionMode) enterSelectionMode(m); }}
-              style={{
+
+  const virtualize = enableVirtualization && displayMessages.length > 0;
+  const showLoadEarlier = virtualize && visibleMessages.length > visibleCount;
+
+  const renderRow = (m, i) => {
+    const prev = displayMessages[i - 1];
+    const next = displayMessages[i + 1];
+    const groupedWithPrev = prev && prev.senderId === m.senderId && !prev.deletedForEveryone;
+    const groupedWithNext = next && next.senderId === m.senderId && !next.deletedForEveryone;
+    const isMine = m.senderId === myUid;
+    const mDate = msgDisplayDate(m);
+    const prevDate = msgDisplayDate(prev);
+    const newDay = mDate && (!prevDate || prevDate.toDateString() !== mDate.toDateString());
+    return (
+      <React.Fragment key={m.id}>
+        {newDay && (
+          <div style={{ display: "flex", justifyContent: "center", margin: "16px 0 4px", flexShrink: 0 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 12, padding: "4px 12px", boxShadow: "0 1px 2px rgba(0,0,0,0.08)", textTransform: "capitalize" }}>{formatDayLabel(mDate)}</span>
+          </div>
+        )}
+        <div className="nxtext-message-in" style={{ display: "flex", justifyContent: isMine ? "flex-end" : "flex-start", marginTop: groupedWithPrev ? 2 : 12 }}>
+          {isMine && forwardOutside && renderOutsideActions(m, "left")}
+          <div
+            onClick={() => {
+              if (msgLongPressFiredRef.current) { msgLongPressFiredRef.current = false; return; }
+              if (selectionMode) { toggleSelectMessage(m); return; }
+              if (!m.deletedForEveryone) setActiveMsg(m);
+            }}
+            onPointerDown={(e) => { onRowPointerDown(e, m); }}
+            onPointerUp={(e) => { onRowPointerUp(e, m); }}
+            onPointerMove={(e) => { onRowPointerMove(e, m); }}
+            onPointerLeave={cancelMessageLongPress}
+            onContextMenu={(e) => { e.preventDefault(); if (!selectionMode) enterSelectionMode(m); }}
+            style={{
               position: "relative", maxWidth: (messageWidth === "compact" ? "58%" : messageWidth === "standard" ? "74%" : "90%"), padding: "8px 12px", cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
               background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText,
               borderRadius: `${groupedWithPrev ? 6 : 14}px ${groupedWithPrev ? 6 : 14}px ${groupedWithNext ? 6 : 14}px ${groupedWithNext ? 6 : 14}px`,
@@ -3568,17 +3565,17 @@ const MessageList = React.memo(function MessageList({ ctx }) {
               willChange: "transform",
               touchAction: "pan-y",
             }}>
-              {isGroup && !isMine && !groupedWithPrev && (
-                <div onClick={(e) => { e.stopPropagation(); const memberInfo = { uid: m.senderId, name: m.senderName || memberNames[m.senderId] || "…" }; setContactCardMember(memberInfo); }} style={{ fontSize: 12, fontWeight: 700, color: t.primary, marginBottom: 2, cursor: "pointer" }}>{m.senderName || memberNames[m.senderId] || "…"}</div>
-              )}
-              {(m.forwardedFrom || m.forwardedCount > 0) && (
-                <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", opacity: 0.55, marginBottom: 2 }}>
-                  {m.forwardedFrom
-                    ? (m.forwardedCount > 0 && !globalSettings?.hideForwardedCount ? `Forwarded · ${m.forwardedCount}×` : "Forwarded")
-                    : (m.forwardedCount > 0 && !globalSettings?.hideForwardedCount ? `Forwarded ${m.forwardedCount} time${m.forwardedCount === 1 ? "" : "s"}` : "Forwarded")}
-                </div>
-              )}
-              {m.replyTo && (
+            {isGroup && !isMine && !groupedWithPrev && (
+              <div onClick={(e) => { e.stopPropagation(); const memberInfo = { uid: m.senderId, name: m.senderName || memberNames[m.senderId] || "…" }; setContactCardMember(memberInfo); }} style={{ fontSize: 12, fontWeight: 700, color: t.primary, marginBottom: 2, cursor: "pointer" }}>{m.senderName || memberNames[m.senderId] || "…"}</div>
+            )}
+            {(m.forwardedFrom || m.forwardedCount > 0) && (
+              <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", opacity: 0.55, marginBottom: 2 }}>
+                {m.forwardedFrom
+                  ? (m.forwardedCount > 0 && !globalSettings?.hideForwardedCount ? `Forwarded · ${m.forwardedCount}×` : "Forwarded")
+                  : (m.forwardedCount > 0 && !globalSettings?.hideForwardedCount ? `Forwarded ${m.forwardedCount} time${m.forwardedCount === 1 ? "" : "s"}` : "Forwarded")}
+              </div>
+            )}
+            {m.replyTo && (
               <div style={{ background: m.senderId === myUid ? "rgba(255,255,255,0.15)" : t.primaryLight, borderLeft: `3px solid ${m.senderId === myUid ? "rgba(255,255,255,0.6)" : t.primary}`, borderRadius: 6, padding: "5px 8px", marginBottom: 6, fontSize: 12 }}>
                 <div style={{ fontWeight: 700, opacity: 0.85, fontSize: 11, marginBottom: 1 }}>
                   {replyToSenderName(m.replyTo.senderId)}
@@ -3607,13 +3604,66 @@ const MessageList = React.memo(function MessageList({ ctx }) {
               </div>
             )}
           </div>
-            {!isMine && forwardOutside && renderOutsideActions(m, "right")}
+          {!isMine && forwardOutside && renderOutsideActions(m, "right")}
+        </div>
+      </React.Fragment>
+    );
+  };
+
+  // Always called (rules of hooks): virtualizer is a no-op when not virtualizing.
+  const virtualizer = useVirtualizer({
+    count: virtualize ? displayMessages.length : 0,
+    getScrollElement: () => scrollRef?.current,
+    estimateSize: () => 64,
+    overscan: 5,
+    getItemKey: (index) => displayMessages[index]?.id || index,
+  });
+
+  // Keep the user's scroll position when older messages are prepended (pagination),
+  // and stick to the bottom on first load / when new messages append.
+  const prevScrollHeight = useRef(null);
+  const prevFirstId = useRef(null);
+  const prevLastId = useRef(null);
+  const prevCount = useRef(0);
+  const firstMount = useRef(true);
+  useLayoutEffect(() => {
+    if (!virtualize) { firstMount.current = true; prevFirstId.current = null; prevLastId.current = null; prevCount.current = 0; prevScrollHeight.current = null; return; }
+    const el = scrollRef?.current;
+    if (!el) return;
+    const firstId = displayMessages[0]?.id;
+    const lastId = displayMessages[displayMessages.length - 1]?.id;
+    const isPrepend = prevFirstId.current != null && firstId && firstId !== prevFirstId.current && displayMessages.length > prevCount.current;
+    const isAppend = prevLastId.current != null && lastId && lastId !== prevLastId.current && displayMessages.length > prevCount.current;
+
+    if (isPrepend && prevScrollHeight.current != null) {
+      el.scrollTop += el.scrollHeight - prevScrollHeight.current;
+    } else if (firstMount.current || isAppend) {
+      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (firstMount.current || distFromBottom < 250) {
+        virtualizer.scrollToIndex(displayMessages.length - 1, { align: "end", behavior: "auto" });
+      }
+    }
+
+    prevScrollHeight.current = el.scrollHeight;
+    prevFirstId.current = firstId;
+    prevLastId.current = lastId;
+    prevCount.current = displayMessages.length;
+    firstMount.current = false;
+  });
+
+  if (!virtualize) {
+    return (
+      <>
+        {visibleMessages.length > visibleCount && (
+          <div style={{ display: "flex", justifyContent: "center", margin: "8px 0 12px", flexShrink: 0 }}>
+            <button onClick={() => setVisibleCount((c) => c + (messageLimitPref === Infinity ? 200 : messageLimitPref))} style={{ fontSize: 12.5, fontWeight: 600, color: t.primary, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 16, padding: "6px 16px", cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.08)" }}>
+              Load earlier messages{visibleMessages.length - visibleCount > 0 ? ` (${visibleMessages.length - visibleCount} more)` : ""}
+            </button>
           </div>
-          </React.Fragment>
-          );
-        })}
+        )}
+        {displayMessages.map((m, i) => renderRow(m, i))}
         {(theyRecordingVoice || theyTyping) && (
-          <div className="nextext-message-in" style={{ display: "flex", justifyContent: "flex-start" }}>
+          <div className="nxtext-message-in" style={{ display: "flex", justifyContent: "flex-start", flexShrink: 0 }}>
             <div style={{ padding: "10px 14px", borderRadius: 14, background: t.bubbleThem, boxShadow: "0 1px 2px rgba(0,0,0,0.08)", display: "flex", alignItems: "center", gap: 7 }}>
               {theyRecordingVoice ? (
                 <>
@@ -3626,6 +3676,48 @@ const MessageList = React.memo(function MessageList({ ctx }) {
             </div>
           </div>
         )}
+      </>
+    );
+  }
+
+  const virtualItems = virtualizer.getVirtualItems();
+
+  return (
+    <>
+      {showLoadEarlier && (
+        <button
+          onClick={() => setVisibleCount((c) => c + (messageLimitPref === Infinity ? 200 : messageLimitPref))}
+          style={{ position: "absolute", top: 6, left: 0, right: 0, margin: "0 auto", zIndex: 6, display: "block", width: "fit-content", fontSize: 12.5, fontWeight: 600, color: t.primary, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 16, padding: "6px 16px", cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.08)" }}
+        >
+          Load earlier messages{visibleMessages.length - visibleCount > 0 ? ` (${visibleMessages.length - visibleCount} more)` : ""}
+        </button>
+      )}
+      <div style={{ position: "relative", height: virtualizer.getTotalSize(), width: "100%", flexShrink: 0 }}>
+        {virtualItems.map((vi) => (
+          <div
+            key={vi.key}
+            data-index={vi.index}
+            ref={virtualizer.measureElement}
+            style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
+          >
+            {renderRow(displayMessages[vi.index], vi.index)}
+          </div>
+        ))}
+      </div>
+      {(theyRecordingVoice || theyTyping) && (
+        <div className="nxtext-message-in" style={{ display: "flex", justifyContent: "flex-start" }}>
+          <div style={{ padding: "10px 14px", borderRadius: 14, background: t.bubbleThem, boxShadow: "0 1px 2px rgba(0,0,0,0.08)", display: "flex", alignItems: "center", gap: 7 }}>
+            {theyRecordingVoice ? (
+              <>
+                <Mic size={14} className="nextext-mic-waver" color="#2BB579" />
+                <span style={{ fontSize: 12.5, color: t.textMuted }}>recording voice note…</span>
+              </>
+            ) : (
+              <TypingDots color={t.textMuted} />
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 });
