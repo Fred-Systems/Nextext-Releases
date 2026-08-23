@@ -550,7 +550,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const [sttAutoSend, setSttAutoSend] = useState(() => localStorage.getItem("nextext_stt_autosend") !== "off");
   const [sttShowInterim, setSttShowInterim] = useState(() => localStorage.getItem("nextext_stt_show_interim") === "on");
   const [sttCancelButton, setSttCancelButton] = useState(() => localStorage.getItem("nextext_stt_cancel_button") !== "off");
-  const [hideVersion, setHideVersion] = useState(() => localStorage.getItem("nextext_hide_version") === "on");
+  const [hideVersion, setHideVersion] = useState(() => localStorage.getItem("nextext_hide_version") !== "off");
   const [useCustomPrompt, setUseCustomPrompt] = useState(() => localStorage.getItem("nextext_ai_custom_instructions_enabled") !== "off");
   const [aiRequestStatus, setAiRequestStatus] = useState("");
   const CONTACT_SORT_OPTIONS = [
@@ -955,6 +955,29 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             })()}
           </div>
 
+          {/* Voice notes: store in database for auto-play/queue */}
+          <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+            <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Store voice notes in database</div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>When ON, incoming voice notes are saved to the database so multiple notes queue up and play automatically. When OFF, they are treated as instant media (downloaded and server copy deleted).</div>
+            <div
+              onClick={() => {
+                const next = !(globalSettings?.voiceNotesStoreInDb ?? false);
+                updateGlobalSettings({ voiceNotesStoreInDb: next }, myUid);
+              }}
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", cursor: "pointer" }}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Store voice notes in database</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Save incoming voice notes for auto-play and queue</div>
+              </div>
+              <div
+                style={{ width: 46, height: 26, borderRadius: 13, background: (globalSettings?.voiceNotesStoreInDb ?? false) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (globalSettings?.voiceNotesStoreInDb ?? false) ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+          </div>
+
           {/* WhatsApp-style instant media delete (user toggle, enabled by default) */}
           {(globalSettings?.mediaAutoDeleteUserVisible !== false) && (
             <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
@@ -1023,10 +1046,10 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               </div>
             </div>
 
-            {/* Actual dark theme (dark bg, light text) */}
+            {/* Dark theme (dark bg, light text) */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Actual dark theme</div>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Dark theme</div>
                 <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Switch to a dark theme preset (dark background, light text).</div>
               </div>
               <div

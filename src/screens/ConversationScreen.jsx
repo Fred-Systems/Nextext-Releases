@@ -440,13 +440,16 @@ function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, is
             onPointerDown={onBarPointerDown(barRef)}
             style={{ display: "flex", alignItems: "center", gap: 1.5, height: 26, cursor: "pointer", touchAction: "none" }}
           >
-            {heights.map((h, i) => (
-              <div key={i} style={{
-                flex: 1, height: `${Math.max(8, h * 100)}%`, minHeight: 4, borderRadius: 2,
-                background: (i / waveBarCount) <= progress ? playedColor : idleColor,
-                transition: "background 0.08s linear",
-              }} />
-            ))}
+{heights.map((h, i) => {
+                if (i === 0) return null; // skip first bar to remove vertical line at start
+                return (
+                  <div key={i} style={{
+                    flex: 1, height: `${Math.max(8, h * 100)}%`, minHeight: 4, borderRadius: 2,
+                    background: (i / waveBarCount) <= progress ? playedColor : idleColor,
+                    transition: "background 0.08s linear",
+                  }} />
+                );
+              })}
           </div>
         )}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 9.5, opacity: 0.65 }}>
@@ -2558,8 +2561,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const renderBubble = (m) => {
     const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays);
     // WhatsApp-style instant media delete (one-on-one only).
-    // Voice notes are EXCLUDED from instant delete — they always use the 3-day expiry model.
-    const autoDelete = globalSettings?.mediaAutoDelete === true && m.type !== "voice";
+    // Voice notes follow admin setting: if voiceNotesInPipeline is true, they use the pipeline; otherwise they use 3-day expiry.
+    const voiceInPipeline = globalSettings?.voiceNotesInPipeline === true;
+    const autoDelete = globalSettings?.mediaAutoDelete === true && (m.type !== "voice" || voiceInPipeline);
     const suppressExpiry = autoDelete && !isGroup;
     const localSrc = (autoDelete && !isGroup) ? localMediaUrls[m.id] : null;
     const needDownload = (autoDelete && !isGroup) && !localSrc && m.senderId !== myUid;
@@ -2833,13 +2837,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   // Restore locally-cached media (from a previous session) into object URLs so
   // it renders immediately instead of showing the "tap to download" placeholder.
   useEffect(() => {
+    const voiceInPipeline = globalSettings?.voiceNotesInPipeline === true;
     const autoDelete = globalSettings?.mediaAutoDelete === true;
     if (!autoDelete || isGroup) return;
     let cancelled = false;
     (async () => {
       const updates = {};
       for (const m of displayMessages) {
-        // Voice notes are excluded from instant delete — they use the 3-day expiry model
+        // Voice notes follow admin setting: if voiceNotesInPipeline is true, they use the pipeline
+        if (m.type === "voice" && !voiceInPipeline) continue;
         if (!["image", "video", "file"].includes(m.type)) continue;
         if (localMediaUrls[m.id]) continue;
         const url = await getLocalMediaUrl(m.id);
@@ -2850,12 +2856,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       }
     })();
     return () => { cancelled = true; };
-  }, [mediaSig, isGroup, globalSettings?.mediaAutoDelete, localMediaUrls]);
+  }, [mediaSig, isGroup, globalSettings?.mediaAutoDelete, globalSettings?.voiceNotesInPipeline, localMediaUrls]);
 
   // Sender side: cache our own 1:1 media locally on first view so it survives
   // after the recipient downloads and deletes the Supabase copy. We never delete
   // the server copy from the sender's side.
   useEffect(() => {
+    const voiceInPipeline = globalSettings?.voiceNotesInPipeline === true;
     const autoDelete = globalSettings?.mediaAutoDelete === true;
     if (!autoDelete || isGroup) return;
     let cancelled = false;
