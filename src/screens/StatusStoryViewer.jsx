@@ -14,6 +14,7 @@ const QUICK_REACTION_EMOJIS = ["❤️", "😂", "😮", "🔥", "👍", "🙏"]
 function getSlideDuration(status) {
   if (status?.durationMs && status.durationMs > 0) return status.durationMs;
   if (status?.mediaType === "video") return 10000;
+  if (status?.mediaType === "voice") return status?.durationMs || 10000;
   return DEFAULT_DURATION_MS;
 }
 
@@ -92,6 +93,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const timerRef = useRef(null);
   const advanceRef = useRef(null);
   const videoRef = useRef(null);
+  const voiceRef = useRef(null);
   const bgAudioRef = useRef(null);
   const initialAnimDoneRef = useRef(false);
 
@@ -102,7 +104,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   // a 10s fallback when metadata wasn't readable at post time).
   const [liveVideoDuration, setLiveVideoDuration] = useState(null);
   useEffect(() => { setLiveVideoDuration(null); }, [idx]);
-  const duration = current?.mediaType === "video" && liveVideoDuration ? liveVideoDuration : getSlideDuration(current);
+  const duration = (current?.mediaType === "video" || current?.mediaType === "voice") && liveVideoDuration ? liveVideoDuration : getSlideDuration(current);
 
   // Loop breaker + clean mount reset: reset the active index timer state to
   // zero on mount, clearing any stray timers so the first slide's filling line
@@ -289,6 +291,11 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       videoRef.current.play().catch(() => {});
     }
 
+    if (current.mediaType === "voice" && voiceRef.current) {
+      voiceRef.current.currentTime = 0;
+      voiceRef.current.play().catch(() => {});
+    }
+
     return () => clearTimeout(timerRef.current);
   }, [idx, duration, current?.mediaType]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -322,6 +329,18 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       if (bgAudioRef.current) bgAudioRef.current.play().catch(() => {});
     }
   }, [paused, current?.mediaType, current?.videoVolume]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (current?.mediaType !== "voice" || !voiceRef.current) return;
+    const a = voiceRef.current;
+    if (paused) {
+      a.pause();
+      if (bgAudioRef.current) bgAudioRef.current.pause();
+    } else {
+      a.play().catch(() => {});
+      if (bgAudioRef.current) bgAudioRef.current.play().catch(() => {});
+    }
+  }, [paused, current?.mediaType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!current?.bgAudioURL || !bgAudioRef.current) return;
@@ -439,6 +458,25 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
             <img src={current.mediaURL} alt="Status" style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 8 }} />
             {(current.textOverlay || current.text) && (
               <div style={{ position: "absolute", bottom: 16, left: 12, right: 12, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
+                {current.textOverlay || current.text}
+              </div>
+            )}
+          </div>
+        ) : current.mediaType === "voice" && current.mediaURL ? (
+          <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, overflow: "hidden", padding: "80px 24px 90px", boxSizing: "border-box" }}>
+            <div style={{ color: "#fff", fontWeight: 700, fontSize: 16, textAlign: "center" }}>🎤 Voice note</div>
+            <audio
+              ref={voiceRef}
+              src={current.mediaURL}
+              controls
+              playsInline
+              autoPlay
+              onLoadedMetadata={(e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); }}
+              onEnded={() => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); }}
+              style={{ width: "82%", maxWidth: 340 }}
+            />
+            {(current.textOverlay || current.text) && (
+              <div style={{ maxWidth: "82%", background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
                 {current.textOverlay || current.text}
               </div>
             )}
