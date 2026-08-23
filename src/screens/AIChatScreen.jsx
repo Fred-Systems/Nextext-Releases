@@ -389,7 +389,8 @@ export default function AIChatScreen({ myUid, onBack }) {
     const t0 = e.touches && e.touches[0];
     if (!t0) return;
     dragStartRef.current = { id: m.id, y: t0.clientY, x: t0.clientX, time: Date.now(), moved: false };
-    dragBubbleRef.current = e.currentTarget.querySelector("[data-bubble]");
+    // The touch handler is on the element with data-bubble, so currentTarget IS that element
+    dragBubbleRef.current = e.currentTarget.hasAttribute("data-bubble") ? e.currentTarget : e.currentTarget.querySelector("[data-bubble]");
     longPressFiredRef.current = false;
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
     // Long-press copies the message text (kept from the original behavior).
@@ -415,9 +416,8 @@ export default function AIChatScreen({ myUid, onBack }) {
     if (longPressFiredRef.current) return;
     if (dragStartRef.current.id !== m.id) return;
     // Swipe RIGHT only: bubble follows the finger with rubber-band resistance.
-    // We mutate the DOM node directly (no React state) so the gesture never
-    // triggers a re-render of the whole chat — keeping it smooth even mid-drag.
-    const x = Math.min(140, Math.max(0, dx * 0.6));
+    // Increased multiplier for more visible movement; capped at 160px.
+    const x = Math.min(160, Math.max(0, dx * 0.75));
     const bubbleEl = dragBubbleRef.current;
     if (bubbleEl) { bubbleEl.style.transition = "none"; bubbleEl.style.transform = `translateX(${x}px)`; }
   };
@@ -754,7 +754,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                         ref={messageMenuRef}
                         style={{
                           position: "fixed",
-                          top: activeMsgRect.top - 220,
+                          top: activeMsgRect.top > 230 ? activeMsgRect.top - 220 : activeMsgRect.bottom + 8,
                           left: activeMsgRect.left + activeMsgRect.width - 168,
                           background: t.surface,
                           borderRadius: 10,

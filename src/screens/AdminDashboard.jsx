@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag } from "lucide-react";
+import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -233,6 +233,15 @@ export default function AdminDashboard({ myUid, onBack }) {
       await updateDoc(doc(db, "users", uid), { aiApproved: !currentVal });
     } catch (e) {
       setError("Couldn't update AI access: " + e.message);
+    }
+  };
+
+  const toggleUserHideAISettings = async (uid, currentVal) => {
+    setError("");
+    try {
+      await updateDoc(doc(db, "users", uid), { hideAISettings: !currentVal });
+    } catch (e) {
+      setError("Couldn't update AI settings visibility: " + e.message);
     }
   };
 
@@ -583,9 +592,15 @@ export default function AdminDashboard({ myUid, onBack }) {
                 </div>
                 {u.moderation?.banType && u.moderation.banType !== "none" && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 6, background: "#FFE5E5", color: "#FF3B30", fontWeight: 700 }}>{u.moderation.banType}</span>}
               </div>
-              <div onClick={(e) => { e.stopPropagation(); toggleUserAIAccess(u.uid, !!u.aiApproved); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.aiApproved ? "#E5F9E7" : t.bg, border: `1px solid ${u.aiApproved ? "#28A745" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
-                <Bot size={12} color={u.aiApproved ? "#28A745" : t.textMuted} />
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: u.aiApproved ? "#28A745" : t.textMuted }}>{u.aiApproved ? "AI On" : "AI Off"}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div onClick={(e) => { e.stopPropagation(); toggleUserAIAccess(u.uid, !!u.aiApproved); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.aiApproved ? "#E5F9E7" : t.bg, border: `1px solid ${u.aiApproved ? "#28A745" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
+                  <Bot size={12} color={u.aiApproved ? "#28A745" : t.textMuted} />
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: u.aiApproved ? "#28A745" : t.textMuted }}>{u.aiApproved ? "AI On" : "AI Off"}</span>
+                </div>
+                <div onClick={(e) => { e.stopPropagation(); toggleUserHideAISettings(u.uid, !!u.hideAISettings); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.hideAISettings ? "#FFF3CD" : t.bg, border: `1px solid ${u.hideAISettings ? "#856404" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
+                  <EyeOff size={12} color={u.hideAISettings ? "#856404" : t.textMuted} />
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: u.hideAISettings ? "#856404" : t.textMuted }}>{u.hideAISettings ? "AI Settings Hidden" : "AI Settings Visible"}</span>
+                </div>
               </div>
             </div>
           ))}
@@ -1210,6 +1225,27 @@ export default function AdminDashboard({ myUid, onBack }) {
           {/* App version override (admin can pin a version number to block updates) */}
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Compass size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Hide Launch Page Setting</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              When enabled, the "Launch page" setting is hidden from Settings for all users. The app will always open on the Groups tab.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideLaunchPage;
+              updateGlobalSettings({ hideLaunchPage: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideLaunchPage ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideLaunchPage ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideLaunchPage ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideLaunchPage ? "#fff" : t.text }}>
+                {settings?.hideLaunchPage ? "LAUNCH PAGE SETTING HIDDEN" : "Launch page setting visible"}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <Tag size={18} color="#8E8E93" />
               <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>App Version Override</span>
             </div>
@@ -1226,6 +1262,50 @@ export default function AdminDashboard({ myUid, onBack }) {
             </div>
             <div style={{ fontSize: 11.5, color: t.textMuted }}>
               Current override: <strong>{sysConfig?.appVersionOverride || "None (using package.json version)"}</strong>
+            </div>
+          </div>
+
+          {/* Web fallback URL for Change password/email */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Globe size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Web Fallback URL (Change password/email)</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              URL shown to users when the in-app Change password/email flow fails. Use a full URL including https://
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <input
+                value={sysConfig?.webFallbackUrl || "https://nextext.pages.dev"}
+                onChange={(e) => setSystemConfig({ webFallbackUrl: e.target.value || "https://nextext.pages.dev" }, myUid)}
+                placeholder="https://example.com"
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, background: t.bg, color: t.text, cursor: "pointer" }}
+              />
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textMuted }}>
+              Current: <strong>{sysConfig?.webFallbackUrl || "https://nextext.pages.dev"}</strong>
+            </div>
+          </div>
+
+          {/* Hide Ask AI button globally */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Bot size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Hide "Ask AI" Button Everywhere</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              When enabled, the "Ask AI about this" option is removed from message menus, long-press menus, and the Ask AI panel cannot be opened by any user.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideAskAI;
+              updateGlobalSettings({ hideAskAI: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideAskAI ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideAskAI ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideAskAI ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideAskAI ? "#fff" : t.text }}>
+                {settings?.hideAskAI ? "\"ASK AI\" HIDDEN EVERYWHERE" : "\"Ask AI\" visible"}
+              </span>
             </div>
           </div>
 

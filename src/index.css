@@ -212,3 +212,86 @@ p {
 body.nextext-no-bounce .nx-scroll {
   overscroll-behavior-y: contain;
 }
+
+/* Dark lettering: force dark text/icons on light backgrounds */
+#nextext-app-shell.dark-lettering,
+#nextext-app-shell.dark-lettering .nx-screen,
+#nextext-app-shell.dark-lettering [style*="color:"] {
+  --nx-text: #1a1a2e !important;
+  --nx-text-muted: #4a4a68 !important;
+  --nx-primary: #0b5345 !important;
+  --nx-accent: #0b5345 !important;
+}
+#nextext-app-shell.dark-lettering [style*="color: #E9EDEF"],
+#nextext-app-shell.dark-lettering [style*="color: #F5F5F7"],
+#nextext-app-shell.dark-lettering [style*="color: #E6EDF3"],
+#nextext-app-shell.dark-lettering [style*="color: #F0E6F5"],
+#nextext-app-shell.dark-lettering [style*="color: #F5E6E0"],
+#nextext-app-shell.dark-lettering [style*="color: #E8EBED"],
+#nextext-app-shell.dark-lettering [style*="color: #E4F5EF"],
+#nextext-app-shell.dark-lettering [style*="color: #FFF8F2"],
+#nextext-app-shell.dark-lettering [style*="color: #F0E6F5"],
+#nextext-app-shell.dark-lettering [style*="color: #F5E6E0"] {
+  color: #1a1a2e !important;
+}
+#nextext-app-shell.dark-lettering [style*="color: #8696A0"],
+#nextext-app-shell.dark-lettering [style*="color: #8B8D98"],
+#nextext-app-shell.dark-lettering [style*="color: #8B96A5"],
+#nextext-app-shell.dark-lettering [style*="color: #A08CB0"],
+#nextext-app-shell.dark-lettering [style*="color: #B08C80"],
+#nextext-app-shell.dark-lettering [style*="color: #8A949C"],
+#nextext-app-shell.dark-lettering [style*="color: #7FA396"],
+#nextext-app-shell.dark-lettering [style*="color: #8A6E76"],
+#nextext-app-shell.dark-lettering [style*="color: #5E7A8F"],
+#nextext-app-shell.dark-lettering [style*="color: #8A7856"] {
+  color: #4a4a68 !important;
+}
+
+/* Actual dark theme: force dark background with light text */
+#nextext-app-shell.actual-dark-theme {
+  background: #0b141a !important;
+}
+#nextext-app-shell.actual-dark-theme .nx-screen {
+  background: #0b141a !important;
+}
+#nextext-app-shell.actual-dark-theme [style*="background: #FAF8F3"],
+#nextext-app-shell.actual-dark-theme [style*="background: #FFF8F2"],
+#nextext-app-shell.actual-dark-theme [style*="background: #F2FAFC"],
+#nextext-app-shell.actual-dark-theme [style*="background: #FBEAEF"],
+#nextext-app-shell.actual-dark-theme [style*="background: #E7F0EA"],
+#nextext-app-shell.actual-dark-theme [style*="background: #FBEAE2"],
+#nextext-app-shell.actual-dark-theme [style*="background: #E3F4F8"],
+#nextext-app-shell.actual-dark-theme [style*="background: #FBEAEF"],
+#nextext-app-shell.actual-dark-theme [style*="background: #E7F0EA"],
+#nextext-app-shell.actual-dark-theme [style*="background: #FCF3E3"],
+#nextext-app-shell.actual-dark-theme [style*="background: #FFFBF3"],
+#nextext-app-shell.actual-dark-theme [style*="background: #E8F2FC"],
+#nextext-app-shell.actual-dark-theme [style*="background: #FCF3E3"],
+#nextext-app-shell.actual-dark-theme [style*="background: #F7FBFF"],
+#nextext-app-shell.actual-dark-theme [style*="background: #FFFBF3"],
+#nextext-app-shell.actual-dark-theme [style*="background: #F2FAFC"] {
+  background: #0b141a !important;
+}
+#nextext-app-shell.actual-dark-theme [style*="background: #FFFFFF"],
+#nextext-app-shell.actual-dark-theme [style*="background: #ffffff"],
+#nextext-app-shell.actual-dark-theme [style*="background: #fff"],
+#nextext-app-shell.actual-dark-theme [style*="surface: #FFFFFF"] {
+  background: #111b21 !important;
+}
+#nextext-app-shell.actual-dark-theme [style*="color: #1C1C1E"],
+#nextext-app-shell.actual-dark-theme [style*="color: #3A2218"],
+#nextext-app-shell.actual-dark-theme [style*="color: #0B2E38"],
+#nextext-app-shell.actual-dark-theme [style*="color: #3D2730"],
+#nextext-app-shell.actual-dark-theme [style*="color: #1B2A1F"],
+#nextext-app-shell.actual-dark-theme [style*="color: #0B2E38"] {
+  color: #e9edef !important;
+}
+#nextext-app-shell.actual-dark-theme [style*="color: #6B6B6E"],
+#nextext-app-shell.actual-dark-theme [style*="color: #8A6F61"],
+#nextext-app-shell.actual-dark-theme [style*="color: #5C7D87"],
+#nextext-app-shell.actual-dark-theme [style*="color: #8A7178"],
+#nextext-app-shell.actual-dark-theme [style*="color: #5E715F"],
+#nextext-app-shell.actual-dark-theme [style*="color: #5E7A8F"],
+#nextext-app-shell.actual-dark-theme [style*="color: #8A7856"] {
+  color: #8696a0 !important;
+}

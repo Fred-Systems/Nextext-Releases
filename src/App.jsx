@@ -497,6 +497,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const [sttEnabled, setSttEnabled] = useState(() => localStorage.getItem("nextext_stt_enabled") !== "off");
   const [sttAutoSend, setSttAutoSend] = useState(() => localStorage.getItem("nextext_stt_autosend") !== "off");
   const [sttShowInterim, setSttShowInterim] = useState(() => localStorage.getItem("nextext_stt_show_interim") === "on");
+  const [sttCancelButton, setSttCancelButton] = useState(() => localStorage.getItem("nextext_stt_cancel_button") !== "off");
   const [hideVersion, setHideVersion] = useState(() => localStorage.getItem("nextext_hide_version") === "on");
   const [useCustomPrompt, setUseCustomPrompt] = useState(() => localStorage.getItem("nextext_ai_custom_instructions_enabled") !== "off");
   const [aiRequestStatus, setAiRequestStatus] = useState("");
@@ -760,7 +761,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               <ChevronRight size={18} color={t.textMuted} />
             </div>
             <div style={{ padding: "8px 0 4px", fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>
-              If these options don’t work on your device, use the web version at <a href="https://nextext.pages.dev" target="_blank" rel="noopener noreferrer" style={{ color: t.primary, textDecoration: "underline" }}>nextext.pages.dev</a> (GitHub Pages) to change your password or email.
+              If these options don’t work on your device, use the web version at <a href={sysConfig?.webFallbackUrl || "https://nextext.pages.dev"} target="_blank" rel="noopener noreferrer" style={{ color: t.primary, textDecoration: "underline" }}>{sysConfig?.webFallbackUrl || "nextext.pages.dev"}</a> to change your password or email.
             </div>
           </SectionCard>
         )}
@@ -900,6 +901,34 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: showSplash ? 23 : 3, transition: "left 0.15s" }} />
               </div>
             </div>
+
+            {/* Dark lettering (inverted text on light bg) */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Dark lettering</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Force dark text/icons on light backgrounds (inverted contrast).</div>
+              </div>
+              <div
+                onClick={() => { const next = !darkLettering; setDarkLettering(next); localStorage.setItem("nextext_dark_lettering", next ? "on" : "off"); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: darkLettering ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: darkLettering ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Actual dark theme (dark bg, light text) */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Actual dark theme</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Switch to a dark theme preset (dark background, light text).</div>
+              </div>
+              <div
+                onClick={() => { const next = !actualDarkTheme; setActualDarkTheme(next); localStorage.setItem("nextext_actual_dark_theme", next ? "on" : "off"); if (next) setThemeKey("emeraldNight"); else setThemeKey("default"); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: actualDarkTheme ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: actualDarkTheme ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
           </>), true)}
 
           {!globalSettings?.hideStt && renderSub("Speech to Text", (<>
@@ -958,6 +987,21 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                   style={{ width: 46, height: 26, borderRadius: 13, background: sttShowInterim ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
                 >
                   <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttShowInterim ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            )}
+            {/* Auto-send cancel button */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Show auto-send cancel button</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>When auto-send is on, show a 3-second countdown with a Cancel button so you can keep the text in the composer instead of sending immediately.</div>
+                </div>
+                <div
+                  onClick={() => { const next = !sttCancelButton; setSttCancelButton(next); localStorage.setItem("nextext_stt_cancel_button", next ? "on" : "off"); forceSettingsRerender(); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: sttCancelButton ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttCancelButton ? 23 : 3, transition: "left 0.15s" }} />
                 </div>
               </div>
             )}
@@ -1342,7 +1386,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 <Toggle on={navConfigLocked} onClick={() => setNavConfigLocked(!navConfigLocked)} />
               </div>
               <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Prevent accidental reordering of bottom bar tabs.</div>
-              <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+<div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
                 <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Launch page</div>
                 <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Choose which tab the app opens on when launched.</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -1353,8 +1397,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               </div>
             </div>
           </>))}
-
-          {renderSub("Lists & Other", (<>
+        {!appGlobalSettings?.hideLaunchPage && renderSub("Lists & Other", (<>
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Link previews" sub={linkPreviewsOn ? "On" : "Off"} right={<Toggle on={linkPreviewsOn} onClick={() => { const next = !linkPreviewsOn; setLinkPreviewsOn(next); localStorage.setItem("nextext_link_previews", next ? "on" : "off"); }} />} />
           <Row icon={<CircleDot size={18} color={t.primary} />} label="Scroll-to-bottom button" sub={showScrollDown ? "On" : "Off"} right={<Toggle on={showScrollDown} onClick={() => setShowScrollDown(!showScrollDown)} />} />
           {showScrollDown && (
@@ -1971,6 +2014,8 @@ function AppShell({ appLocked, setAppLocked }) {
   });
   const [storyViewerOpen, setStoryViewerOpen] = useState(false);
   const [showSplash, setShowSplash] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
+  const [darkLettering, setDarkLettering] = useState(() => localStorage.getItem("nextext_dark_lettering") === "on");
+  const [actualDarkTheme, setActualDarkTheme] = useState(() => localStorage.getItem("nextext_actual_dark_theme") === "on");
 const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
   const [splashFading, setSplashFading] = useState(false);
   const [splashHold, setSplashHold] = useState(true);
@@ -2175,7 +2220,9 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     // before the pager layout effect reads it. This prevents the "bottom bar
     // shows one tab but content shows another" cold-start desync. The chosen
     // launch page (chats/status/groups/settings) is what opens.
-    const targetTab = orderedTabs.includes(launchPage) ? launchPage : "chats";
+    // If admin has hidden the launch page setting, always force Groups.
+    const effectiveLaunchPage = appGlobalSettings?.hideLaunchPage ? "groups" : launchPage;
+    const targetTab = orderedTabs.includes(effectiveLaunchPage) ? effectiveLaunchPage : "chats";
     navigateToTab(targetTab);
     // Defensive: force the pager row to the target page imperatively (list tabs
     // only — status/settings aren't pager pages).
@@ -3028,9 +3075,10 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     if (orderedTabs.length === 0) return;
     if (coldStartPagerLockRef.current) return;
     coldStartPagerLockRef.current = true;
-    navigateToTab(orderedTabs.includes(launchPage) ? launchPage : "chats");
+    const effectiveLaunchPage = appGlobalSettings?.hideLaunchPage ? "groups" : launchPage;
+    navigateToTab(orderedTabs.includes(effectiveLaunchPage) ? effectiveLaunchPage : "chats");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderedTabs.join(","), myUid]);
+  }, [orderedTabs.join(","), myUid, appGlobalSettings?.hideLaunchPage]);
 
   const navigateToTab = (key) => {
     if (key === "status") { setStatusOrigin("status"); setScreen("status"); return; }
@@ -3301,11 +3349,16 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   }
   const isAdmin = auth.userDoc?.role === "admin" || auth.userDoc?.isAdmin === true;
 
+  const shellClass = ["nextext-app-shell"];
+  if (darkLettering) shellClass.push("dark-lettering");
+  if (actualDarkTheme) shellClass.push("actual-dark-theme");
+
   return (
     <>
     <div
       ref={shellRef}
       id="nextext-app-shell"
+      className={shellClass.join(" ")}
       style={{ ...containerStyle }}
       onTouchStart={pagerTouchStart}
       onTouchMove={pagerTouchMove}

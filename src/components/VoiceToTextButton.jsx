@@ -46,6 +46,9 @@ export default function VoiceToTextButton({ myUid, onResult, onAutoSend, autoSen
   // Live transcription preview is OFF by default; opt in via Settings
   // (nextext_stt_show_interim === "on").
   const showInterim = typeof window !== "undefined" && localStorage.getItem("nextext_stt_show_interim") === "on";
+  // Auto-send cancel button: "on" = show 3s countdown with Cancel button (default);
+  // "off" = send immediately without cancel prompt.
+  const sttCancelButton = typeof window !== "undefined" && localStorage.getItem("nextext_stt_cancel_button") !== "off";
 
   // When auto-send is enabled, after dictation ends we wait a short grace period
   // (countdown) before actually sending, so the user can tap Cancel and keep the
@@ -159,8 +162,11 @@ export default function VoiceToTextButton({ myUid, onResult, onAutoSend, autoSen
     }
     // Auto-send the full accumulated dictation if the user enabled it.
     const finalText = fullTextRef.current.trim();
-    if (autoSendRef.current && finalText) scheduleAutoSend(finalText);
-  }, [isNative, onResult, stopRecorderNative, scheduleAutoSend]);
+    if (autoSendRef.current && finalText) {
+      if (sttCancelButton) scheduleAutoSend(finalText);
+      else onAutoSendRef.current(finalText);
+    }
+  }, [isNative, onResult, stopRecorderNative, scheduleAutoSend, sttCancelButton]);
   stopRef.current = stop;
 
   const captureChunk = useCallback(async () => {
@@ -304,7 +310,10 @@ export default function VoiceToTextButton({ myUid, onResult, onAutoSend, autoSen
           setRecording(false);
           recordingRef.current = false;
           const finalText = fullTextRef.current.trim();
-          if (autoSendRef.current && finalText) scheduleAutoSend(finalText);
+          if (autoSendRef.current && finalText) {
+            if (sttCancelButton) scheduleAutoSend(finalText);
+            else onAutoSendRef.current(finalText);
+          }
         }
       };
       rec.start();
