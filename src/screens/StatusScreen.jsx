@@ -476,37 +476,67 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       setCameraError("");
       try {
         if (cameraStreamRef.current) {
-        cameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
-        cameraStreamRef.current = null;
+          cameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
+          cameraStreamRef.current = null;
+        }
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: facing, width: { ideal: 720 }, height: { ideal: 1280 } },
+            audio: captureMode === "video",
+          });
+        } catch (err) {
+          // Mic may be unavailable/denied — fall back to video-only so the
+          // preview still shows (the recording will simply be silent).
+          if (captureMode === "video") {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: facing, width: { ideal: 720 }, height: { ideal: 1280 } },
+              audio: false,
+            });
+          } else {
+            throw err;
+          }
+        }
+        cameraStreamRef.current = stream;
+        setCameraStreamKey((k) => k + 1);
+        setCameraFacing(facing);
+        setCameraMode(captureMode);
+        setShowCamera(true);
+        // Attach the stream after the <video> is mounted. A short delay avoids
+        // a WebView timing bug where the preview stays black if srcObject is
+        // set synchronously during the same commit that creates the element.
+        setTimeout(() => {
+          const v = cameraVideoRef.current;
+          if (v && cameraStreamRef.current) {
+            try {
+              v.muted = true;
+              if (v.srcObject !== cameraStreamRef.current) v.srcObject = cameraStreamRef.current;
+              v.play().catch(() => {});
+            } catch { /* noop */ }
+          }
+        }, 80);
+        if (captureMode === "video") {
+          let recorder;
+          try { recorder = new MediaRecorder(stream, { mimeType: "video/webm" }); }
+          catch { recorder = new MediaRecorder(stream); }
+          cameraRecordingRef.current = recorder;
+          const chunks = [];
+          cameraRecordingRef.current.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+          cameraRecordingRef.current.onstop = async () => {
+            const blob = new Blob(chunks, { type: "video/webm" });
+            const file = new File([blob], `status-cam-${Date.now()}.webm`, { type: "video/webm" });
+            setPostMedia(file);
+            setPostMediaType("video");
+            setPostMode("media");
+            setShowCamera(false);
+            stopCameraStream();
+          };
+          cameraRecordingRef.current.start();
+        }
+      } catch {
+        setCameraError("Camera access denied or unavailable.");
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facing, width: { ideal: 720 }, height: { ideal: 1280 } },
-        audio: captureMode === "video",
-      });
-      cameraStreamRef.current = stream;
-      setCameraStreamKey((k) => k + 1);
-      setCameraFacing(facing);
-      setCameraMode(captureMode);
-      setShowCamera(true);
-      if (captureMode === "video") {
-        cameraRecordingRef.current = new MediaRecorder(stream, { mimeType: "video/webm" });
-        const chunks = [];
-        cameraRecordingRef.current.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-        cameraRecordingRef.current.onstop = async () => {
-          const blob = new Blob(chunks, { type: "video/webm" });
-          const file = new File([blob], `status-cam-${Date.now()}.webm`, { type: "video/webm" });
-          setPostMedia(file);
-          setPostMediaType("video");
-          setPostMode("media");
-          setShowCamera(false);
-          stopCameraStream();
-        };
-        cameraRecordingRef.current.start();
-      }
-    } catch {
-      setCameraError("Camera access denied or unavailable.");
-    }
-  };
+    };
 
   const flipCamera = () => {
     if (cameraRecordingRef.current && cameraRecordingRef.current.state === "recording") return;
@@ -843,6 +873,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
               autoPlay
               playsInline
               muted
+              onLoadedData={(e) => { try { e.target.play(); } catch {} }}
               style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", background: "#000", zIndex: 1, filter: cameraFilter || "none", transform: cameraFacing === "user" ? "scaleX(-1)" : "none" }}
             />
             {cameraError && <div style={{ position: "absolute", bottom: "calc(190px + var(--safe-bottom))", left: 0, right: 0, textAlign: "center", color: "#FF3B30", fontSize: 13, fontWeight: 600, zIndex: 11 }}>{cameraError}</div>}

@@ -450,6 +450,7 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
           ) : tab === "media" ? (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4 }}>
               {sharedMedia.map((m) => {
+                const suppressExpiry = globalSettings?.mediaAutoDelete === true;
                 const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays);
                 const expired = isMediaExpired(m, globalSettings?.mediaExpiryDays);
                 return (
@@ -461,7 +462,7 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
                     ) : (
                       <video src={m.mediaURL} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     )}
-                    {!expired && expiryText && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.55)", color: "#fff", fontSize: 9, padding: "2px 4px", textAlign: "center" }}>{expiryText}</div>}
+                    {!expired && expiryText && !suppressExpiry && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.55)", color: "#fff", fontSize: 9, padding: "2px 4px", textAlign: "center" }}>{expiryText}</div>}
                   </div>
                 );
               })}
@@ -469,6 +470,7 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {sharedMedia.map((m) => {
+                const suppressExpiry = globalSettings?.mediaAutoDelete === true;
                 const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays);
                 const expired = isMediaExpired(m, globalSettings?.mediaExpiryDays);
                 if (expired) {
@@ -488,7 +490,7 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.fileName || "File"}</div>
                       <div style={{ fontSize: 11, opacity: 0.6 }}>{m.fileSizeBytes ? `${(m.fileSizeBytes / 1024 / 1024).toFixed(1)} MB` : ""}</div>
-                      {expiryText && <div style={{ fontSize: 10, opacity: 0.55, fontStyle: "italic" }}>{expiryText}</div>}
+                      {expiryText && !suppressExpiry && <div style={{ fontSize: 10, opacity: 0.55, fontStyle: "italic" }}>{expiryText}</div>}
                     </div>
                   </a>
                 );

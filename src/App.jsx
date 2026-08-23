@@ -1,6 +1,23 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { ThemeProvider, useTheme, themes, ROTATE_INTERVALS } from "./theme/ThemeContext";
+import { ThemeProvider, useTheme, themes, ROTATE_INTERVALS, isThemeDark } from "./theme/ThemeContext";
+
+// Resolves the notification dark-mode flag. An explicit user choice in the
+// notification settings ("actual"/"lettering") wins; otherwise the card
+// follows the app's current theme so a dark theme yields a dark notification.
+function getNotifDark() {
+  const explicit = localStorage.getItem("nextext_notif_dark");
+  if (explicit === "actual" || explicit === "lettering") return explicit;
+  try {
+    const key = localStorage.getItem("nextext_theme_key") || "emeraldNight";
+    const theme = key === "custom"
+      ? JSON.parse(localStorage.getItem("nextext_custom_theme") || "null")
+      : (themes[key] || themes.emeraldNight);
+    return isThemeDark(theme) ? "actual" : "off";
+  } catch {
+    return "off";
+  }
+}
 import { useAuth } from "./firebase/useAuth";
 import { usePresenceHeartbeat, useAppUsageTracker } from "./firebase/presence";
 import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
@@ -2704,8 +2721,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
             // / notifSound keys that override the global Settings choice.
             let vibrationPattern;
             let sound;
+            const otherContact = (contacts || []).find((c) => c.uid === m.senderId);
             try {
-              const otherContact = (contacts || []).find((c) => c.uid === m.senderId);
               if (otherContact?.notifVibrate) {
                 if (otherContact.notifVibrate === "custom") {
                   try { vibrationPattern = JSON.parse(localStorage.getItem("nextext_notif_vibration_custom")); } catch {}
@@ -2724,6 +2741,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                 private: true,
                 vibrationPattern,
                 sound,
+                dark: getNotifDark(),
               });
             } else {
               const senderColor = (otherContact?.avatarColor || otherContact?.color || "#7C5CFF");
@@ -2738,6 +2756,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                 sound,
                 senderColor,
                 imageUrl,
+                dark: getNotifDark(),
               });
             }
           });

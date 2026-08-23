@@ -154,3 +154,16 @@ export function ThemeProvider({ children }) {
 export function useTheme() {
   return useContext(ThemeContext);
 }
+
+// Returns true when a theme's background is dark enough that light-on-dark
+// UI (notifications, etc.) should be used.
+export function isThemeDark(theme) {
+  const bg = theme?.bg || "#FFFFFF";
+  const c = bg.replace("#", "");
+  if (c.length < 6) return false;
+  const r = parseInt(c.slice(0, 2), 16);
+  const g = parseInt(c.slice(2, 4), 16);
+  const b = parseInt(c.slice(4, 6), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum < 0.5;
+}
