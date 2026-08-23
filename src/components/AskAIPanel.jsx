@@ -3,14 +3,12 @@
 // (3) "+" button to pull extra context from other chats.
 // Fixed-height panel with independently scrollable sections.
 import React, { useState, useEffect, useRef } from "react";
-import { X, Send, Bot, Mic, UserPlus, ChevronRight, MessageSquare } from "lucide-react";
+import { X, Send, Bot, Mic } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { sendAIMessage, AI_CONTACT_UID } from "../firebase/ai";
-import { db } from "../firebase/config";
-import { collection, query, orderBy, limit, getDocs } from "firebase/firestore";
 import VoiceToTextButton from "../components/VoiceToTextButton";
 
-export default function AskAIPanel({ myUid, otherName, contextMessages, contacts = [], onClose }) {
+export default function AskAIPanel({ myUid, otherName, contextMessages, onClose }) {
   const { t, composerButtonOrder } = useTheme();
   const sttEnabled = localStorage.getItem("nextext_stt_enabled") !== "off";
   const sttAutoSend = localStorage.getItem("nextext_stt_autosend") !== "off";
@@ -19,12 +17,10 @@ export default function AskAIPanel({ myUid, otherName, contextMessages, contacts
   const [sending, setSending] = useState(false);
   // User-typed context/explanation for the AI
   const [userContext, setUserContext] = useState("");
-  const [showUserContext, setShowUserContext] = useState(true);
+  const [showUserContext, setShowUserContext] = useState(false);
   // Chat context from the current conversation (last ~20 messages)
   const [chatContext, setChatContext] = useState(() => contextMessages || []);
-  const [showChatContext, setShowChatContext] = useState(true);
-  const [showAddContext, setShowAddContext] = useState(false);
-  const [addingContext, setAddingContext] = useState(false);
+  const [showChatContext, setShowChatContext] = useState(false);
   const [panelMounted, setPanelMounted] = useState(false);
 
   const chatScrollRef = useRef(null);
@@ -68,27 +64,6 @@ export default function AskAIPanel({ myUid, otherName, contextMessages, contacts
     if (!trimmed) return;
     setInput((prev) => (prev ? (prev.endsWith(" ") ? prev : prev + " ") : "") + trimmed);
     if (autoSend) handleSend(trimmed);
-  };
-
-  const addContactContext = async (contact) => {
-    if (!contact?.uid || addingContext) return;
-    setAddingContext(true);
-    try {
-      const chatId = [myUid, contact.uid].sort().join("_");
-      const q = query(
-        collection(db, "chats", chatId, "messages"),
-        orderBy("sentAt", "desc"),
-        limit(10)
-      );
-      const snap = await getDocs(q);
-      const msgs = snap.docs
-        .map((d) => ({ id: `ctx-${d.id}`, senderId: d.data().senderId, text: d.data().text || "", name: d.data().senderId === myUid ? "You" : (contact.displayName || contact.username || "Them") }))
-        .filter((m) => m.text)
-        .reverse();
-      if (msgs.length) setChatContext((prev) => [...prev, ...msgs]);
-    } catch { /* non-fatal */ }
-    setAddingContext(false);
-    setShowAddContext(false);
   };
 
   const renderBubble = (m, isContext) => {
@@ -214,13 +189,6 @@ export default function AskAIPanel({ myUid, otherName, contextMessages, contacts
               )}
             </div>
           )}
-
-          {/* Add extra context from other chats */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 14px 10px", borderTop: `1px solid ${t.border}` }}>
-            <div onClick={() => setShowAddContext(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 16, background: t.bg, border: `1px solid ${t.primary}`, color: t.primary, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
-              <UserPlus size={14} /> Add context from another chat
-            </div>
-          </div>
         </div>
 
         {/* Chat area — scrollable */}
@@ -276,33 +244,6 @@ export default function AskAIPanel({ myUid, otherName, contextMessages, contacts
             </>
           )}
         </div>
-
-        {/* Add extra context modal */}
-        {showAddContext && (
-          <div onClick={() => setShowAddContext(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147483002, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: t.surface, borderRadius: 18, width: "100%", maxWidth: 320, maxHeight: "70%", overflowY: "auto" }}>
-              <div style={{ padding: "16px 18px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ fontWeight: 700, color: t.text, fontSize: 15 }}>Add chat context</div>
-                <X size={20} color={t.text} onClick={() => setShowAddContext(false)} style={{ cursor: "pointer" }} />
-              </div>
-              <div style={{ padding: 8 }}>
-                {contacts.length === 0 && <div style={{ padding: 16, textAlign: "center", color: t.textMuted, fontSize: 13 }}>No contacts to add.</div>}
-                {contacts.map((c) => {
-                  const name = c.profile?.displayName || c.profile?.username || c.displayName || c.username || "Contact";
-                  return (
-                    <div key={c.uid} onClick={() => addContactContext(c)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, cursor: "pointer" }}>
-                      <div style={{ width: 34, height: 34, borderRadius: "50%", background: c.avatarColor || c.color || t.primary, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 14 }}>
-                        {(name || "?").charAt(0).toUpperCase()}
-                      </div>
-                      <div style={{ flex: 1, color: t.text, fontSize: 14 }}>{name}</div>
-                    </div>
-                  );
-                })}
-              </div>
-              {addingContext && <div style={{ textAlign: "center", color: t.textMuted, fontSize: 12, paddingBottom: 12 }}>Loading…</div>}
-            </div>
-          </div>
-        )}
       </div>
     </>
   );

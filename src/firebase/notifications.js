@@ -128,7 +128,7 @@ function readGlobalNotifPrefs() {
     // Master switches: vibration off → no pattern; sound off → silent.
     if (!vibOn) pattern = null;
     const sound = soundOn ? soundKey : "none";
-    const dark = localStorage.getItem("nextext_notif_dark") === "on";
+    const dark = localStorage.getItem("nextext_notif_dark") || "off";
     return { vibrationPattern: pattern, sound, dark };
   } catch {
     return { vibrationPattern: VIBRATION_PRESETS.default, sound: "default", dark: false };
@@ -141,6 +141,11 @@ export function showLocalNotification(title, body, tag = "nextext-msg", info = {
   // per-user override resolved by the caller); fall back to global prefs.
   const vibrationPattern = info.vibrationPattern !== undefined ? info.vibrationPattern : prefs.vibrationPattern;
   const sound = info.sound !== undefined ? info.sound : prefs.sound;
+  // Normalize the dark-mode flag into the two-valued string the native layer
+  // understands: "actual" (full dark card) or "lettering" (dark text on a light
+  // card). A legacy boolean `true` maps to "actual"; anything else is "off".
+  const rawDark = info.dark !== undefined ? info.dark : prefs.dark;
+  const dark = rawDark === true ? "actual" : (rawDark === "actual" || rawDark === "lettering" ? rawDark : "off");
   const senderColor = info.senderColor || "#7C5CFF";
   const imageUrl = info.imageUrl || "";
   // Notification pings are now native tones (default / none / ping1-3) that play
@@ -163,7 +168,8 @@ export function showLocalNotification(title, body, tag = "nextext-msg", info = {
         senderColor,
         imageUrl,
         // Manual dark-theme override for devices without system dark mode.
-        dark: prefs.dark === true,
+        // "actual" = full dark card, "lettering" = dark text on a light card.
+        dark,
       }).catch(() => {});
     } catch (e) {
       console.warn("[notifications] native notification error:", e);

@@ -241,11 +241,13 @@ public class NextextNativePlugin extends Plugin {
         final String chatId = call.getString("chatId", "");
         final String tag = call.getString("tag", "nextext");
         final boolean isPrivate = call.getBoolean("private", false);
-        // Manual dark-theme override: when true, force a dark, high-contrast
-        // notification palette (the Duoqin Android 11 build has no system dark
-        // mode, so we colorize the notification with a near-black background and
-        // let the OS auto-pick light text for contrast).
-        final boolean dark = call.getBoolean("dark", false);
+        // Manual dark-theme override. Two flavours (mirroring the in-app theme
+        // options): "actual" = a full near-black, high-contrast card; "lettering"
+        // = a light card with dark text. "off" (or anything else) uses the brand
+        // green accent. The Duoqin Android 11 build has no system dark mode, so
+        // we colorize the notification ourselves.
+        final String darkMode = call.getString("dark", "off");
+        final boolean dark = "actual".equals(darkMode) || "lettering".equals(darkMode);
         // Vibration pattern (ms on/off pairs) and ping sound choice, both
         // configurable per-user / globally from Settings. A null pattern means
         // "use the channel default"; an explicit empty array means silent.
@@ -329,16 +331,18 @@ public class NextextNativePlugin extends Plugin {
                     builder = new android.app.Notification.Builder(ctx);
                 }
                 builder.setSmallIcon(R.drawable.ic_stat_nextext)
-                    .setColor(dark && android.os.Build.VERSION.SDK_INT >= 26 ? 0xFF121217 : 0xFF10B981)
+                    .setColor(dark && android.os.Build.VERSION.SDK_INT >= 26
+                        ? ("lettering".equals(darkMode) ? 0xFFF5F5F5 : 0xFF121217)
+                        : 0xFF10B981)
                     .setContentTitle(title)
                     .setContentText(body)
                     .setAutoCancel(true)
                     .setWhen(System.currentTimeMillis())
                     .setPriority(android.app.Notification.PRIORITY_HIGH)
                     .setCategory(android.app.Notification.CATEGORY_MESSAGE);
-                // Manual dark-theme override: colorize the notification with a
-                // near-black background so it reads as a dark, high-contrast card
-                // on devices (e.g. Duoqin Android 11) without system dark mode.
+                // Manual dark-theme override: colorize the notification so the
+                // system auto-picks high-contrast text. "lettering" uses a light
+                // card (dark text); "actual" uses a near-black card (light text).
                 if (dark && android.os.Build.VERSION.SDK_INT >= 26) {
                     try { builder.setColorized(true); } catch (Exception ignored) {}
                 }
@@ -370,11 +374,15 @@ public class NextextNativePlugin extends Plugin {
                     } catch (Exception ignored) {}
                 }
                 // Vibration: a pattern array vibrates with that pattern; a null
-                // pattern (the "none" preset) or an empty array is silent.
-                if (finalPattern != null) {
-                    builder.setVibrate(finalPattern.length == 0 ? null : finalPattern);
+                // pattern (the "none" preset) or an empty array is silent. Use a
+                // zero-length waveform rather than `null` for the silent case so
+                // the silence is forced on every Android level and doesn't fall
+                // back to a (possibly cached) channel default that could still
+                // buzz. This is what makes "No vibration" actually silent.
+                if (finalPattern != null && finalPattern.length > 0) {
+                    builder.setVibrate(finalPattern);
                 } else {
-                    builder.setVibrate(null);
+                    builder.setVibrate(new long[] { 0 });
                 }
                 // Locked chat / app lock: never reveal the body on the lock
                 // screen — Android shows "New message" instead of the content.

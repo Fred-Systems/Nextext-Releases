@@ -332,7 +332,7 @@ function NotificationPrefsRow({ t, auth, myUid }) {
   const [soundKey, setSoundKey] = useState(() => localStorage.getItem("nextext_notif_sound") || "default");
   const [vibOn, setVibOn] = useState(() => localStorage.getItem("nextext_notif_vibrate_on") !== "false");
   const [soundOn, setSoundOn] = useState(() => localStorage.getItem("nextext_notif_sound_on") !== "false");
-  const [darkNotif, setDarkNotif] = useState(() => localStorage.getItem("nextext_notif_dark") === "on");
+  const [darkNotif, setDarkNotif] = useState(() => localStorage.getItem("nextext_notif_dark") || "off");
   // Mirror notification prefs into the Firestore user doc so the FCM worker can
   // honour them for background (app-killed) notifications, not just foreground.
   const syncNotif = (patch) => {
@@ -391,9 +391,20 @@ function NotificationPrefsRow({ t, auth, myUid }) {
       <Toggle label="Play sound on new message" value={soundOn} onChange={(v) => { setSoundOn(v); try { localStorage.setItem("nextext_notif_sound_on", String(v)); } catch {} syncNotif({ notifSoundOn: v }); if (v) preview(soundKey, soundKey); }} />
       <Picker label="Vibration style" value={vibKey} options={vibOptions} onPick={(k) => { setVibKey(k); try { localStorage.setItem("nextext_notif_vibration", k); } catch {} syncNotif({ notifVibration: k }); preview(k, soundKey); }} />
       <Picker label="Ping sound" value={soundKey} options={soundOptions} onPick={(k) => { setSoundKey(k); try { localStorage.setItem("nextext_notif_sound", k); } catch {} syncNotif({ notifSound: k }); preview(vibKey, k); }} />
-      <Toggle label="Dark notification theme" value={darkNotif} onChange={(v) => { setDarkNotif(v); try { localStorage.setItem("nextext_notif_dark", v ? "on" : "off"); } catch {} syncNotif({ notifDark: v ? "on" : "off" }); }} />
+      <Picker
+        label="Dark notification theme"
+        value={darkNotif}
+        options={[
+          { key: "off", label: "Off (default)" },
+          { key: "actual", label: "Actual dark" },
+          { key: "lettering", label: "Dark lettering" },
+        ]}
+        onPick={(k) => { setDarkNotif(k); try { localStorage.setItem("nextext_notif_dark", k); } catch {} syncNotif({ notifDark: k }); }}
+      />
       <div style={{ padding: "4px 16px 12px", fontSize: 11.5, color: t.textMuted }}>
         Tip: open a chat, tap the contact's name → "Notifications for …" to give one person a different ping/vibration. Tap a style above to feel/hear it instantly.
+        <br />
+        Note: to hear the ping, make sure your device's notification sound is turned on (the app can't override a muted phone).
       </div>
     </>
   );
@@ -432,24 +443,27 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const [credModal, setCredModal] = useState(null); // "password" | "email" | null
   const [credOldPass, setCredOldPass] = useState("");
   const [credNewPass, setCredNewPass] = useState("");
+  const [credConfirmPass, setCredConfirmPass] = useState("");
   const [credNewEmail, setCredNewEmail] = useState("");
   const [credBusy, setCredBusy] = useState(false);
   const [credError, setCredError] = useState("");
   const [credSuccess, setCredSuccess] = useState("");
   const isEmailAccount = !!(auth && auth.isEmailPasswordAccount && auth.isEmailPasswordAccount());
 
-  const submitCredChange = async () => {
+  const submitCredChange = async (typeOverride) => {
+    const mode = typeOverride || credModal;
     setCredError("");
     setCredSuccess("");
     setCredBusy(true);
     try {
-      if (credModal === "password") {
+      if (mode === "password") {
         if (!credOldPass || !credNewPass) throw new Error("Enter both your current and new password.");
         if (credNewPass.length < 6) throw new Error("New password must be at least 6 characters.");
+        if (credNewPass !== credConfirmPass) throw new Error("New password and confirmation do not match.");
         await auth.changePassword(credOldPass, credNewPass);
         setCredSuccess("Password changed successfully.");
-        setCredOldPass(""); setCredNewPass("");
-      } else if (credModal === "email") {
+        setCredOldPass(""); setCredNewPass(""); setCredConfirmPass("");
+      } else if (mode === "email") {
         if (!credOldPass || !credNewEmail) throw new Error("Enter your password and the new email.");
         await auth.changeEmail(credNewEmail, credOldPass);
         setCredSuccess("Email changed successfully.");
@@ -747,23 +761,48 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
         {isEmailAccount && !appGlobalSettings?.hideLoginSecurity && (
           <SectionCard title="Login & Security" emoji="🔐" sectionKey="loginSecurity">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", cursor: "pointer", borderBottom: `1px solid ${t.border}` }} onClick={() => { setCredError(""); setCredSuccess(""); setCredOldPass(""); setCredNewPass(""); setCredNewEmail(""); setCredModal("password"); }}>
-              <div>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 14.5 }}>Change password</div>
-                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>Requires your current password</div>
-              </div>
-              <ChevronRight size={18} color={t.textMuted} />
-            </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", cursor: "pointer" }} onClick={() => { setCredError(""); setCredSuccess(""); setCredOldPass(""); setCredNewPass(""); setCredNewEmail(""); setCredModal("email"); }}>
-              <div>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 14.5 }}>Change email</div>
-                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>Requires your password to confirm</div>
-              </div>
-              <ChevronRight size={18} color={t.textMuted} />
-            </div>
-            <div style={{ padding: "8px 0 4px", fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>
-              If these options don’t work on your device, use the web version at <a href={sysConfig?.webFallbackUrl || "https://nextext.pages.dev"} target="_blank" rel="noopener noreferrer" style={{ color: t.primary, textDecoration: "underline" }}>{sysConfig?.webFallbackUrl || "nextext.pages.dev"}</a> to change your password or email.
-            </div>
+            {appGlobalSettings?.forceCredForms ? (
+              <>
+                <div style={{ padding: "12px 0", borderBottom: `1px solid ${t.border}` }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 14.5, marginBottom: 8 }}>Change password</div>
+                  <input type="password" value={credOldPass} onChange={(e) => setCredOldPass(e.target.value)} placeholder="Current password" style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, marginBottom: 8, background: t.bg, color: t.text, boxSizing: "border-box" }} />
+                  <input type="password" value={credNewPass} onChange={(e) => setCredNewPass(e.target.value)} placeholder="New password" style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, marginBottom: 8, background: t.bg, color: t.text, boxSizing: "border-box" }} />
+                  <input type="password" value={credConfirmPass} onChange={(e) => setCredConfirmPass(e.target.value)} placeholder="Confirm new password" style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, marginBottom: 8, background: t.bg, color: t.text, boxSizing: "border-box" }} />
+                  <button onClick={() => submitCredChange("password")} disabled={credBusy} style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: credBusy ? 0.6 : 1 }}>{credBusy ? "Please wait…" : "Save new password"}</button>
+                </div>
+                <div style={{ padding: "12px 0" }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 14.5, marginBottom: 8 }}>Change email</div>
+                  <input type="email" value={credNewEmail} onChange={(e) => setCredNewEmail(e.target.value)} placeholder="New email" style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, marginBottom: 8, background: t.bg, color: t.text, boxSizing: "border-box" }} />
+                  <input type="password" value={credOldPass} onChange={(e) => setCredOldPass(e.target.value)} placeholder="Your password" style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, marginBottom: 8, background: t.bg, color: t.text, boxSizing: "border-box" }} />
+                  <button onClick={() => submitCredChange("email")} disabled={credBusy} style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: credBusy ? 0.6 : 1 }}>{credBusy ? "Please wait…" : "Save new email"}</button>
+                </div>
+                {credError && <div style={{ color: "#FF3B30", fontSize: 12.5, marginTop: 4 }}>{credError}</div>}
+                {credSuccess && <div style={{ color: "#28A745", fontSize: 12.5, marginTop: 4 }}>{credSuccess}</div>}
+                <div style={{ padding: "8px 0 4px", fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>
+                  If these options don’t work on your device, use the web version at <a href={sysConfig?.webFallbackUrl || "https://nextext.pages.dev"} target="_blank" rel="noopener noreferrer" style={{ color: t.primary, textDecoration: "underline" }}>{sysConfig?.webFallbackUrl || "nextext.pages.dev"}</a> to change your password or email.
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", cursor: "pointer", borderBottom: `1px solid ${t.border}` }} onClick={() => { setCredError(""); setCredSuccess(""); setCredOldPass(""); setCredNewPass(""); setCredNewEmail(""); setCredModal("password"); }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: t.text, fontSize: 14.5 }}>Change password</div>
+                    <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>Requires your current password</div>
+                  </div>
+                  <ChevronRight size={18} color={t.textMuted} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", cursor: "pointer" }} onClick={() => { setCredError(""); setCredSuccess(""); setCredOldPass(""); setCredNewPass(""); setCredNewEmail(""); setCredModal("email"); }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: t.text, fontSize: 14.5 }}>Change email</div>
+                    <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>Requires your password to confirm</div>
+                  </div>
+                  <ChevronRight size={18} color={t.textMuted} />
+                </div>
+                <div style={{ padding: "8px 0 4px", fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>
+                  If these options don’t work on your device, use the web version at <a href={sysConfig?.webFallbackUrl || "https://nextext.pages.dev"} target="_blank" rel="noopener noreferrer" style={{ color: t.primary, textDecoration: "underline" }}>{sysConfig?.webFallbackUrl || "nextext.pages.dev"}</a> to change your password or email.
+                </div>
+              </>
+            )}
           </SectionCard>
         )}
 
@@ -1003,6 +1042,21 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                   style={{ width: 46, height: 26, borderRadius: 13, background: sttCancelButton ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
                 >
                   <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttCancelButton ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            )}
+            {/* Start chime */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Play chime when starting</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Play the selected voice-note ping (default Warm chime) when you begin dictation. Uses the same sound chosen in voice-note ping settings.</div>
+                </div>
+                <div
+                  onClick={() => { const cur = localStorage.getItem("nextext_stt_start_chime") !== "off"; const next = !cur; localStorage.setItem("nextext_stt_start_chime", next ? "on" : "off"); forceSettingsRerender(); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: (localStorage.getItem("nextext_stt_start_chime") !== "off") ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (localStorage.getItem("nextext_stt_start_chime") !== "off") ? 23 : 3, transition: "left 0.15s" }} />
                 </div>
               </div>
             )}
@@ -1387,7 +1441,8 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 <Toggle on={navConfigLocked} onClick={() => setNavConfigLocked(!navConfigLocked)} />
               </div>
               <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Prevent accidental reordering of bottom bar tabs.</div>
-<div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+{!appGlobalSettings?.hideLaunchPage && (
+              <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
                 <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Launch page</div>
                 <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Choose which tab the app opens on when launched.</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -1396,9 +1451,10 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                   ))}
                 </div>
               </div>
+)}
             </div>
           </>))}
-        {!appGlobalSettings?.hideLaunchPage && renderSub("Lists & Other", (<>
+        {renderSub("Lists & Other", (<>
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Link previews" sub={linkPreviewsOn ? "On" : "Off"} right={<Toggle on={linkPreviewsOn} onClick={() => { const next = !linkPreviewsOn; setLinkPreviewsOn(next); localStorage.setItem("nextext_link_previews", next ? "on" : "off"); }} />} />
           <Row icon={<CircleDot size={18} color={t.primary} />} label="Scroll-to-bottom button" sub={showScrollDown ? "On" : "Off"} right={<Toggle on={showScrollDown} onClick={() => setShowScrollDown(!showScrollDown)} />} />
           {showScrollDown && (
@@ -1482,8 +1538,8 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           </>))}
         </SectionCard>
 
-        {/* ═══ AI CONTROLS ═══ */}
-        {userRestrictions?.blockAI !== true && !sysConfig?.hideAiEverywhere && (
+         {/* ═══ AI CONTROLS ═══ */}
+         {userRestrictions?.blockAI !== true && !sysConfig?.hideAiEverywhere && !userDoc?.hideAISettings && (
           <SectionCard title="AI Controls" emoji="🤖" sectionKey="ai">
             {sysConfig?.aiGloballyDisabled ? (
               <div style={{ padding: "12px 0", textAlign: "center" }}>
@@ -3001,8 +3057,15 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // is ALWAYS index 0; otherwise it's the active tab's index (or the last
   // resting pageIndex when on a non-tab screen). Both the page render and the
   // boot diag read this, so they can never disagree.
+  // SINGLE SOURCE OF TRUTH for the visible page: derive the pager position
+  // directly from the active tab/screen. We deliberately ignore `pageIndex`
+  // here so the pager can NEVER disagree with the bottom bar (the old
+  // "page shows Groups but bar shows Chats" cold-start desync). `pageIndex`
+  // still exists as a mirror for diagnostics/transitions but no longer drives
+  // what is painted.
   const chatsIndex = orderedTabs.indexOf("chats");
-  const effectiveIndex = (screen === "list" && activeNavTab === "chats" && chatsIndex >= 0) ? chatsIndex : (currentTabIndex >= 0 ? currentTabIndex : pageIndex);
+  const visibleTabKey = screen === "status" ? "status" : screen === "settings" ? "settings" : screen === "list" ? (activeNavTab || "chats") : null;
+  const effectiveIndex = visibleTabKey ? Math.max(0, orderedTabs.indexOf(visibleTabKey)) : (chatsIndex >= 0 ? chatsIndex : 0);
 
 // BULLETPROOF pager position: after every render where the active tab (or
   // tab order) changes, imperatively force the row's transform to match
@@ -3323,13 +3386,17 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
   // When the admin forces the Notepad disguise, push the unlock keyword to every
   // client and switch everyone's launcher icon to the Notes disguise so the
-  // app presents as a notepad from the home screen.
+  // app presents as a notepad from the home screen. setActiveProfile triggers a
+  // native setAppIcon which KILLS the process — so only call it when the icon
+  // isn't already the notepad profile, otherwise we'd kill→relaunch→kill in a loop.
   useEffect(() => {
     if (globalSettings?.forceNotepadDisguise) {
       try { setNotepadKeyword(globalSettings.notepadDisguiseKeyword || "Rosh"); } catch {}
-      try { setActiveProfile("icon7"); setIconProfileId("icon7"); } catch {}
+      if (iconProfileId !== "icon7") {
+        try { setActiveProfile("icon7"); } catch {}
+      }
     }
-  }, [globalSettings?.forceNotepadDisguise, globalSettings?.notepadDisguiseKeyword]);
+  }, [globalSettings?.forceNotepadDisguise, globalSettings?.notepadDisguiseKeyword, iconProfileId]);
 
   if (disguiseKind === "calculator" && !disguiseUnlocked) {
     return (
@@ -3410,6 +3477,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                   bottom: 0,
                   willChange: "transform",
                   transform: `translateX(${-effectiveIndex * 100}%)`,
+                  touchAction: "pan-y",
+                  WebkitOverflowScrolling: "touch",
                   transition: pagerDragging
                     ? "none"
                     : snapAnimating
@@ -3524,6 +3593,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                  setComposerButtonOrder={setComposerButtonOrder}
  launchPage={launchPage}
                 setLaunchPage={setLaunchPage}
+                onLaunchPageSelect={(key) => { setLaunchPage(key); localStorage.setItem("nextext_launch_page", key); navigateToTab(key); }}
  appGlobalSettings={globalSettings}
  darkLettering={darkLettering}
  setDarkLettering={setDarkLettering}

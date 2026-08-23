@@ -13,6 +13,19 @@ import { getMicrophoneStream } from "../media/microphone";
 import { base64ToBlob } from "../media/base64";
 import { useGlobalSettings } from "../firebase/config-settings";
 
+// Camera preview / capture effect filters (CSS filter strings). Applied live to
+// the preview and baked into captured photos via canvas ctx.filter.
+const CAMERA_FILTERS = [
+  { id: "none", label: "None", css: "" },
+  { id: "mono", label: "Mono", css: "grayscale(1) contrast(1.05)" },
+  { id: "sepia", label: "Sepia", css: "sepia(0.85)" },
+  { id: "vivid", label: "Vivid", css: "saturate(1.8) contrast(1.1)" },
+  { id: "cool", label: "Cool", css: "hue-rotate(180deg) saturate(1.2)" },
+  { id: "warm", label: "Warm", css: "sepia(0.35) saturate(1.4) hue-rotate(-15deg)" },
+  { id: "noir", label: "Noir", css: "grayscale(1) contrast(1.6) brightness(0.9)" },
+  { id: "fade", label: "Fade", css: "contrast(0.85) brightness(1.1) sepia(0.2)" },
+];
+
 const VIEWED_KEY = "nextext_status_viewed";
 
 function SegmentedRing({ count, allViewed, size, gap = 4 }) {
@@ -199,6 +212,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   const cameraTimerRef = useRef(null);
   const [cameraFacing, setCameraFacing] = useState("user");
   const [cameraMode, setCameraMode] = useState("photo");
+  const [cameraFilter, setCameraFilter] = useState("");
   const photoInputRef = useRef(null);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [showZoomHint, setShowZoomHint] = useState(false);
@@ -316,7 +330,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
 
   const handlePost = async () => {
     if (postMode === "text" && !postText.trim()) return;
-    if (postMode === "media" && !postMedia && postImages.length === 0) {
+    if (postMode === "media" && !postMedia && postImages.length === 0 && !voiceBlob) {
       setPostError("Please select an image, video, or record something.");
       return;
     }
@@ -504,7 +518,9 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
+    const ctx = canvas.getContext("2d");
+    if (cameraFilter) ctx.filter = cameraFilter;
+    ctx.drawImage(video, 0, 0);
     canvas.toBlob((blob) => {
       if (!blob) return;
       const file = new File([blob], `status-cam-${Date.now()}.jpg`, { type: "image/jpeg" });
@@ -787,13 +803,21 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
         <StatusViewerModal statusId={viewerModalStatusId} contacts={acceptedContacts} onClose={() => setViewerModalStatusId(null)} t={t} />
       )}
 
-      {/* Camera overlay */}
-        {showCamera && (
+      {/* Camera overlay — portaled to document.body so it escapes the scaled
+          app shell (a position:fixed inside a transformed ancestor is sized
+          relative to that ancestor, which made the old camera render tiny in a
+          corner). Now it's truly full-screen. */}
+        {showCamera && createPortal(
           <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "calc(12px + var(--safe-top)) 16px 12px", minHeight: 44, flexShrink: 0, position: "relative", zIndex: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "calc(12px + var(--safe-top)) 16px 12px", minHeight: 44, flexShrink: 0, position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
               <X size={22} color="#fff" onClick={() => { setShowCamera(false); stopCameraStream(); }} style={{ cursor: "pointer" }} />
-              <div onClick={flipCamera} style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                <RefreshCw size={20} color="#fff" />
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div onClick={() => setCameraMode((m) => (m === "photo" ? "video" : "photo"))} style={{ padding: "7px 16px", borderRadius: 99, background: "rgba(255,255,255,0.18)", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  {cameraMode === "photo" ? "Photo" : "Video"}
+                </div>
+                <div onClick={flipCamera} style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                  <RefreshCw size={20} color="#fff" />
+                </div>
               </div>
             </div>
             <video
@@ -807,28 +831,39 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
               autoPlay
               playsInline
               muted
-              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", background: "#000", zIndex: 1 }}
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", background: "#000", zIndex: 1, filter: cameraFilter || "none", transform: cameraFacing === "user" ? "scaleX(-1)" : "none" }}
             />
-           {cameraError && <div style={{ position: "absolute", bottom: 100, left: 0, right: 0, textAlign: "center", color: "#FF3B30", fontSize: 13, fontWeight: 600 }}>{cameraError}</div>}
-           <div style={{ position: "absolute", bottom: "calc(28px + var(--safe-bottom))", left: 0, right: 0, display: "flex", justifyContent: "center", gap: "min(28px, 7vw)", zIndex: 10 }}>
-             <div onClick={capturePhotoFromCamera} style={{ width: "min(64px, 16vw)", height: "min(64px, 16vw)", borderRadius: "50%", border: "4px solid #fff", background: "rgba(255,255,255,0.15)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-               <Camera size={26} color="#fff" />
-             </div>
-             <div
-               onClick={() => {
-                 if (cameraRecordingRef.current && cameraRecordingRef.current.state === "recording") {
-                   cameraRecordingRef.current.stop();
-                 } else {
-                   startCamera("video");
-                 }
-               }}
-               style={{ width: "min(64px, 16vw)", height: "min(64px, 16vw)", borderRadius: "50%", border: "4px solid #FF3B30", background: cameraRecordingRef.current?.state === "recording" ? "rgba(255,59,48,0.3)" : "rgba(255,255,255,0.15)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-             >
-               <Video size={26} color="#FF3B30" />
-             </div>
-           </div>
-         </div>
-       )}
+            {cameraError && <div style={{ position: "absolute", bottom: "calc(190px + var(--safe-bottom))", left: 0, right: 0, textAlign: "center", color: "#FF3B30", fontSize: 13, fontWeight: 600, zIndex: 11 }}>{cameraError}</div>}
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: "calc(118px + var(--safe-bottom))", display: "flex", gap: 8, overflowX: "auto", padding: "0 16px", zIndex: 10 }}>
+              {CAMERA_FILTERS.map((f) => (
+                <div key={f.id} onClick={() => setCameraFilter(f.css)} style={{ flexShrink: 0, padding: "7px 14px", borderRadius: 99, background: (cameraFilter === f.css) ? "#fff" : "rgba(255,255,255,0.18)", color: (cameraFilter === f.css) ? "#000" : "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                  {f.label}
+                </div>
+              ))}
+            </div>
+            <div style={{ position: "absolute", bottom: "calc(28px + var(--safe-bottom))", left: 0, right: 0, display: "flex", justifyContent: "center", zIndex: 10 }}>
+              {cameraMode === "photo" ? (
+                <div onClick={capturePhotoFromCamera} style={{ width: "min(72px, 18vw)", height: "min(72px, 18vw)", borderRadius: "50%", border: "4px solid #fff", background: "rgba(255,255,255,0.15)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Camera size={28} color="#fff" />
+                </div>
+              ) : (
+                <div
+                  onClick={() => {
+                    if (cameraRecordingRef.current && cameraRecordingRef.current.state === "recording") {
+                      cameraRecordingRef.current.stop();
+                    } else {
+                      startCamera("video");
+                    }
+                  }}
+                  style={{ width: "min(72px, 18vw)", height: "min(72px, 18vw)", borderRadius: "50%", border: "4px solid #FF3B30", background: cameraRecordingRef.current?.state === "recording" ? "rgba(255,59,48,0.35)" : "rgba(255,255,255,0.15)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  <Video size={28} color="#FF3B30" />
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* Post status sheet */}
       {showPost && createPortal(
@@ -1113,8 +1148,8 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
 
             <button
               onClick={handlePost}
-              disabled={posting || (postMode === "text" && !postText.trim()) || (postMode === "media" && !postMedia && postImages.length === 0)}
-              style={{ width: "100%", padding: 13, borderRadius: 12, border: "none", background: ((postMode === "text" && postText.trim()) || (postMode === "media" && (postMedia || postImages.length > 0))) ? t.primary : t.border, color: ((postMode === "text" && postText.trim()) || (postMode === "media" && (postMedia || postImages.length > 0))) ? t.bubbleMeText : t.textMuted, fontWeight: 700, fontSize: 15, cursor: ((postMode === "text" && postText.trim()) || (postMode === "media" && (postMedia || postImages.length > 0))) ? "pointer" : "not-allowed" }}
+              disabled={posting || (postMode === "text" && !postText.trim()) || (postMode === "media" && !postMedia && postImages.length === 0 && !voiceBlob)}
+              style={{ width: "100%", padding: 13, borderRadius: 12, border: "none", background: ((postMode === "text" && postText.trim()) || (postMode === "media" && (postMedia || postImages.length > 0 || voiceBlob))) ? t.primary : t.border, color: ((postMode === "text" && postText.trim()) || (postMode === "media" && (postMedia || postImages.length > 0 || voiceBlob))) ? t.bubbleMeText : t.textMuted, fontWeight: 700, fontSize: 15, cursor: ((postMode === "text" && postText.trim()) || (postMode === "media" && (postMedia || postImages.length > 0 || voiceBlob))) ? "pointer" : "not-allowed" }}
             >
               {posting ? "Posting…" : "Post Status"}
             </button>

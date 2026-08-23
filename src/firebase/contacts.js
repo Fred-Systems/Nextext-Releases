@@ -42,17 +42,32 @@ export async function searchUsersByUsername(prefix, opts = {}) {
     : query(collection(db, "users"), where("usernameLower", ">=", lower), where("usernameLower", "<=", lower + "\uf8ff"), fbLimit(10));
   try { add(await getDocs(usernameQ)); } catch {}
 
-  // Smart (prefix) search across opt-in fields — only when not in
-  // exact-username-only mode (that mode intentionally limits discovery to the
-  // full handle).
-  if (!exactUsername) {
-    const fieldQueries = [
-      query(collection(db, "users"), where("searchDisplayName", ">=", lower), where("searchDisplayName", "<=", lower + "\uf8ff"), fbLimit(10)),
-      query(collection(db, "users"), where("searchEmail", ">=", lower), where("searchEmail", "<=", lower + "\uf8ff"), fbLimit(10)),
-      query(collection(db, "users"), where("searchPhone", ">=", lower), where("searchPhone", "<=", lower + "\uf8ff"), fbLimit(10)),
-    ];
-    await Promise.all(fieldQueries.map((q) => getDocs(q).then(add).catch(() => {})));
-  }
+   // Smart (prefix) search across opt-in fields — only when not in
+   // exact-username-only mode (that mode intentionally limits discovery to the
+   // full handle).
+   if (!exactUsername) {
+     const fieldQueries = [
+       query(collection(db, "users"), where("searchDisplayName", ">=", lower), where("searchDisplayName", "<=", lower + "\uf8ff"), fbLimit(10)),
+       query(collection(db, "users"), where("searchEmail", ">=", lower), where("searchEmail", "<=", lower + "\uf8ff"), fbLimit(10)),
+     ];
+     // Phone search: normalize so a leading "1" (or "+") doesn't prevent a
+     // match. A stored searchPhone may be "+15551234567" or "15551234567"; a
+     // user might type "5551234567" or "15551234567". Try every sensible form.
+     const digits = lower.replace(/[^\d]/g, "");
+     const phoneVariants = [];
+     if (digits.length >= 7) {
+       const seen = new Set();
+       const push = (v) => { if (v && !seen.has(v)) { seen.add(v); phoneVariants.push(v); } };
+       push(digits);
+       push("+" + digits);
+       if (digits.startsWith("1") && digits.length === 11) { push(digits.slice(1)); push("+" + digits.slice(1)); }
+       if (digits.length === 10) { push("1" + digits); push("+1" + digits); }
+     }
+     phoneVariants.forEach((v) => {
+       fieldQueries.push(query(collection(db, "users"), where("searchPhone", ">=", v), where("searchPhone", "<=", v + "\uf8ff"), fbLimit(10)));
+     });
+     await Promise.all(fieldQueries.map((q) => getDocs(q).then(add).catch(() => {})));
+   }
 
   let list = Array.from(results.values());
   // If a returned user has opted into "exact username only", drop them unless

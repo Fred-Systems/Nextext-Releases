@@ -3,6 +3,7 @@ import { AudioLines, Square, Loader2, Mic } from "lucide-react";
 import { transcribeVoiceNote } from "../firebase/ai";
 import { getMicrophoneStream } from "../media/microphone";
 import { base64ToBlob } from "../media/base64";
+import { playVoicePing } from "../utils/pingSounds";
 const NextextNative = typeof window !== "undefined" ? window.Capacitor?.Plugins?.NextextNative : null;
 
 // How often (ms) we cut a native recording chunk and send it to Groq Whisper
@@ -330,12 +331,17 @@ export default function VoiceToTextButton({ myUid, onResult, onAutoSend, autoSen
     }
   }, [myUid, onResult, resetSilence]);
 
-  const start = useCallback(async () => {
+   const start = useCallback(async () => {
     setError("");
     setInterimText("");
     clearPending();
     if (recordingRef.current) return;
     triggerHaptic("light");
+    // Play the voice-note ping (user-selected sound, default Warm chime) when
+    // dictation starts — opt-out via nextext_stt_start_chime === "off".
+    if (localStorage.getItem("nextext_stt_start_chime") !== "off") {
+      try { playVoicePing(); } catch {}
+    }
     if (isNative) { await startNative(); return; }
     if (useRealtime && startWebRealtime()) return;
     await startWebMediaRecorder();

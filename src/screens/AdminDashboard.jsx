@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText } from "lucide-react";
+import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -1253,6 +1253,28 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
               <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideLoginSecurity ? "#fff" : t.text }}>
                 {settings?.hideLoginSecurity ? "LOGIN & SECURITY HIDDEN FROM SETTINGS" : "Login & Security visible in Settings"}
+              </span>
+            </div>
+          </div>
+
+          {/* Force Login & Security credential forms open */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <KeyRound size={18} color="#FF9500" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Open Credential Forms by Default</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              When enabled, the Login & Security screen shows the Change password (current + new + confirm) and Change email (email + password) forms immediately — no need to tap the rows first.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.forceCredForms;
+              updateGlobalSettings({ forceCredForms: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.forceCredForms ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.forceCredForms ? "#34C759" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.forceCredForms ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.forceCredForms ? "#fff" : t.text }}>
+                {settings?.forceCredForms ? "CREDENTIAL FORMS OPEN BY DEFAULT" : "Credential forms open on tap"}
               </span>
             </div>
           </div>

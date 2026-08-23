@@ -87,6 +87,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   }, [onExit, onClose]);
 
   const barRef = useRef(null);
+  const barRefs = useRef([]);
   const progressRef = useRef(0);
   const timerRef = useRef(null);
   const advanceRef = useRef(null);
@@ -213,18 +214,12 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     // slide never leaves a parallel timeline bar sliding simultaneously.
     if (timerRef.current) clearTimeout(timerRef.current);
     progressRef.current = 0;
-    // The slide we're leaving becomes an "ahead" bar (width 0%) on the next
-    // render. Kill its transition BEFORE the width change lands so it snaps
-    // instantly to EMPTY (0%) on the previous slide — going back means those
-    // slides are unviewed again, so their bars must read empty, never filled.
-    if (barRef.current) {
-      barRef.current.style.transition = "none";
-      barRef.current.style.width = "0%";
-    }
-    // Unmark current index as completed (we didn't finish it)
+    // Going back means every slide from the destination onward is "unviewed"
+    // again — keep completed only for slides strictly BEFORE the destination so
+    // the destination (and everything after it) resets and re-animates from 0%.
     setCompletedIndices((prev) => {
-      const next = new Set(prev);
-      next.delete(idx);
+      const next = new Set();
+      for (const i of prev) if (i < idx - 1) next.add(i);
       return next;
     });
     if (idx > 0) {
@@ -257,6 +252,14 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       barRef.current.style.transition = "none";
       barRef.current.style.width = "0%";
     }
+    // Reset every OTHER bar via the refs array so stale direct-mutated widths
+    // don't linger: slides behind the current read full (already viewed),
+    // slides ahead read empty (not yet viewed) and never animate until shown.
+    barRefs.current.forEach((el, i) => {
+      if (!el || i === idx) return;
+      el.style.transition = "none";
+      el.style.width = completedIndices.has(i) ? "100%" : "0%";
+    });
     const isWaitVideo = current?.mediaType === "video" && current?.waitForVideo;
     if (!isWaitVideo) {
       requestAnimationFrame(() => {
@@ -387,11 +390,11 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
         {statuses.map((s, i) => (
           <div key={s.id} style={{ flex: 1, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.3)", overflow: "hidden" }}>
             {completedIndices.has(i) ? (
-              <div style={{ height: "100%", borderRadius: 2, background: "#00A884", width: "100%" }} />
+              <div ref={(el) => { barRefs.current[i] = el; }} style={{ height: "100%", borderRadius: 2, background: "#00A884", width: "100%" }} />
             ) : i === idx ? (
-              <div ref={barRef} style={{ height: "100%", borderRadius: 2, background: "#00A884", width: "0%" }} />
+              <div ref={(el) => { barRef.current = el; barRefs.current[i] = el; }} style={{ height: "100%", borderRadius: 2, background: "#00A884", width: "0%" }} />
             ) : (
-              <div style={{ height: "100%", borderRadius: 2, background: "#00A884", width: "0%" }} />
+              <div ref={(el) => { barRefs.current[i] = el; }} style={{ height: "100%", borderRadius: 2, background: "#00A884", width: "0%" }} />
             )}
           </div>
         ))}
