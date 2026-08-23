@@ -591,8 +591,25 @@ export default function AdminDashboard({ myUid, onBack }) {
                 </div>
                 <button onClick={handleExpirySave} style={{ width: "100%", padding: 8, borderRadius: 8, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Save</button>
               </div>
+            <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>WhatsApp-style instant media delete (1:1 chats)</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                When ON, media in one-on-one chats is downloaded to the recipient's device and the Supabase server copy is deleted immediately after, keeping storage near zero. Group chats are excluded (they keep the normal {settings?.mediaExpiryDays == null ? "permanent" : `${settings.mediaExpiryDays}-day`} cleanup). OFF by default.
+              </div>
+              <div onClick={() => {
+                const newVal = !settings?.mediaAutoDelete;
+                updateGlobalSettings({ mediaAutoDelete: newVal }, myUid);
+              }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.mediaAutoDelete ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.mediaAutoDelete ? "#34C759" : t.border, position: "relative" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.mediaAutoDelete ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: settings?.mediaAutoDelete ? "#fff" : t.text }}>
+                  {settings?.mediaAutoDelete ? "INSTANT MEDIA DELETE ON" : "Instant media delete off"}
+                </span>
+              </div>
             </div>
-          )}
+          </div>
+        )}
           <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>
             {results.map((u) => (
               <div key={u.uid} onClick={() => setSelectedUser(u)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>

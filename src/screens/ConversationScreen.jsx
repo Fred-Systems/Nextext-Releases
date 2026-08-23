@@ -12,10 +12,12 @@ import {
   sendLocationMessage, updateLiveLocation, sendContactMessage,
   sendForwardedMessage, incrementForwardedCount,
 } from "../firebase/chats";
+import { Download } from "lucide-react";
 import { getWallpaperForChat, setWallpaperForChat, fileToWallpaperDataUrl } from "../theme/wallpaper";
 import { usePresence, formatLastSeen } from "../firebase/presence";
-import { uploadChatFile } from "../supabase/media";
+import { uploadChatFile, deleteChatFile } from "../supabase/media";
 import { FileTooLargeError } from "../media/mediaCompression";
+import { cacheMedia, getLocalMediaUrl, hasCachedMedia } from "../media/localMediaCache";
 import { doc, getDoc, onSnapshot, addDoc, collection, serverTimestamp, updateDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { registerPlugin } from "@capacitor/core";
@@ -491,6 +493,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const sysConfig = useSystemConfigHook();
   const aiApproved = userDoc?.aiApproved && !sysConfig?.aiGloballyDisabled && !sysConfig?.hideAiEverywhere && userDoc?.restrictions?.blockAI !== true;
   const isGroup = !!contact?.isGroup;
+  // Local (device-resident) media URLs for the WhatsApp-style auto-delete mode.
+  // Keyed by message id -> object URL serving the cached Blob.
+  const [localMediaUrls, setLocalMediaUrls] = useState({});
+  const cachingInFlight = useRef(new Set());
   const [chatId, setChatId] = useState(initialChatId);
   const [input, setInput] = useState("");
   const [activeMsg, setActiveMsg] = useState(null);
@@ -2513,12 +2519,43 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     );
   };
 
+  // WhatsApp-style: download the media to this device, cache it locally, then
+  // delete the Supabase server copy so our storage stays near zero. Only used for
+  // one-on-one chats when the admin has enabled `mediaAutoDelete`. Group chats
+  // never call this (they keep the server copy for all members).
+  const handleDownloadMedia = useCallback(async (m) => {
+    if (!m.mediaURL) return;
+    if (cachingInFlight.current.has(m.id)) return;
+    cachingInFlight.current.add(m.id);
+    try {
+      const res = await fetch(m.mediaURL);
+      if (!res.ok) throw new Error("download failed");
+      const blob = await res.blob();
+      await cacheMedia(m.id, blob);
+      const url = await getLocalMediaUrl(m.id);
+      if (url) setLocalMediaUrls((prev) => ({ ...prev, [m.id]: url }));
+      // Swap the UI to the local copy BEFORE purging the server file.
+      if (m.mediaPath) {
+        try { await deleteChatFile(m.mediaPath); } catch { /* ignore */ }
+      }
+    } catch {
+      setSendError?.("Couldn't download this media. Try again.");
+    } finally {
+      cachingInFlight.current.delete(m.id);
+    }
+  }, [setLocalMediaUrls, setSendError]);
+
   const renderBubble = (m) => {
     const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays);
+    // WhatsApp-style instant media delete (one-on-one only).
+    const autoDelete = globalSettings?.mediaAutoDelete === true;
+    const suppressExpiry = autoDelete && !isGroup;
+    const localSrc = (autoDelete && !isGroup) ? localMediaUrls[m.id] : null;
+    const needDownload = (autoDelete && !isGroup) && !localSrc && m.senderId !== myUid;
     if (m.deletedForEveryone) return <div style={{ fontSize: 13, fontStyle: "italic", opacity: 0.6 }}>This message was deleted</div>;
     if (m.type === "poll") return <PollBubble t={t} mine={m.senderId === myUid} poll={m.poll} myUid={myUid} onVote={(optId) => handleVote(m, optId)} textScale={chatTextScale} />;
 
-    if (["image", "video", "voice", "file"].includes(m.type) && isMediaExpired(m, globalSettings?.mediaExpiryDays)) {
+    if (["image", "video", "voice", "file"].includes(m.type) && isMediaExpired(m, globalSettings?.mediaExpiryDays) && !(autoDelete && !isGroup && localSrc)) {
       const ExpiredIcon = m.type === "image" ? ImageOff : m.type === "video" ? VideoOff : m.type === "voice" ? MicOff : FileX;
       return (
         <div>
@@ -2616,30 +2653,51 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (m.type === "image") return (
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
-        <div onClick={(e) => { e.stopPropagation(); setFullscreenImage(m.mediaURL); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)" }}>
-          <img src={m.mediaURL} alt="Sent photo" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-        </div>
+        {needDownload ? (
+          <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: t.textMuted }}>
+            <Download size={30} />
+            <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tap to download</span>
+          </div>
+        ) : (
+          <div onClick={(e) => { e.stopPropagation(); setFullscreenImage(localSrc || m.mediaURL); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)" }}>
+            <img src={localSrc || m.mediaURL} alt="Sent photo" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          </div>
+        )}
         {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.text}</div>}
-        {expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3, fontStyle: "italic" }}>{expiryText}</div>}
+        {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
     if (m.type === "video") return (
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
-          <div style={{ width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)", position: "relative" }}>
-            <video src={m.mediaURL} controls className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        {needDownload ? (
+          <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: t.textMuted }}>
+            <Download size={30} />
+            <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tap to download</span>
           </div>
+        ) : (
+          <div style={{ width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)", position: "relative" }}>
+            <video src={localSrc || m.mediaURL} controls className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          </div>
+        )}
         {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.text}</div>}
-        {expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3, fontStyle: "italic" }}>{expiryText}</div>}
+        {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
     if (m.type === "voice") return (
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
-        <VoicePlayer url={m.mediaURL} duration={m.mediaDurationSeconds} mine={m.senderId === myUid} t={t} msgId={m.id} onEnded={handleVoiceEnded} autoPlayToken={voiceAutoPlayNonce} isAutoPlayTarget={m.id === voiceAutoPlayId} nowPlayingId={nowPlayingId} onPlayStart={handleVoicePlayStart} />
-        {transcriptTextFor(m) ? (
-          <TranscriptBlock m={m} />
+        {needDownload ? (
+          <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 64, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, color: t.textMuted }}>
+            <Download size={24} />
+            <span style={{ fontSize: 12, fontWeight: 600 }}>Tap to download</span>
+          </div>
         ) : (
+          <VoicePlayer url={localSrc || m.mediaURL} duration={m.mediaDurationSeconds} mine={m.senderId === myUid} t={t} msgId={m.id} onEnded={handleVoiceEnded} autoPlayToken={voiceAutoPlayNonce} isAutoPlayTarget={m.id === voiceAutoPlayId} nowPlayingId={nowPlayingId} onPlayStart={handleVoicePlayStart} />
+        )}
+        {!needDownload && transcriptTextFor(m) ? (
+          <TranscriptBlock m={m} />
+        ) : (!needDownload && (
           <button
             onClick={(e) => { e.stopPropagation(); transcribeVoice(m); }}
             disabled={transcribingId === m.id}
@@ -2647,22 +2705,32 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           >
             {transcribingId === m.id ? "Transcribing…" : "Transcribe"}
           </button>
-        )}
-        {transcriptErrors[m.id] && <div style={{ fontSize: 11, color: "#FF3B30", marginTop: 3, maxWidth: 230, lineHeight: 1.3 }}>{transcriptErrors[m.id]}</div>}
-        {expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
+        ))}
+        {!needDownload && transcriptErrors[m.id] && <div style={{ fontSize: 11, color: "#FF3B30", marginTop: 3, maxWidth: 230, lineHeight: 1.3 }}>{transcriptErrors[m.id]}</div>}
+        {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
     if (m.type === "file") return (
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
-        <a href={m.mediaURL} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit" }}>
-          <FileText size={26} />
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13.5 * chatTextScale, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>{m.fileName || "File"}</div>
-            <div style={{ fontSize: 11 * chatTextScale, opacity: 0.7 }}>{m.fileSizeBytes ? `${(m.fileSizeBytes / 1024 / 1024).toFixed(1)} MB` : ""}</div>
+        {needDownload ? (
+          <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(0,0,0,0.06)", color: t.textMuted }}>
+            <Download size={24} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13.5 * chatTextScale, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>{m.fileName || "File"}</div>
+              <div style={{ fontSize: 11 * chatTextScale, opacity: 0.7 }}>Tap to download{m.fileSizeBytes ? ` · ${(m.fileSizeBytes / 1024 / 1024).toFixed(1)} MB` : ""}</div>
+            </div>
           </div>
-        </a>
-        {expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
+        ) : (
+          <a href={localSrc || m.mediaURL} target="_blank" rel="noopener noreferrer" download={m.fileName || undefined} style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit" }}>
+            <FileText size={26} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13.5 * chatTextScale, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>{m.fileName || "File"}</div>
+              <div style={{ fontSize: 11 * chatTextScale, opacity: 0.7 }}>{m.fileSizeBytes ? `${(m.fileSizeBytes / 1024 / 1024).toFixed(1)} MB` : ""}</div>
+            </div>
+          </a>
+        )}
+        {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
     const emojiOnly = emojiBigOn && emojiAnimations && !blocked && !m.isScheduled && isEmojiOnly(m.text);
@@ -2724,14 +2792,78 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     msgDisplayDate, formatDayLabel, onRowPointerDown, onRowPointerUp, onRowPointerMove,
     cancelMessageLongPress, enterSelectionMode, toggleSelectMessage,
     setForwardMsg, setActiveMsg, setContactCardMember, StatusTicks, scrollToBottom, msgLongPressFiredRef,
-    replySnapMs, messageLimitPref, scrollRef,
+    replySnapMs, messageLimitPref, scrollRef, localMediaUrls, handleDownloadMedia,
     enableVirtualization: globalSettings?.enableChatVirtualization !== false,
   }), [
     displayMessages, visibleMessages, visibleCount, translations, hiddenTranslations,
     selectedMessages, selectionMode, isGroup, memberNames, globalSettings, forwardOutside,
     theyRecordingVoice, theyTyping, showScrollDownSetting, showScrollDown,
     scrollDownPos, newMsgBadge, scrollDownSize, otherParticipants, t, myUid, messageWidth, replySnapMs, messageLimitPref, scrollRef,
+    localMediaUrls, handleDownloadMedia,
   ]);
+
+  // Stable signature of media message ids so the auto-delete effects below only
+  // re-run when the actual set of media changes, not on every render.
+  const mediaSig = displayMessages
+    .map((m) => (["image", "video", "voice", "file"].includes(m.type) ? m.id : ""))
+    .filter(Boolean)
+    .join("|");
+
+  // Restore locally-cached media (from a previous session) into object URLs so
+  // it renders immediately instead of showing the "tap to download" placeholder.
+  useEffect(() => {
+    const autoDelete = globalSettings?.mediaAutoDelete === true;
+    if (!autoDelete || isGroup) return;
+    let cancelled = false;
+    (async () => {
+      const updates = {};
+      for (const m of displayMessages) {
+        if (!["image", "video", "voice", "file"].includes(m.type)) continue;
+        if (localMediaUrls[m.id]) continue;
+        const url = await getLocalMediaUrl(m.id);
+        if (url && !cancelled) updates[m.id] = url;
+      }
+      if (!cancelled && Object.keys(updates).length) {
+        setLocalMediaUrls((prev) => ({ ...prev, ...updates }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mediaSig, isGroup, globalSettings?.mediaAutoDelete, localMediaUrls]);
+
+  // Sender side: cache our own 1:1 media locally on first view so it survives
+  // after the recipient downloads and deletes the Supabase copy. We never delete
+  // the server copy from the sender's side.
+  useEffect(() => {
+    const autoDelete = globalSettings?.mediaAutoDelete === true;
+    if (!autoDelete || isGroup) return;
+    let cancelled = false;
+    (async () => {
+      for (const m of displayMessages) {
+        if (!["image", "video", "voice", "file"].includes(m.type)) continue;
+        if (m.senderId !== myUid) continue;
+        if (localMediaUrls[m.id]) continue;
+        if (!m.mediaURL) continue;
+        if (cachingInFlight.current.has(m.id)) continue;
+        const already = await hasCachedMedia(m.id);
+        if (already || cancelled) continue;
+        cachingInFlight.current.add(m.id);
+        try {
+          const res = await fetch(m.mediaURL);
+          if (!res.ok) { cachingInFlight.current.delete(m.id); continue; }
+          const blob = await res.blob();
+          if (cancelled) { cachingInFlight.current.delete(m.id); continue; }
+          await cacheMedia(m.id, blob);
+          const url = await getLocalMediaUrl(m.id);
+          if (url && !cancelled) setLocalMediaUrls((prev) => ({ ...prev, [m.id]: url }));
+        } catch {
+          // Sender keeps using the server URL until the recipient deletes it.
+        } finally {
+          cachingInFlight.current.delete(m.id);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mediaSig, isGroup, globalSettings?.mediaAutoDelete, localMediaUrls, myUid]);
 
   return (
     <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 20 }}>
