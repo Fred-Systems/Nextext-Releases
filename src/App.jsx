@@ -778,9 +778,11 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 </div>
                 {credError && <div style={{ color: "#FF3B30", fontSize: 12.5, marginTop: 4 }}>{credError}</div>}
                 {credSuccess && <div style={{ color: "#28A745", fontSize: 12.5, marginTop: 4 }}>{credSuccess}</div>}
-                <div style={{ padding: "8px 0 4px", fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>
-                  If these options don’t work on your device, use the web version at <a href={sysConfig?.webFallbackUrl || "https://nextext.pages.dev"} target="_blank" rel="noopener noreferrer" style={{ color: t.primary, textDecoration: "underline" }}>{sysConfig?.webFallbackUrl || "nextext.pages.dev"}</a> to change your password or email.
-                </div>
+                {appGlobalSettings?.hideLoginSecurityNote === false && (
+                  <div style={{ padding: "8px 0 4px", fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>
+                    If these options don’t work on your device, use the web version at <a href={sysConfig?.webFallbackUrl || "https://nextext.pages.dev"} target="_blank" rel="noopener noreferrer" style={{ color: t.primary, textDecoration: "underline" }}>{sysConfig?.webFallbackUrl || "nextext.pages.dev"}</a> to change your password or email.
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -798,9 +800,11 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                   </div>
                   <ChevronRight size={18} color={t.textMuted} />
                 </div>
-                <div style={{ padding: "8px 0 4px", fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>
-                  If these options don’t work on your device, use the web version at <a href={sysConfig?.webFallbackUrl || "https://nextext.pages.dev"} target="_blank" rel="noopener noreferrer" style={{ color: t.primary, textDecoration: "underline" }}>{sysConfig?.webFallbackUrl || "nextext.pages.dev"}</a> to change your password or email.
-                </div>
+                {appGlobalSettings?.hideLoginSecurityNote === false && (
+                  <div style={{ padding: "8px 0 4px", fontSize: 11, color: t.textMuted, lineHeight: 1.5 }}>
+                    If these options don’t work on your device, use the web version at <a href={sysConfig?.webFallbackUrl || "https://nextext.pages.dev"} target="_blank" rel="noopener noreferrer" style={{ color: t.primary, textDecoration: "underline" }}>{sysConfig?.webFallbackUrl || "nextext.pages.dev"}</a> to change your password or email.
+                  </div>
+                )}
               </>
             )}
           </SectionCard>

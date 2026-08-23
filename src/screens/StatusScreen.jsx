@@ -328,8 +328,8 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
     setShowPost(true);
   };
 
-  const handlePost = async () => {
-    if (postMode === "text" && !postText.trim()) return;
+   const handlePost = async () => {
+    if (postMode === "text" && !postText.trim() && !voiceBlob) return;
     if (postMode === "media" && !postMedia && postImages.length === 0 && !voiceBlob) {
       setPostError("Please select an image, video, or record something.");
       return;
@@ -549,11 +549,12 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       try {
         const res = await NextextNative.stopVoiceRecording();
         const b64 = res?.base64;
-        if (b64) {
-          const blob = base64ToBlob(b64, res?.mimeType || "audio/mp4");
-          setVoiceBlob(blob);
-          setVoiceDurationMs(res?.durationMs || 0);
-          setIsVoiceRecording(false);
+         if (b64) {
+           const blob = base64ToBlob(b64, res?.mimeType || "audio/mp4");
+           setVoiceBlob(blob);
+           setVoiceDurationMs(res?.durationMs || 0);
+           setIsVoiceRecording(false);
+           setPostMode("media");
           if (voiceRecorderRef.current?._nativeTickInterval) {
             clearInterval(voiceRecorderRef.current._nativeTickInterval);
             voiceRecorderRef.current._nativeTickInterval = null;
@@ -639,6 +640,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
         const blob = new Blob(chunks, { type: recorder.mimeType || "audio/mp4" });
         setVoiceBlob(blob);
         setVoiceDurationMs(Date.now() - startTime);
+        setPostMode("media");
       };
       recorder.start();
       voiceRecorderRef.current._tickInterval = setInterval(() => {
@@ -808,7 +810,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           relative to that ancestor, which made the old camera render tiny in a
           corner). Now it's truly full-screen. */}
         {showCamera && createPortal(
-          <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column" }}>
+          <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100dvh", maxWidth: "100vw", maxHeight: "100dvh", background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "calc(12px + var(--safe-top)) 16px 12px", minHeight: 44, flexShrink: 0, position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
               <X size={22} color="#fff" onClick={() => { setShowCamera(false); stopCameraStream(); }} style={{ cursor: "pointer" }} />
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
