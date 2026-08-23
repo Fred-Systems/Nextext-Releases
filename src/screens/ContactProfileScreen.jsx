@@ -385,16 +385,28 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
              <div style={{ marginTop: 16, padding: "0 16px" }}>
                <div style={{ fontSize: 13.5, fontWeight: 600, color: t.text, marginBottom: 8 }}>Notifications for {getContactDisplayName(contact) || realName}</div>
                <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8 }}>Override the global ping/vibration just for this person.</div>
-               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-                 {[["default", "Global"], ["short", "Short"], ["long", "Long"], ["heartbeat", "Heartbeat"], ["none", "No vibe"]].map(([k, l]) => (
-                   <div key={k} onClick={() => { setNotifVib(k); previewNotificationFeedback(VIBRATION_PRESETS[k] || null, notifSnd === "default" ? "default" : notifSnd); }} style={{ padding: "7px 12px", borderRadius: 16, fontSize: 12.5, fontWeight: notifVib === k ? 700 : 500, cursor: "pointer", background: notifVib === k ? t.primary : t.surface, color: notifVib === k ? t.bubbleMeText : t.text, border: `1px solid ${notifVib === k ? t.primary : t.border}` }}>{l}</div>
-                 ))}
-               </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                  {[["default", "Global"], ["none", "No sound"], ...PING_SOUNDS.map((s) => [s.id, s.label])].map(([k, l]) => (
-                    <div key={k} onClick={() => { setNotifSnd(k); previewNotificationFeedback(notifVib === "none" ? null : (VIBRATION_PRESETS[notifVib] || null), k); }} style={{ padding: "7px 12px", borderRadius: 16, fontSize: 12.5, fontWeight: notifSnd === k ? 700 : 500, cursor: "pointer", background: notifSnd === k ? t.primary : t.surface, color: notifSnd === k ? t.bubbleMeText : t.text, border: `1px solid ${notifSnd === k ? t.primary : t.border}` }}>{l}</div>
+<div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {[
+                    { key: "default", label: "Default (2 short)" },
+                    { key: "short", label: "Short (1 buzz)" },
+                    { key: "long", label: "Long (triple)" },
+                    { key: "heartbeat", label: "Heartbeat" },
+                    { key: "none", label: "No vibration" },
+                  ].map((o) => (
+                    <div key={o.key} onClick={() => { setNotifVib(o.key); previewNotificationFeedback(VIBRATION_PRESETS[o.key] || null, notifSnd === "default" ? "default" : notifSnd); }} style={{ padding: "7px 12px", borderRadius: 16, fontSize: 12.5, fontWeight: notifVib === o.key ? 700 : 500, cursor: "pointer", background: notifVib === o.key ? t.primary : t.surface, color: notifVib === o.key ? t.bubbleMeText : t.text, border: `1px solid ${notifVib === o.key ? t.primary : t.border}` }}>{o.label}</div>
                   ))}
                 </div>
+                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                   {[
+                     { key: "default", label: "Default system sound" },
+                     { key: "none", label: "No sound" },
+                     { key: "ping1", label: "Ping 1 (low)" },
+                     { key: "ping2", label: "Ping 2 (mid)" },
+                     { key: "ping3", label: "Ping 3 (high)" },
+                   ].map((o) => (
+                     <div key={o.key} onClick={() => { setNotifSnd(o.key); previewNotificationFeedback(notifVib === "none" ? null : (VIBRATION_PRESETS[notifVib] || null), o.key); }} style={{ padding: "7px 12px", borderRadius: 16, fontSize: 12.5, fontWeight: notifSnd === o.key ? 700 : 500, cursor: "pointer", background: notifSnd === o.key ? t.primary : t.surface, color: notifSnd === o.key ? t.bubbleMeText : t.text, border: `1px solid ${notifSnd === o.key ? t.primary : t.border}` }}>{o.label}</div>
+                   ))}
+                 </div>
                <button onClick={saveNotifPrefs} style={{ padding: "10px 16px", borderRadius: 8, background: t.primary, color: t.bubbleMeText, border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>Save notification settings</button>
              </div>
            )}

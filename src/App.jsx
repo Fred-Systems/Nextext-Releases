@@ -949,19 +949,21 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                     <input ref={lockedChatsPassRef} type="password" defaultValue={current} placeholder="New password…" style={{ flex: 1, padding: "9px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, boxSizing: "border-box" }} />
                     <button onClick={saveLockedChatsPass} style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{lockedChatsPassSaved ? "Saved ✓" : "Save"}</button>
                   </div>
-                  {lockedChatsPassError && <div style={{ color: "#FF3B30", fontSize: 12, marginTop: 6 }}>{lockedChatsPassError}</div>}
                 </>
               );
             })()}
           </div>
 
-          {/* Voice notes: store in database for auto-play/queue */}
+        </SectionCard>
+
+        {/* Voice notes storage setting */}
+        <SectionCard title="Voice Notes" emoji="🎤" sectionKey="voiceNotes">
           <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
             <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Store voice notes in database</div>
-            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>When ON, incoming voice notes are saved to the database so multiple notes queue up and play automatically. When OFF, they are treated as instant media (downloaded and server copy deleted).</div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>When ON, incoming voice notes are saved to the database so multiple notes queue up and play automatically. <strong>Note:</strong> If OFF, voice notes are auto-deleted after 3 days unless you download them (downloaded notes are cached locally and remain visible even after 3 days, marked as downloaded).</div>
             <div
               onClick={() => {
-                const next = !(globalSettings?.voiceNotesStoreInDb ?? false);
+                const next = !(globalSettings?.voiceNotesStoreInDb ?? true);
                 updateGlobalSettings({ voiceNotesStoreInDb: next }, myUid);
               }}
               style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", cursor: "pointer" }}
@@ -971,38 +973,12 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Save incoming voice notes for auto-play and queue</div>
               </div>
               <div
-                style={{ width: 46, height: 26, borderRadius: 13, background: (globalSettings?.voiceNotesStoreInDb ?? false) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: (globalSettings?.voiceNotesStoreInDb ?? true) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
               >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (globalSettings?.voiceNotesStoreInDb ?? false) ? 23 : 3, transition: "left 0.15s" }} />
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (globalSettings?.voiceNotesStoreInDb ?? true) ? 23 : 3, transition: "left 0.15s" }} />
               </div>
             </div>
           </div>
-
-          {/* WhatsApp-style instant media delete (user toggle, enabled by default) */}
-          {(globalSettings?.mediaAutoDeleteUserVisible !== false) && (
-            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Instant media delete (1:1 chats)</div>
-              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>When ON, media in one-on-one chats is downloaded to your device and the server copy is deleted immediately after. Group chats use the normal auto-delete timer. ON by default.</div>
-              <div
-                onClick={() => {
-                  const next = !(globalSettings?.mediaAutoDelete ?? true);
-                  updateGlobalSettings({ mediaAutoDelete: next }, myUid);
-                }}
-                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", cursor: "pointer" }}
-              >
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Instant media delete</div>
-                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Delete server copy after you download media in 1:1 chats</div>
-                </div>
-                <div
-                  style={{ width: 46, height: 26, borderRadius: 13, background: (globalSettings?.mediaAutoDelete ?? true) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-                >
-                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (globalSettings?.mediaAutoDelete ?? true) ? 23 : 3, transition: "left 0.15s" }} />
-                </div>
-              </div>
-            </div>
-          )}
-
         </SectionCard>
 
         {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}
