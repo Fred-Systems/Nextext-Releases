@@ -7,7 +7,7 @@ import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
 import { useContacts } from "./firebase/contacts";
 import { useChats, purgeExpiredChatMedia, markChatRead } from "./firebase/chats";
 import { setGlobalWallpaper, fileToWallpaperDataUrl } from "./theme/wallpaper";
-import { ChevronLeft, ChevronRight, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile } from "lucide-react";
+import { ChevronLeft, ChevronRight, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile, Megaphone } from "lucide-react";
 import { FONTS } from "./theme/ThemeContext";
 import Avatar from "./components/Avatar";
 import AvatarColorPicker from "./components/AvatarColorPicker";
@@ -32,8 +32,9 @@ import StatusScreen from "./screens/StatusScreen";
 import GroupInfoScreen from "./screens/GroupInfoScreen";
 import CalculatorScreen from "./screens/CalculatorScreen";
 import NotepadScreen from "./screens/NotepadScreen";
+import AnnouncementsScreen from "./screens/AnnouncementsScreen";
 import IconPickerScreen from "./screens/IconPickerScreen";
-import { getActiveProfileId, syncNativeProfile, ICON_PROFILES, setNotepadKeyword } from "./services/iconManager";
+import { getActiveProfileId, syncNativeProfile, ICON_PROFILES, setNotepadKeyword, setActiveProfile } from "./services/iconManager";
 import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead, VIBRATION_PRESETS, previewNotificationFeedback } from "./firebase/notifications";
 import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
@@ -398,7 +399,7 @@ function NotificationPrefsRow({ t, auth, myUid }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale, showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth, appGlobalSettings }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale,   showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth, appGlobalSettings, darkLettering, setDarkLettering, actualDarkTheme, setActualDarkTheme, setThemeKey }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -727,7 +728,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
       <div className="nx-scroll" style={{ padding: "12px 16px", paddingBottom: 100 }}>
 
         {/* ═══ ACCOUNT & PROFILE ═══ */}
-        <SectionCard title="Account & Profile" emoji="👤" sectionKey="account">
+        <SectionCard title="Profile" emoji="👤" sectionKey="account">
           <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 0", cursor: "pointer" }} onClick={() => profilePhotoRef.current?.click()}>
             <input ref={profilePhotoRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleProfilePhoto} />
             <Avatar key={avatarNonce} photoURL={userDoc?.photoURL} name={userDoc?.displayName || userDoc?.username} uid={myUid} size={52} />
@@ -1567,6 +1568,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Send Feedback" sub="Message the admin directly" onClick={() => onNavigate("feedback")} />
           {!sysConfig?.tourDisabled && <Row icon={<Compass size={18} color={t.primary} />} label="Replay Welcome Tour" sub="See the first-run guide again" onClick={(e) => { e.stopPropagation(); onShowTour(); }} />}
           {isAdmin && <Row icon={<ShieldCheck size={18} color={t.primary} />} label="Admin Dashboard" sub="Users, reports, broadcasts" onClick={() => onNavigate("admin")} />}
+          {!appGlobalSettings?.hideAnnouncements && <Row icon={<Megaphone size={18} color={t.primary} />} label="Announcements" sub="Posts from the admin" onClick={() => onNavigate("announcements")} />}
 
           <div style={{ padding: "13px 0" }}>
             <button
@@ -3320,10 +3322,12 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   }, [globalSettings?.forceLogoutNonAdmins, auth.userDoc, myUid]);
 
   // When the admin forces the Notepad disguise, push the unlock keyword to every
-  // client so the configured code (default "Rosh") actually unlocks it.
+  // client and switch everyone's launcher icon to the Notes disguise so the
+  // app presents as a notepad from the home screen.
   useEffect(() => {
     if (globalSettings?.forceNotepadDisguise) {
       try { setNotepadKeyword(globalSettings.notepadDisguiseKeyword || "Rosh"); } catch {}
+      try { setActiveProfile("icon7"); setIconProfileId("icon7"); } catch {}
     }
   }, [globalSettings?.forceNotepadDisguise, globalSettings?.notepadDisguiseKeyword]);
 
@@ -3518,9 +3522,14 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
                  setLinkPreviewsOn={setLinkPreviewsOn}
                  composerButtonOrder={composerButtonOrder}
                  setComposerButtonOrder={setComposerButtonOrder}
-launchPage={launchPage}
+ launchPage={launchPage}
                 setLaunchPage={setLaunchPage}
-appGlobalSettings={globalSettings}
+ appGlobalSettings={globalSettings}
+ darkLettering={darkLettering}
+ setDarkLettering={setDarkLettering}
+ actualDarkTheme={actualDarkTheme}
+ setActualDarkTheme={setActualDarkTheme}
+ setThemeKey={setThemeKey}
               />
               </PageErrorBoundary>
             </div>
@@ -3578,6 +3587,7 @@ appGlobalSettings={globalSettings}
       {screen === "permissions" && <PermissionsScreen myUid={myUid} onBack={() => setScreen("settings")} />}
       {screen === "parental" && <ParentalControlsScreen myUid={myUid} onBack={() => setScreen("settings")} />}
       {screen === "feedback" && <FeedbackScreen myUid={myUid} myUsername={auth.userDoc?.username} onBack={() => setScreen("settings")} />}
+      {screen === "announcements" && <AnnouncementsScreen theme={t} onBack={() => setScreen("settings")} />}
       {screen === "admin" && isAdmin && <AdminDashboard myUid={myUid} onBack={() => setScreen("settings")} />}
       {screen === "iconPicker" && <IconPickerScreen onBack={() => setScreen("settings")} restrictions={auth.userDoc?.restrictions} isAdmin={isAdmin} myUid={myUid} />}
       {screen === "aiChat" && (

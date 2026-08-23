@@ -245,6 +245,41 @@ export default function AdminDashboard({ myUid, onBack }) {
     }
   };
 
+  const [annTitle, setAnnTitle] = useState("");
+  const [annBody, setAnnBody] = useState("");
+  const [postingAnn, setPostingAnn] = useState(false);
+  const handlePostAnnouncement = async () => {
+    if (!annTitle.trim() || !annBody.trim()) return;
+    setPostingAnn(true);
+    setError("");
+    try {
+      const list = (settings?.announcements || []).slice();
+      list.push({
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        title: annTitle.trim(),
+        body: annBody.trim(),
+        authorName: settings?.adminName || "Admin",
+        createdAt: Date.now(),
+      });
+      await updateGlobalSettings({ announcements: list }, myUid);
+      setAnnTitle("");
+      setAnnBody("");
+    } catch (e) {
+      setError("Couldn't post announcement: " + e.message);
+    } finally {
+      setPostingAnn(false);
+    }
+  };
+  const handleDeleteAnnouncement = async (id) => {
+    setError("");
+    try {
+      const list = (settings?.announcements || []).filter((a) => a.id !== id);
+      await updateGlobalSettings({ announcements: list }, myUid);
+    } catch (e) {
+      setError("Couldn't delete announcement: " + e.message);
+    }
+  };
+
   const resetAllAIAccess = async () => {
     if (!window.confirm("Nuclear option: Revoke AI access for ALL users and wipe all pending requests? This cannot be undone.")) return;
     setError("");
@@ -1291,6 +1326,63 @@ export default function AdminDashboard({ myUid, onBack }) {
             <div style={{ fontSize: 11.5, color: t.textMuted }}>
               Current override: <strong>{sysConfig?.appVersionOverride || "None (using package.json version)"}</strong>
             </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Megaphone size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Announcements</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Write a post that every user sees in Settings → Announcements. Toggle below to hide the Announcements section from users.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideAnnouncements;
+              updateGlobalSettings({ hideAnnouncements: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideAnnouncements ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideAnnouncements ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideAnnouncements ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideAnnouncements ? "#fff" : t.text }}>
+                {settings?.hideAnnouncements ? "ANNOUNCEMENTS HIDDEN FROM USERS" : "Announcements visible to users"}
+              </span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 6 }}>Title</div>
+            <input
+              value={annTitle}
+              onChange={(e) => setAnnTitle(e.target.value)}
+              placeholder="e.g. Scheduled maintenance"
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 14, fontWeight: 600, marginBottom: 10 }}
+            />
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 6 }}>Message</div>
+            <textarea
+              value={annBody}
+              onChange={(e) => setAnnBody(e.target.value)}
+              placeholder="Write your announcement…"
+              rows={3}
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 14, resize: "vertical", marginBottom: 10 }}
+            />
+            <button
+              onClick={handlePostAnnouncement}
+              disabled={!annTitle.trim() || !annBody.trim() || postingAnn}
+              style={{ width: "100%", padding: "11px 16px", border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: (!annTitle.trim() || !annBody.trim() || postingAnn) ? "wait" : "pointer", opacity: (!annTitle.trim() || !annBody.trim()) ? 0.5 : 1, borderRadius: 10 }}
+            >
+              {postingAnn ? "Posting…" : "Post Announcement"}
+            </button>
+            {(settings?.announcements || []).length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted, marginBottom: 8 }}>Published ({settings.announcements.length})</div>
+                {(settings.announcements || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map((a) => (
+                  <div key={a.id} style={{ background: t.bg, borderRadius: 10, padding: "10px 12px", marginBottom: 8, border: `1px solid ${t.border}` }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontWeight: 700, fontSize: 13.5, color: t.text, flex: 1 }}>{a.title}</span>
+                      <span onClick={() => handleDeleteAnnouncement(a.id)} style={{ fontSize: 12, color: "#FF3B30", fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>Delete</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4, whiteSpace: "pre-wrap" }}>{a.body}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Web fallback URL for Change password/email */}
