@@ -417,6 +417,7 @@ export default function VoiceToTextButton({ myUid, onResult, onAutoSend, autoSen
           display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.88)", color: "#fff",
           padding: "7px 10px", borderRadius: 12, fontSize: 12.5, zIndex: 60, whiteSpace: "nowrap",
           boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+          maxWidth: "calc(100vw - 24px)", boxSizing: "border-box",
         }}>
           <span>Auto-sending in {pendingSend.left}s</span>
           <button onClick={cancelAutoSend} style={{ background: color, color: "#fff", border: "none", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}>Cancel</button>

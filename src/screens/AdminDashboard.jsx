@@ -820,8 +820,32 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
             </div>
 
+            {/* Per-type "Save to device" download buttons */}
+            <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>Hide "Save to device" buttons</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                Hide the download button for specific media types in conversations.
+              </div>
+              {[
+                { key: "hideDownloadVoice", label: "Voice notes" },
+                { key: "hideDownloadImages", label: "Pictures" },
+                { key: "hideDownloadVideos", label: "Videos" },
+                { key: "hideDownloadFiles", label: "Other files" },
+              ].map((row) => {
+                const on = !!settings?.[row.key];
+                return (
+                  <div key={row.key} onClick={() => updateGlobalSettings({ [row.key]: !on }, myUid)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 10, background: on ? "#34C759" : t.primaryLight, cursor: "pointer", marginTop: 6 }}>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: on ? "#fff" : t.text }}>{row.label}</span>
+                    <div style={{ width: 42, height: 24, borderRadius: 12, background: on ? "#fff" : t.border, position: "relative", flexShrink: 0 }}>
+                      <div style={{ width: 18, height: 18, borderRadius: "50%", background: on ? "#34C759" : "#fff", position: "absolute", top: 3, left: on ? 21 : 3, transition: "left 0.15s" }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
            </div>
-         )}
+          )}
           <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>
             {results.map((u) => (
               <div key={u.uid} onClick={() => setSelectedUser(u)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
@@ -1254,26 +1278,6 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
               <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideShareButton ? "#fff" : t.text }}>
                 {settings?.hideShareButton ? "Share Button HIDDEN" : "Share Button Visible"}
-              </span>
-            </div>
-          </div>
-          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <Terminal size={18} color="#8E8E93" />
-              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Hide On-Device DIAG Log</span>
-            </div>
-            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
-              Hide the copyable DIAG log overlay that appears on screen (used to diagnose device issues when USB debugging is blocked).
-            </div>
-            <div onClick={() => {
-              const newVal = !settings?.hideDiagLog;
-              updateGlobalSettings({ hideDiagLog: newVal }, myUid);
-            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideDiagLog ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
-              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideDiagLog ? "#FF3B30" : t.border, position: "relative" }}>
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideDiagLog ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideDiagLog ? "#fff" : t.text }}>
-                {settings?.hideDiagLog ? "DIAG Log HIDDEN" : "DIAG Log Visible"}
               </span>
             </div>
           </div>

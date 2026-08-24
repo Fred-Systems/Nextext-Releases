@@ -535,6 +535,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   // Local (device-resident) media URLs for the WhatsApp-style auto-delete mode.
   // Keyed by message id -> object URL serving the cached Blob.
   const [localMediaUrls, setLocalMediaUrls] = useState({});
+  const [imgErrorIds, setImgErrorIds] = useState(() => new Set());
   const cachingInFlight = useRef(new Set());
   const [chatId, setChatId] = useState(initialChatId);
   const [input, setInput] = useState("");
@@ -2627,31 +2628,41 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     }
   }, [setLocalMediaUrls, setSendError, chatId]);
 
-  // Small "save to device" button rendered in the corner of a media bubble.
-  const renderDownloadCorner = (m) => (
-    <button
-      onClick={(e) => { e.stopPropagation(); saveMediaToDevice(m); }}
-      title="Save to device"
-      style={{
-        position: "absolute",
-        top: 6,
-        right: 6,
-        zIndex: 3,
-        width: 30,
-        height: 30,
-        borderRadius: "50%",
-        border: "none",
-        background: "rgba(0,0,0,0.45)",
-        color: "#fff",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-      }}
-    >
-      <Download size={16} />
-    </button>
-  );
+  // Per-media-type "save to device" visibility, controlled by admin toggles.
+  const shouldShowDownload = (type) => {
+    if (type === "voice") return !globalSettings?.hideDownloadVoice;
+    if (type === "image") return !globalSettings?.hideDownloadImages;
+    if (type === "video") return !globalSettings?.hideDownloadVideos;
+    if (type === "file") return !globalSettings?.hideDownloadFiles;
+    return false;
+  };
+  // Small "save to device" button rendered BELOW the media bubble (it must not
+  // overlap the voice waveform / photo / video).
+  const renderDownloadBelow = (m) => {
+    if (!shouldShowDownload(m.type)) return null;
+    return (
+      <button
+        onClick={(e) => { e.stopPropagation(); saveMediaToDevice(m); }}
+        title="Save to device"
+        style={{
+          marginTop: 4,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "5px 10px",
+          borderRadius: 8,
+          border: "none",
+          background: m.senderId === myUid ? "rgba(255,255,255,0.18)" : t.primaryLight,
+          color: m.senderId === myUid ? "#fff" : t.primary,
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        <Download size={14} /> Save to device
+      </button>
+    );
+  };
 
   const renderBubble = (m) => {
     const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays ?? 3);
@@ -2670,13 +2681,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     // Store pipeline info in message metadata for proper display after admin switches pipeline
     const voicePipelineUsed = m.metadata?.voicePipeline === true;
     const voiceStoredInDb = m.metadata?.voiceStoredInDb === true;
-    
-    // Determine if voice note should show expiry
-    const voiceNoteShouldShowExpiry = m.type === "voice" && (voiceNotesStoredInDb || voiceStoredInDb);
-    const voiceNoteAutoDelete = voiceNotesStoredInDb && !voicePipelineUsed;
-    const voiceNoteSuppressExpiry = voiceNoteAutoDelete && !isGroup;
-    const voiceNoteLocalSrc = (voiceNoteAutoDelete && !isGroup) ? localMediaUrls[m.id] : null;
-    const voiceNoteNeedDownload = (voiceNoteAutoDelete && !isGroup) && !voiceNoteLocalSrc && m.senderId !== myUid;
+
+    // Ephemeral (WhatsApp-style pipeline) notes must be downloaded and show NO
+    // expiry. DB-stored notes (3-day mode) play directly and DO show the
+    // "Deletes in X days" line.
+    const voiceNoteEphemeral = voiceInPipeline || voicePipelineUsed;
+    const voiceNoteLocalSrc = (voiceNoteEphemeral && !isGroup) ? localMediaUrls[m.id] : null;
+    const voiceNoteNeedDownload = (voiceNoteEphemeral && !isGroup) && !voiceNoteLocalSrc && m.senderId !== myUid;
+    const voiceNoteSuppressExpiry = voiceNoteEphemeral && !isGroup;
+    const voiceNoteShouldShowExpiry = m.type === "voice" && (voiceNotesStoredInDb || voiceStoredInDb) && !voiceNoteEphemeral;
     if (m.deletedForEveryone) return <div style={{ fontSize: 13, fontStyle: "italic", opacity: 0.6 }}>This message was deleted</div>;
     if (m.type === "poll") return <PollBubble t={t} mine={m.senderId === myUid} poll={m.poll} myUid={myUid} onVote={(optId) => handleVote(m, optId)} textScale={chatTextScale} />;
 
@@ -2780,7 +2793,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (m.type === "image") return (
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
-        {needDownload ? (
+        {needDownload || imgErrorIds.has(m.id) ? (
           <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: t.textMuted }}>
             {m.metadata?.blurData && (
               <img src={m.metadata.blurData} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(12px)", position: "absolute", top: 0, left: 0, pointerEvents: "none" }} />
@@ -2792,10 +2805,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </div>
         ) : (
           <div onClick={(e) => { e.stopPropagation(); setFullscreenImage(localSrc || m.mediaURL); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)", position: "relative" }}>
-            <img src={localSrc || m.mediaURL} alt="Sent photo" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-            {renderDownloadCorner(m)}
+            <img src={localSrc || m.mediaURL} alt="Sent photo" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
           </div>
         )}
+        {renderDownloadBelow(m)}
         {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.text}</div>}
         {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
@@ -2803,7 +2816,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (m.type === "video") return (
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
-        {needDownload ? (
+        {needDownload || imgErrorIds.has(m.id) ? (
           <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: t.textMuted }}>
             {m.metadata?.blurData && (
               <img src={m.metadata.blurData} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", filter: "blur(12px)", position: "absolute", top: 0, left: 0, pointerEvents: "none" }} />
@@ -2815,10 +2828,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </div>
         ) : (
           <div style={{ width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)", position: "relative" }}>
-            <video src={localSrc || m.mediaURL} controls className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-            {renderDownloadCorner(m)}
+            <video src={localSrc || m.mediaURL} controls className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
           </div>
         )}
+        {renderDownloadBelow(m)}
         {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.text}</div>}
         {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
@@ -2834,7 +2847,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         ) : (
           <div style={{ position: "relative" }}>
             <VoicePlayer url={voiceNoteLocalSrc || m.mediaURL} duration={m.mediaDurationSeconds} mine={m.senderId === myUid} t={t} msgId={m.id} onEnded={handleVoiceEnded} autoPlayToken={voiceAutoPlayNonce} isAutoPlayTarget={m.id === voiceAutoPlayId} nowPlayingId={nowPlayingId} onPlayStart={handleVoicePlayStart} />
-            {renderDownloadCorner(m)}
+            {renderDownloadBelow(m)}
           </div>
         )}
         {!voiceNoteNeedDownload && transcriptTextFor(m) ? (
@@ -2874,7 +2887,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 <div style={{ fontSize: 11 * chatTextScale, opacity: 0.7 }}>{m.fileSizeBytes ? `${(m.fileSizeBytes / 1024 / 1024).toFixed(1)} MB` : ""}</div>
               </div>
             </a>
-            {renderDownloadCorner(m)}
+            {renderDownloadBelow(m)}
           </div>
         )}
         {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}

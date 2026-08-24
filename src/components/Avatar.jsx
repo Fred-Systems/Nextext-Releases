@@ -153,10 +153,10 @@ export default React.memo(function Avatar({ photoURL, name, uid, size = 52, styl
         overflow: "hidden", ...style,
       }}
     >
-      {effectivePhotoURL ? (
-        <img src={effectivePhotoURL} alt={name || "avatar"} className="nx-avatar-thumb" style={{ width: size, height: size, objectFit: "cover" }} />
-      ) : isAI ? (
+      {isAI ? (
         (() => { const a = aiAvatarInner(aiStyle, size, fontSize); return <div style={a.style}>{a.label}</div>; })()
+      ) : effectivePhotoURL ? (
+        <img src={effectivePhotoURL} alt={name || "avatar"} className="nx-avatar-thumb" style={{ width: size, height: size, objectFit: "cover" }} />
       ) : (
         <div style={{ width: size, height: size, borderRadius: "50%", ...bgStyle, display: "flex", alignItems: "center", justifyContent: "center", fontSize, fontWeight: 700, color: "#fff", userSelect: "none" }}>
           {initial}

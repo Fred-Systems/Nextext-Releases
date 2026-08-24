@@ -2042,23 +2042,6 @@ function AppShell({ appLocked, setAppLocked }) {
     return () => document.removeEventListener("visibilitychange", onVisibility);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // DIAG overlay: surfaces the latest DIAG line on-device (USB debugging is
-  // often blocked) so it can be copied and pasted. Admins can hide it globally.
-  const [diagLine, setDiagLine] = useState("");
-  const [showDiag, setShowDiag] = useState(true);
-  useEffect(() => {
-    const id = setInterval(() => {
-      try {
-        const arr = window.__nxCapturedErrors || [];
-        let last = "";
-        for (let i = arr.length - 1; i >= 0; i--) {
-          if (arr[i] && typeof arr[i] === "string" && arr[i].startsWith("DIAG")) { last = arr[i]; break; }
-        }
-        if (last) setDiagLine(last);
-      } catch { /* diagnostics must never crash the app */ }
-    }, 500);
-    return () => clearInterval(id);
-  }, []);
   const [screen, setScreen] = useState("list");
   // App-icon / app-name disguise gate. Reads the active profile from
   // iconManager on every render. When the profile is a "calculator" or
@@ -2324,11 +2307,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // until I tap Settings" cold start. Only fires once per user session.
   const [coldStartComplete, setColdStartComplete] = useState(false);
   // Temporary boot diagnostic (v1.6.21): shows the real tab state for 12s so a
-  // persisted "opens on Groups" bug can be confirmed/reproduced. Tap to dismiss.
-  const [showBootDiag, setShowBootDiag] = useState(false);
-  const [pagerDebug, setPagerDebug] = useState("");
-  useEffect(() => { const t = setTimeout(() => setShowBootDiag(false), 120000); return () => clearTimeout(t); }, []);
-  // While true, the in-app splash stays fully opaque. The awake-kick releases
+   const [pagerDebug, setPagerDebug] = useState("");
+   // While true, the in-app splash stays fully opaque. The awake-kick releases
   // it once the cold-start repair has run, so the Settings-trip recovery
   // happens invisibly behind the splash instead of flashing the screen.
   // Hold the splash long enough for the awake-kick cold-start repair to run
@@ -3799,12 +3779,6 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
         }
       })()}
 
-      {showBootDiag && !globalSettings?.hideDiagLog && (
-        <div onClick={() => setShowBootDiag(false)} style={{ position: "fixed", top: 6, left: 6, right: 6, zIndex: 1000001, background: "rgba(0,0,0,0.82)", color: "#5dff9b", fontSize: 10, lineHeight: 1.4, padding: "6px 9px", borderRadius: 8, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
-          {`BOOT DIAG — screen=${screen} tab=${activeNavTab} idx=${currentTabIndex} page=${pageIndex} ei=${effectiveIndex} tabs=[${orderedTabs.join(",")}]\n${pagerDebug}\nhideNav=${hideNav} story=${storyViewerOpen}`}
-        </div>
-      )}
-
       {askAIGlobal && (
         <AskAIPanel
           myUid={auth.user?.uid}
@@ -3890,16 +3864,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           error={updateStatus || null}
         />
       )}
+      {/* DIAG log feature removed */}
 
-      {!globalSettings?.hideDiagLog && showDiag && diagLine && createPortal(
-        <div style={{ position: "fixed", left: 6, right: 6, bottom: 6, zIndex: 999999, background: "rgba(0,0,0,0.82)", color: "#39FF14", fontFamily: "monospace", fontSize: 10.5, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(57,255,20,0.5)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-            <span style={{ fontWeight: 700, letterSpacing: 0.5 }}>DIAG LOG — copy &amp; send</span>
-            <span style={{ cursor: "pointer", color: "#fff", padding: "0 4px" }} onClick={() => setShowDiag(false)}>✕</span>
-          </div>
-          <textarea readOnly value={diagLine} onFocus={(e) => e.currentTarget.select()} style={{ width: "100%", height: 42, background: "#000", color: "#39FF14", fontFamily: "monospace", fontSize: 9.5, border: "none", outline: "none", resize: "none" }} />
-          <button onClick={() => { try { navigator.clipboard && navigator.clipboard.writeText(diagLine); } catch {} }} style={{ marginTop: 4, width: "100%", padding: "5px 0", borderRadius: 6, border: "1px solid rgba(57,255,20,0.5)", background: "transparent", color: "#39FF14", fontSize: 11, cursor: "pointer" }}>Copy</button>
-        </div>, document.body)}
     </div>
     </>
   );
