@@ -350,6 +350,7 @@ function NotificationPrefsRow({ t, auth, myUid }) {
   const [vibOn, setVibOn] = useState(() => localStorage.getItem("nextext_notif_vibrate_on") !== "false");
   const [soundOn, setSoundOn] = useState(() => localStorage.getItem("nextext_notif_sound_on") !== "false");
   const [darkNotif, setDarkNotif] = useState(() => localStorage.getItem("nextext_notif_dark") || "off");
+  const [hideSaveButton, setHideSaveButton] = useState(() => localStorage.getItem("nextext_hide_save_button") === "on");
   // Mirror notification prefs into the Firestore user doc so the FCM worker can
   // honour them for background (app-killed) notifications, not just foreground.
   const syncNotif = (patch) => {
@@ -418,7 +419,7 @@ function NotificationPrefsRow({ t, auth, myUid }) {
         ]}
         onPick={(k) => { setDarkNotif(k); try { localStorage.setItem("nextext_notif_dark", k); } catch {} syncNotif({ notifDark: k }); }}
       />
-      <div style={{ padding: "12px 16px", borderTop: `1px solid ${t.border}` }}>
+      <Toggle label="Show 'Save to device' button" value={!hideSaveButton} onChange={(v) => { setHideSaveButton(!v); try { localStorage.setItem("nextext_hide_save_button", !v ? "on" : "off"); } catch {} }} />      <div style={{ padding: "12px 16px", borderTop: `1px solid ${t.border}` }}>
         <div onClick={async () => {
           const p = vibOn ? (VIBRATION_PRESETS[vibKey] || VIBRATION_PRESETS.default) : null;
           const s = soundOn ? soundKey : "none";

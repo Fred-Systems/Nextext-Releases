@@ -331,9 +331,7 @@ public class NextextNativePlugin extends Plugin {
                     builder = new android.app.Notification.Builder(ctx);
                 }
                 builder.setSmallIcon(R.drawable.ic_stat_nextext)
-                    .setColor(dark && android.os.Build.VERSION.SDK_INT >= 26
-                        ? ("lettering".equals(darkMode) ? 0xFFF5F5F5 : 0xFF121217)
-                        : 0xFF10B981)
+                    .setColor(0xFF10B981)
                     .setContentTitle(title)
                     .setContentText(body)
                     .setAutoCancel(true)
@@ -967,6 +965,53 @@ public class NextextNativePlugin extends Plugin {
             } catch (final Exception e) {
                 if (temp != null) { try { temp.delete(); } catch (Exception ignored) {} }
                 call.reject("Download failed: " + (e.getMessage() == null ? String.valueOf(e) : e.getMessage()));
+            }
+        }).start();
+    }
+
+    // Saves an arbitrary media blob (base64) into the device's Downloads/NexText
+    // folder via MediaStore. Used by the in-chat "Save to device" button, which
+    // the WebView anchor-download path cannot perform on Android.
+    @PluginMethod
+    public void saveToDownloads(final PluginCall call) {
+        final String b64 = call.getString("data");
+        final String fileName = call.getString("fileName");
+        final String mimeType = call.getString("mimeType", "application/octet-stream");
+        if (b64 == null || b64.isEmpty() || fileName == null || fileName.isEmpty()) {
+            call.reject("Missing data or fileName");
+            return;
+        }
+        new Thread(() -> {
+            try {
+                byte[] bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+                String savedPath;
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    android.content.ContentValues cv = new android.content.ContentValues();
+                    cv.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName);
+                    cv.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType);
+                    cv.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/NexText");
+                    Uri item = getContext().getContentResolver().insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+                    if (item == null) { call.reject("Could not create file in Downloads"); return; }
+                    java.io.OutputStream os = getContext().getContentResolver().openOutputStream(item);
+                    os.write(bytes);
+                    os.flush();
+                    os.close();
+                    savedPath = item.toString();
+                } else {
+                    File dl = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS);
+                    if (dl == null || !dl.exists()) dl.mkdirs();
+                    File dest = new File(dl, fileName);
+                    java.io.FileOutputStream fos = new java.io.FileOutputStream(dest);
+                    fos.write(bytes);
+                    fos.flush();
+                    fos.close();
+                    savedPath = dest.getAbsolutePath();
+                }
+                JSObject ret = new JSObject();
+                ret.put("path", savedPath);
+                call.resolve(ret);
+            } catch (final Exception e) {
+                call.reject("Save failed: " + (e.getMessage() == null ? String.valueOf(e) : e.getMessage()));
             }
         }).start();
     }

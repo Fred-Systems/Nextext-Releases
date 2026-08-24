@@ -7,6 +7,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { useStatusViewers } from "../firebase/status";
 import { getOrCreateDirectChat, sendTextMessage } from "../firebase/chats";
 import Avatar from "../components/Avatar";
+import ZoomableMedia from "../components/ZoomableMedia";
 
 const DEFAULT_DURATION_MS = 5000;
 const QUICK_REACTION_EMOJIS = ["❤️", "😂", "😮", "🔥", "👍", "🙏"];
@@ -432,21 +433,28 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
         {current.bgAudioURL && <audio ref={bgAudioRef} src={current.bgAudioURL} loop />}
         {current.mediaType === "video" && current.mediaURL ? (
           <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-            <video ref={videoRef} src={current.mediaURL} playsInline loop={false}
-              onLoadedMetadata={(e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); }}
-              onTimeUpdate={(e) => {
-                if (!current?.waitForVideo) return;
-                const v = e.target;
-                if (v.duration && v.currentTime != null) {
-                  progressRef.current = (v.currentTime / v.duration) * 100;
-                  if (barRef.current) {
-                    barRef.current.style.transition = "none";
-                    barRef.current.style.width = `${progressRef.current}%`;
+            <ZoomableMedia
+              src={current.mediaURL}
+              type="video"
+              mediaRef={videoRef}
+              onTap={() => setPaused((p) => !p)}
+              videoProps={{
+                loop: false,
+                onLoadedMetadata: (e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); },
+                onTimeUpdate: (e) => {
+                  if (!current?.waitForVideo) return;
+                  const v = e.target;
+                  if (v.duration && v.currentTime != null) {
+                    progressRef.current = (v.currentTime / v.duration) * 100;
+                    if (barRef.current) {
+                      barRef.current.style.transition = "none";
+                      barRef.current.style.width = `${progressRef.current}%`;
+                    }
                   }
-                }
+                },
+                onEnded: () => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); },
               }}
-              onEnded={() => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); }}
-              style={{ width: "100%", height: "100%", borderRadius: 8, objectFit: "contain" }} />
+            />
             {(current.textOverlay || current.text) && (
               <div style={{ position: "absolute", bottom: 16, left: 12, right: 12, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
                 {current.textOverlay || current.text}
@@ -455,7 +463,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
           </div>
         ) : current.mediaType === "image" && current.mediaURL ? (
           <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-            <img src={current.mediaURL} alt="Status" style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 8 }} />
+            <ZoomableMedia src={current.mediaURL} type="image" onTap={() => setPaused((p) => !p)} />
             {(current.textOverlay || current.text) && (
               <div style={{ position: "absolute", bottom: 16, left: 12, right: 12, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
                 {current.textOverlay || current.text}
@@ -493,14 +501,16 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       {!showViewers && (
         <div style={{ position: "absolute", inset: 0, display: "flex", zIndex: 5 }}>
           <div onClick={goBack} style={{ flex: 1, cursor: "pointer" }} />
-          <div
-            onMouseDown={() => setPaused(true)}
-            onMouseUp={() => setPaused(false)}
-            onMouseLeave={() => { if (paused) setPaused(false); }}
-            onTouchStart={() => setPaused(true)}
-            onTouchEnd={() => setPaused(false)}
-            style={{ flex: 1, cursor: "pointer" }}
-          />
+          {(current.mediaType !== "image" && current.mediaType !== "video") && (
+            <div
+              onMouseDown={() => setPaused(true)}
+              onMouseUp={() => setPaused(false)}
+              onMouseLeave={() => { if (paused) setPaused(false); }}
+              onTouchStart={() => setPaused(true)}
+              onTouchEnd={() => setPaused(false)}
+              style={{ flex: 1, cursor: "pointer" }}
+            />
+          )}
           <div onClick={() => advanceRef.current?.()} style={{ flex: 1, cursor: "pointer" }} />
         </div>
       )}

@@ -23,6 +23,7 @@ import { db } from "../firebase/config";
 import { registerPlugin } from "@capacitor/core";
 import { Capacitor } from "@capacitor/core";
 import Avatar, { getLocalPhotoOverride } from "../components/Avatar";
+import ZoomableMedia from "../components/ZoomableMedia";
 import { extractFirstUrl, fetchLinkPreview, isLinkPreviewEnabled } from "../utils/linkPreview";
 import { playVoicePing, playVoiceEndChime } from "../utils/pingSounds";
 import { useGlobalSettings } from "../firebase/config-settings";
@@ -31,7 +32,31 @@ import { getSystemInsets } from "../utils/systemInsets";
 const NextextNative = registerPlugin("NextextNative");
 const NEX_TEXT_FOLDER = "NexText";
 
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => {
+      const result = fr.result || "";
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    fr.onerror = reject;
+    fr.readAsDataURL(blob);
+  });
+}
+
 async function saveToNexTextFolder(fileName, blob, mimeType) {
+  const NextextNative = (typeof window !== "undefined" && window.Capacitor?.Plugins?.NextextNative) || null;
+  const isNative = typeof window !== "undefined" && window.Capacitor?.isNativePlatform && window.Capacitor.isNativePlatform();
+  if (isNative && NextextNative && NextextNative.saveToDownloads) {
+    try {
+      const b64 = await blobToBase64(blob);
+      await NextextNative.saveToDownloads({ data: b64, fileName, mimeType: mimeType || blob.type || "application/octet-stream" });
+      return;
+    } catch (e) {
+      console.error("native save failed, falling back to web download", e);
+    }
+  }
   try {
     if (Capacitor.getPlatform() === "web" && typeof window.showDirectoryPicker === "function") {
       const handle = await window.showDirectoryPicker({ mode: "readwrite" });
@@ -524,6 +549,8 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
     </div>
   );
 }
+
+// Pinch-to-zoom + drag-to-pan media viewer is imported from ZoomableMedia.
 
 export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, recordingBarScale = 1, userDoc, emojiAnimations = true, emojiBigOn = true, onOpenAskAI }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth, composerButtonOrder } = useTheme();
@@ -2628,8 +2655,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     }
   }, [setLocalMediaUrls, setSendError, chatId]);
 
-  // Per-media-type "save to device" visibility, controlled by admin toggles.
+  // Per-media-type "save to device" visibility, controlled by admin toggles,
+  // plus a per-user setting (localStorage) to hide the button entirely.
+  const hideSaveButton = typeof window !== "undefined" && localStorage.getItem("nextext_hide_save_button") === "on";
   const shouldShowDownload = (type) => {
+    if (hideSaveButton) return false;
     if (type === "voice") return !globalSettings?.hideDownloadVoice;
     if (type === "image") return !globalSettings?.hideDownloadImages;
     if (type === "video") return !globalSettings?.hideDownloadVideos;
@@ -2680,16 +2710,18 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     // For voice notes: check if they were sent through the pipeline or stored in DB
     // Store pipeline info in message metadata for proper display after admin switches pipeline
     const voicePipelineUsed = m.metadata?.voicePipeline === true;
-    const voiceStoredInDb = m.metadata?.voiceStoredInDb === true;
 
-    // Ephemeral (WhatsApp-style pipeline) notes must be downloaded and show NO
-    // expiry. DB-stored notes (3-day mode) play directly and DO show the
-    // "Deletes in X days" line.
+    // Ephemeral (WhatsApp-style pipeline) notes must be downloaded and play
+    // from the local cache. The "Deletes in X days" badge is driven by the
+    // server purge policy (mediaExpiryDays) rather than the storage mode, so it
+    // shows for DB-stored notes AND for pipeline notes that still expire on the
+    // server — only the instant auto-delete (mediaAutoDelete) mode hides it.
     const voiceNoteEphemeral = voiceInPipeline || voicePipelineUsed;
     const voiceNoteLocalSrc = (voiceNoteEphemeral && !isGroup) ? localMediaUrls[m.id] : null;
     const voiceNoteNeedDownload = (voiceNoteEphemeral && !isGroup) && !voiceNoteLocalSrc && m.senderId !== myUid;
-    const voiceNoteSuppressExpiry = voiceNoteEphemeral && !isGroup;
-    const voiceNoteShouldShowExpiry = m.type === "voice" && (voiceNotesStoredInDb || voiceStoredInDb) && !voiceNoteEphemeral;
+    const voiceNoteIsAutoDelete = autoDelete && !isGroup;
+    const expiryDays = globalSettings?.mediaExpiryDays ?? 3;
+    const voiceNoteShouldShowExpiry = m.type === "voice" && expiryDays > 0 && !voiceNoteIsAutoDelete;
     if (m.deletedForEveryone) return <div style={{ fontSize: 13, fontStyle: "italic", opacity: 0.6 }}>This message was deleted</div>;
     if (m.type === "poll") return <PollBubble t={t} mine={m.senderId === myUid} poll={m.poll} myUid={myUid} onVote={(optId) => handleVote(m, optId)} textScale={chatTextScale} />;
 
@@ -2862,7 +2894,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </button>
         ))}
         {!voiceNoteNeedDownload && transcriptErrors[m.id] && <div style={{ fontSize: 11, color: "#FF3B30", marginTop: 3, maxWidth: 230, lineHeight: 1.3 }}>{transcriptErrors[m.id]}</div>}
-        {!voiceNoteSuppressExpiry && voiceNoteShouldShowExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
+        {voiceNoteShouldShowExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
         {/* Show "Downloaded" indicator for downloaded voice notes */}
         {voiceNoteLocalSrc && !voiceNoteNeedDownload && <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2, color: "#28A745", fontWeight: 600 }}>Downloaded · Saved to NexText</div>}
       </div>
@@ -3730,7 +3762,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       {fullscreenImage && createPortal(
         <div className="nextext-overlay-backdrop" style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.95)", zIndex: 999999, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }} onClick={() => setFullscreenImage(null)}>
           <div style={{ position: "absolute", top: 14, right: 14, display: "flex", gap: 14, zIndex: 61 }}>
-            <div onClick={async (e) => { e.stopPropagation(); try { const res = await fetch(fullscreenImage); const blob = await res.blob(); const blobUrl = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = blobUrl; a.download = `nextext-image-${Date.now()}.jpg`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(blobUrl); } catch { window.open(fullscreenImage, "_blank"); } }} style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <div onClick={async (e) => { e.stopPropagation(); try { const blob = await fetch(fullscreenImage).then((r) => r.blob()); await saveToNexTextFolder(`nextext-image-${Date.now()}.jpg`, blob, "image/jpeg"); } catch { try { window.open(fullscreenImage, "_blank"); } catch {} } }} style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </div>
             <div onClick={(e) => { e.stopPropagation(); setFullscreenImage(null); }} style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
@@ -3738,7 +3770,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             </div>
           </div>
           <div style={{ flex: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 16px 30px", boxSizing: "border-box" }}>
-            <img src={fullscreenImage} onClick={(e) => e.stopPropagation()} style={{ maxWidth: "100%", maxHeight: "100%", width: "auto", height: "auto", objectFit: "contain", borderRadius: 8 }} />
+            <ZoomableMedia src={fullscreenImage} type="image" onTap={() => setFullscreenImage(null)} />
           </div>
         </div>,
         document.body
