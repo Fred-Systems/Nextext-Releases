@@ -956,11 +956,11 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
         </SectionCard>
 
-        {/* Voice notes storage setting */}
+        {!(globalSettings?.hideVoiceNotesSettings === true) && (
         <SectionCard title="Voice Notes" emoji="🎤" sectionKey="voiceNotes">
           <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
             <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Store voice notes in database</div>
-            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>When ON, incoming voice notes are saved to the database so multiple notes queue up and play automatically. <strong>Note:</strong> If OFF, voice notes are auto-deleted after 3 days unless you download them (downloaded notes are cached locally and remain visible even after 3 days, marked as downloaded).</div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>When ON, incoming voice notes are saved to the database so multiple notes queue up and play automatically. <strong>Note:</strong> If OFF, voice notes use the instant delete pipeline (user must download each). Downloaded notes are cached locally and remain visible even after 3 days, marked as downloaded. <em>Tip: Transcription of a voice note stays even after 3 days.</em></div>
             <div
               onClick={() => {
                 const next = !(globalSettings?.voiceNotesStoreInDb ?? true);
@@ -978,8 +978,89 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (globalSettings?.voiceNotesStoreInDb ?? true) ? 23 : 3, transition: "left 0.15s" }} />
               </div>
             </div>
+
+            {/* Voice note chimes */}
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+                <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Voice note chimes</span>
+                <div
+                  onClick={() => { const next = !voiceEndChimeOn; setVoiceEndChimeOn(next); localStorage.setItem("nextext_voice_end_chime", next ? "on" : "off"); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: voiceEndChimeOn ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: voiceEndChimeOn ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            </div>
+            {voiceEndChimeOn && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>Special "2+ voice notes in a row" chime</span>
+                <div
+                  onClick={() => { const next = !voiceStreakChimeOn; setVoiceStreakChimeOn(next); localStorage.setItem("nextext_voice_streak_chime", next ? "on" : "off"); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: voiceStreakChimeOn ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: voiceStreakChimeOn ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            )}
+            {voiceEndChimeOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>A chime plays after every voice note. With the special 2+ chime on (default), a brighter completion chime plays when a streak of 2+ notes ends.</div>}
+            {voiceEndChimeOn && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                {PING_SOUNDS.map((s) => (
+                  <div
+                    key={s.id}
+                    onClick={() => {
+                      setPingSoundId(s.id);
+                      localStorage.setItem("nextext_voice_ping_sound", s.id);
+                      playVoicePing();
+                    }}
+                    style={{ padding: "5px 10px", borderRadius: 14, fontSize: 12, fontWeight: 600, cursor: "pointer", background: pingSoundId === s.id ? t.primary : t.bg, color: pingSoundId === s.id ? t.bubbleMeText : t.text, border: `1px solid ${pingSoundId === s.id ? t.primary : t.border}` }}
+                  >
+                    {s.label}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Voice player style</span>
+            </div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>Real-time waveform, or a clean seek bar you can tap and drag.</div>
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              {[
+                { id: "waveform", label: "Waveform" },
+                { id: "scrubber", label: "Scrubber" },
+              ].map((opt) => (
+                <div
+                  key={opt.id}
+                  onClick={() => {
+                    setVoicePlayerStyle(opt.id);
+                    localStorage.setItem("nextext_voice_player_style", opt.id);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "7px 0",
+                    textAlign: "center",
+                    borderRadius: 8,
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    background: voicePlayerStyle === opt.id ? t.primary : t.bg,
+                    color: voicePlayerStyle === opt.id ? t.bubbleMeText : t.text,
+                    border: `1px solid ${voicePlayerStyle === opt.id ? t.primary : t.border}`,
+                  }}
+                >
+                  {opt.label}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Recording bar size</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{Math.round(recordingBarScale * 100)}%</span>
+            </div>
+            <input type="range" min="0.6" max="1.6" step="0.05" value={recordingBarScale} onChange={(e) => setRecordingBarScale(Number(e.target.value))} style={{ flex: 1, width: "100%", accentColor: t.primary, marginTop: 6 }} />
+            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Adjust the size of the recording controls when the mic is active.</div>
           </div>
         </SectionCard>
+      )}
 
         {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}
         <SectionCard title="Notification Sound & Vibration" emoji="🔔" sectionKey="notifprefs">
@@ -1310,84 +1391,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               <Toggle on={pinchZoomOn} onClick={() => { const next = !pinchZoomOn; setPinchZoomOn(next); localStorage.setItem("nextext_pinch_zoom", next ? "true" : "false"); }} />
             </div>
             {pinchZoomOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>In any chat, pinch the message list to make text bigger or smaller.</div>}
-            <div data-tour="voice-chime" style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Voice note chimes</span>
-              <Toggle on={voiceEndChimeOn} onClick={() => { const next = !voiceEndChimeOn; setVoiceEndChimeOn(next); localStorage.setItem("nextext_voice_end_chime", next ? "on" : "off"); }} />
-            </div>
-            {voiceEndChimeOn && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>Special "2+ voice notes in a row" chime</span>
-                <Toggle on={voiceStreakChimeOn} onClick={() => { const next = !voiceStreakChimeOn; setVoiceStreakChimeOn(next); localStorage.setItem("nextext_voice_streak_chime", next ? "on" : "off"); }} />
-              </div>
-            )}
-            {voiceEndChimeOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>A chime plays after every voice note. With the special 2+ chime on (default), a brighter completion chime plays when a streak of 2+ notes ends.</div>}
-            {voiceEndChimeOn && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                {PING_SOUNDS.map((s) => (
-                  <div
-                    key={s.id}
-                    onClick={() => {
-                      setPingSoundId(s.id);
-                      localStorage.setItem("nextext_voice_ping_sound", s.id);
-                      // Play an immediate preview so the user hears the chime
-                      // they're selecting — playVoicePing reads the just-set
-                      // localStorage value to choose the pattern.
-                      playVoicePing();
-                    }}
-                    style={{
-                      padding: "5px 10px",
-                      borderRadius: 14,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      background: pingSoundId === s.id ? t.primary : t.bg,
-                      color: pingSoundId === s.id ? t.bubbleMeText : t.text,
-                      border: `1px solid ${pingSoundId === s.id ? t.primary : t.border}`,
-                    }}
-                  >
-                    {s.label}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Voice player style</span>
-            </div>
-            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>Real-time waveform, or a clean seek bar you can tap and drag.</div>
-            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-              {[
-                { id: "waveform", label: "Waveform" },
-                { id: "scrubber", label: "Scrubber" },
-              ].map((opt) => (
-                <div
-                  key={opt.id}
-                  onClick={() => {
-                    setVoicePlayerStyle(opt.id);
-                    localStorage.setItem("nextext_voice_player_style", opt.id);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: "7px 0",
-                    textAlign: "center",
-                    borderRadius: 8,
-                    fontSize: 12.5,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    background: voicePlayerStyle === opt.id ? t.primary : t.bg,
-                    color: voicePlayerStyle === opt.id ? t.bubbleMeText : t.text,
-                    border: `1px solid ${voicePlayerStyle === opt.id ? t.primary : t.border}`,
-                  }}
-                >
-                  {opt.label}
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Recording bar size</span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{Math.round(recordingBarScale * 100)}%</span>
-            </div>
-            <input type="range" min="0.6" max="1.6" step="0.05" value={recordingBarScale} onChange={(e) => setRecordingBarScale(Number(e.target.value))} style={{ flex: 1, width: "100%", accentColor: t.primary, marginTop: 6 }} />
-            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Adjust the size of the recording controls when the mic is active.</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Animate tab taps (animateOnTap)</span>
               <Toggle on={animateOnTap} onClick={() => setAnimateOnTap(!animateOnTap)} />

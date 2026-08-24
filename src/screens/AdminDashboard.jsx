@@ -611,7 +611,7 @@ export default function AdminDashboard({ myUid, onBack }) {
   }
 
   return (
-    <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 46 }}>
+    <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 46, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", padding: "16px", gap: 12, background: t.surface, flexShrink: 0, borderBottom: `1px solid ${t.border}` }}>
         <ChevronLeft size={22} color={t.text} onClick={onBack} style={{ cursor: "pointer" }} />
         <ShieldCheck size={18} color={t.text} />
@@ -624,7 +624,8 @@ export default function AdminDashboard({ myUid, onBack }) {
       </div>
       {error && <div style={{ color: "#FF3B30", fontSize: 12.5, padding: "8px 16px" }}>{error}</div>}
 
-      {tab === "users" && (
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        {tab === "users" && (
         <>
           <div style={{ padding: "14px 16px 8px" }}>
             <div style={{ display: "flex", alignItems: "center", background: t.surface, borderRadius: 12, padding: "10px 12px", gap: 8 }}>
@@ -717,23 +718,61 @@ export default function AdminDashboard({ myUid, onBack }) {
                   </div>
                 </div>
               )}
-              <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>Voice notes in WhatsApp pipeline</div>
-                <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
-                  When ON, voice notes follow the WhatsApp-style instant delete pipeline (downloaded, server copy deleted). When OFF, voice notes are stored in the database for auto-play/queue (3-day expiry). Default: OFF (stored in DB).
-                </div>
-                <div onClick={() => {
-                  const newVal = !settings?.voiceNotesInPipeline;
-                  updateGlobalSettings({ voiceNotesInPipeline: newVal }, myUid);
-                }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.voiceNotesInPipeline ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
-                  <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.voiceNotesInPipeline ? "#34C759" : t.border, position: "relative" }}>
-                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.voiceNotesInPipeline ? 23 : 3, transition: "left 0.15s" }} />
-                  </div>
-                  <span style={{ fontWeight: 700, fontSize: 14, color: settings?.voiceNotesInPipeline ? "#fff" : t.text }}>
-                    {settings?.voiceNotesInPipeline ? "VOICE NOTES IN PIPELINE" : "VOICE NOTES STORED IN DB"}
-                  </span>
-                </div>
+<div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>Voice notes in WhatsApp pipeline</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                When ON, voice notes follow the WhatsApp-style instant delete pipeline (downloaded, server copy deleted). When OFF, voice notes are stored in the database for auto-play/queue (3-day expiry). Default: OFF (stored in DB).
               </div>
+              <div onClick={() => {
+                const newVal = !settings?.voiceNotesInPipeline;
+                updateGlobalSettings({ voiceNotesInPipeline: newVal }, myUid);
+              }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.voiceNotesInPipeline ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.voiceNotesInPipeline ? "#34C759" : t.border, position: "relative" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.voiceNotesInPipeline ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: settings?.voiceNotesInPipeline ? "#fff" : t.text }}>
+                  {settings?.voiceNotesInPipeline ? "VOICE NOTES IN PIPELINE" : "VOICE NOTES STORED IN DB"}
+                </span>
+              </div>
+            </div>
+
+            {/* Admin control: Voice notes storage default for all users */}
+            <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>Voice notes storage default (all users)</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                Set the default behavior for all users. When ON, voice notes are stored in database with 3-day expiry. When OFF, they use the instant delete pipeline (user must download each, downloaded cached locally forever).
+              </div>
+              <div onClick={() => {
+                const newVal = !settings?.voiceNotesStoreInDb;
+                updateGlobalSettings({ voiceNotesStoreInDb: newVal }, myUid);
+              }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.voiceNotesStoreInDb ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.voiceNotesStoreInDb ? "#34C759" : t.border, position: "relative" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.voiceNotesStoreInDb ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: settings?.voiceNotesStoreInDb ? "#fff" : t.text }}>
+                  {settings?.voiceNotesStoreInDb ? "STORE IN DB (3-day expiry)" : "INSTANT PIPELINE (no auto-expiry)"}
+                </span>
+              </div>
+            </div>
+
+            {/* Admin toggle: hide voice notes settings from users */}
+            <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>Hide voice notes settings from users</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                When ON, the voice notes storage setting is hidden from users in Settings. Users will use the admin-configured default above.
+              </div>
+              <div onClick={() => {
+                const newVal = !settings?.hideVoiceNotesSettings;
+                updateGlobalSettings({ hideVoiceNotesSettings: newVal }, myUid);
+              }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideVoiceNotesSettings ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideVoiceNotesSettings ? "#34C759" : t.border, position: "relative" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideVoiceNotesSettings ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideVoiceNotesSettings ? "#fff" : t.text }}>
+                  {settings?.hideVoiceNotesSettings ? "HIDDEN FROM USERS" : "VISIBLE TO USERS"}
+                </span>
+              </div>
+            </div>
             </div>
           </div>
         )}
@@ -1739,6 +1778,7 @@ export default function AdminDashboard({ myUid, onBack }) {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

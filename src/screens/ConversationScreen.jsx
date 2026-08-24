@@ -21,6 +21,8 @@ import { cacheMedia, getLocalMediaUrl, hasCachedMedia } from "../media/localMedi
 import { doc, getDoc, onSnapshot, addDoc, collection, serverTimestamp, updateDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { registerPlugin } from "@capacitor/core";
+import { Capacitor } from "@capacitor/core";
+import { Filesystem, Directory, Encoding } from "@capacitor/filesystem";
 import Avatar, { getLocalPhotoOverride } from "../components/Avatar";
 import { extractFirstUrl, fetchLinkPreview, isLinkPreviewEnabled } from "../utils/linkPreview";
 import { playVoicePing, playVoiceEndChime } from "../utils/pingSounds";
@@ -28,6 +30,46 @@ import { useGlobalSettings } from "../firebase/config-settings";
 import { getSystemInsets } from "../utils/systemInsets";
 
 const NextextNative = registerPlugin("NextextNative");
+const NEX_TEXT_FOLDER = "NexText";
+
+async function saveToNexTextFolder(fileName, blob, mimeType) {
+  try {
+    const base64 = await blobToBase64(blob);
+    if (Capacitor.isNativePlatform()) {
+      await Filesystem.writeFile({
+        path: `NexText/${fileName}`,
+        data: base64,
+        directory: Directory.Downloads,
+        encoding: Encoding.UTF8,
+        recursive: true,
+      });
+    } else {
+      const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+      const nexTextDir = await handle.getDirectoryHandle("NexText", { create: true });
+      const fileHandle = await nexTextDir.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    }
+  } catch (error) {
+    console.error("Failed to save to NexText folder:", error);
+    const url = URL.createObjectURL(new Blob([blob]));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
 import { useStatuses } from "../firebase/status";
 import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote, useSystemConfigHook, translateMessage, LANGUAGES, getLanguageLabel } from "../firebase/ai";
 import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
@@ -2539,6 +2581,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       await cacheMedia(m.id, blob);
       const url = await getLocalMediaUrl(m.id);
       if (url) setLocalMediaUrls((prev) => ({ ...prev, [m.id]: url }));
+      // Also save to NexText folder on device
+      const fileName = m.fileName || `nextext_${m.type}_${m.id}`;
+      await saveToNexTextFolder(fileName, blob, m.type);
       // Swap the UI to the local copy BEFORE purging the server file.
       let purged = false;
       if (m.mediaPath) {
@@ -2561,12 +2606,27 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const renderBubble = (m) => {
     const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays);
     // WhatsApp-style instant media delete (one-on-one only).
-    // Voice notes follow admin setting: if voiceNotesInPipeline is true, they use the pipeline; otherwise they use 3-day expiry.
+    // Voice notes: check voiceNotesStoreInDb setting.
+    // - When voiceNotesStoreInDb is true (default): voice notes stored in DB with 3-day expiry, show "Deletes in X days"
+    // - When false: voice notes use instant media delete pipeline (needDownload), downloaded ones cached locally forever
+    const voiceNotesStoredInDb = globalSettings?.voiceNotesStoreInDb !== false; // default true
     const voiceInPipeline = globalSettings?.voiceNotesInPipeline === true;
     const autoDelete = globalSettings?.mediaAutoDelete === true && (m.type !== "voice" || voiceInPipeline);
     const suppressExpiry = autoDelete && !isGroup;
     const localSrc = (autoDelete && !isGroup) ? localMediaUrls[m.id] : null;
     const needDownload = (autoDelete && !isGroup) && !localSrc && m.senderId !== myUid;
+    
+    // For voice notes: check if they were sent through the pipeline or stored in DB
+    // Store pipeline info in message metadata for proper display after admin switches pipeline
+    const voicePipelineUsed = m.metadata?.voicePipeline === true;
+    const voiceStoredInDb = m.metadata?.voiceStoredInDb === true;
+    
+    // Determine if voice note should show expiry
+    const voiceNoteShouldShowExpiry = m.type === "voice" && (voiceNotesStoredInDb || voiceStoredInDb);
+    const voiceNoteAutoDelete = voiceNotesStoredInDb && !voicePipelineUsed;
+    const voiceNoteSuppressExpiry = voiceNoteAutoDelete && !isGroup;
+    const voiceNoteLocalSrc = (voiceNoteAutoDelete && !isGroup) ? localMediaUrls[m.id] : null;
+    const voiceNoteNeedDownload = (voiceNoteAutoDelete && !isGroup) && !voiceNoteLocalSrc && m.senderId !== myUid;
     if (m.deletedForEveryone) return <div style={{ fontSize: 13, fontStyle: "italic", opacity: 0.6 }}>This message was deleted</div>;
     if (m.type === "poll") return <PollBubble t={t} mine={m.senderId === myUid} poll={m.poll} myUid={myUid} onVote={(optId) => handleVote(m, optId)} textScale={chatTextScale} />;
 
@@ -2577,7 +2637,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, background: m.senderId === myUid ? "rgba(255,255,255,0.12)" : t.primaryLight }}>
             <ExpiredIcon size={16} color={t.textMuted} />
-            <span style={{ fontSize: 13, fontStyle: "italic", color: t.textMuted }}>Expired</span>
+            <span style={{ fontSize: 13, fontStyle: "italic", color: t.textMuted }}>
+              {m.type === "voice" && voiceNoteShouldShowExpiry ? "Expired" : "Expired"}
+            </span>
           </div>
           {m.type === "voice" && transcriptTextFor(m) && (
             <TranscriptBlock m={m} />
@@ -2712,17 +2774,26 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (m.type === "voice") return (
       <div>
         <StatusReplyBlock statusRef={m.statusRef} mine={m.senderId === myUid} t={t} />
-        {needDownload ? (
+        {voiceNoteNeedDownload ? (
           <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 64, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, color: t.textMuted }}>
             <Download size={24} />
             <span style={{ fontSize: 12, fontWeight: 600 }}>Tap to download</span>
           </div>
         ) : (
-          <VoicePlayer url={localSrc || m.mediaURL} duration={m.mediaDurationSeconds} mine={m.senderId === myUid} t={t} msgId={m.id} onEnded={handleVoiceEnded} autoPlayToken={voiceAutoPlayNonce} isAutoPlayTarget={m.id === voiceAutoPlayId} nowPlayingId={nowPlayingId} onPlayStart={handleVoicePlayStart} />
+          <>
+            <VoicePlayer url={voiceNoteLocalSrc || m.mediaURL} duration={m.mediaDurationSeconds} mine={m.senderId === myUid} t={t} msgId={m.id} onEnded={handleVoiceEnded} autoPlayToken={voiceAutoPlayNonce} isAutoPlayTarget={m.id === voiceAutoPlayId} nowPlayingId={nowPlayingId} onPlayStart={handleVoicePlayStart} />
+            {/* Download button for voice notes - saves to NexText folder */}
+            <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
+              <button onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.surface, color: t.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                <Download size={18} />
+                <span>Save to NexText</span>
+              </button>
+            </div>
+          </>
         )}
-        {!needDownload && transcriptTextFor(m) ? (
+        {!voiceNoteNeedDownload && transcriptTextFor(m) ? (
           <TranscriptBlock m={m} />
-        ) : (!needDownload && (
+        ) : (!voiceNoteNeedDownload && (
           <button
             onClick={(e) => { e.stopPropagation(); transcribeVoice(m); }}
             disabled={transcribingId === m.id}
@@ -2731,8 +2802,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             {transcribingId === m.id ? "Transcribing…" : "Transcribe"}
           </button>
         ))}
-        {!needDownload && transcriptErrors[m.id] && <div style={{ fontSize: 11, color: "#FF3B30", marginTop: 3, maxWidth: 230, lineHeight: 1.3 }}>{transcriptErrors[m.id]}</div>}
-        {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
+        {!voiceNoteNeedDownload && transcriptErrors[m.id] && <div style={{ fontSize: 11, color: "#FF3B30", marginTop: 3, maxWidth: 230, lineHeight: 1.3 }}>{transcriptErrors[m.id]}</div>}
+        {!voiceNoteSuppressExpiry && voiceNoteShouldShowExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
+        {/* Show "Downloaded" indicator for downloaded voice notes */}
+        {voiceNoteLocalSrc && !voiceNoteNeedDownload && <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2, color: "#28A745", fontWeight: 600 }}>Downloaded · Saved to NexText</div>}
       </div>
     );
     if (m.type === "file") return (
