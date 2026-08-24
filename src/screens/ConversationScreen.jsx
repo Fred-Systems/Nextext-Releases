@@ -184,6 +184,18 @@ function getMediaExpiryText(sentAt, mediaExpiryDays) {
   return `Deletes in ${remaining} day${remaining !== 1 ? "s" : ""}`;
 }
 
+// Renders text with **bold** markdown support. Returns an array of React
+// nodes (plain strings + <strong>), so it's safe (no dangerouslySetInnerHTML).
+function renderRichText(text) {
+  if (!text) return text;
+  const parts = String(text).split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    const m = part.match(/^\*\*([^*]+)\*\*$/);
+    if (m) return <strong key={i}>{m[1]}</strong>;
+    return part;
+  });
+}
+
 function filterTextByParentalControls(text, customFilterLists) {
   if (!text || !customFilterLists || customFilterLists.length === 0) return { text, blocked: false };
   const allKeywords = customFilterLists.flatMap((list) => list.keywords || []);
@@ -1180,6 +1192,41 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       if (typingHeartbeatTimer.current) clearTimeout(typingHeartbeatTimer.current);
       typingHeartbeatTimer.current = setTimeout(() => setTypingHeartbeat(chatId, myUid), 800);
     }
+  };
+
+  // Long-press a word in the composer to bolden it (wraps selection in **).
+  const [boldMenu, setBoldMenu] = useState(null);
+  const boldLongPress = useRef(null);
+  const startBoldLongPress = () => {
+    boldLongPress.current = setTimeout(() => {
+      const ta = composerRef.current;
+      if (!ta) return;
+      let start = ta.selectionStart, end = ta.selectionEnd;
+      const val = ta.value;
+      if (start === end) {
+        let s = start, e = start;
+        while (s > 0 && !/\s/.test(val[s - 1])) s--;
+        while (e < val.length && !/\s/.test(val[e])) e++;
+        start = s; end = e;
+        try { ta.setSelectionRange(s, e); } catch {}
+      }
+      if (start === end) return;
+      setBoldMenu({ start, end: end });
+    }, 500);
+  };
+  const cancelBoldLongPress = () => clearTimeout(boldLongPress.current);
+  const applyBold = () => {
+    if (!boldMenu) return;
+    const ta = composerRef.current;
+    const val = input;
+    const before = val.slice(0, boldMenu.start);
+    const sel = val.slice(boldMenu.start, boldMenu.end);
+    const after = val.slice(boldMenu.end);
+    const newVal = `${before}**${sel}**${after}`;
+    handleInputChange(newVal);
+    const caret = boldMenu.end + 4;
+    setBoldMenu(null);
+    setTimeout(() => { try { ta.focus(); ta.setSelectionRange(caret, caret); } catch {} }, 0);
   };
 
   const send = async (override) => {
@@ -2590,10 +2637,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   // delete the Supabase server copy so our storage stays near zero. Only used for
   // one-on-one chats when the admin has enabled `mediaAutoDelete`. Group chats
   // never call this (they keep the server copy for all members).
+  // Tracks per-message busy/done state for the save & download buttons so the
+  // user gets feedback ("Saving…" / "Saved") instead of a silent no-op.
+  const [mediaBusy, setMediaBusy] = useState({});
+
   // Saves a copy of the media to the device (Downloads). Used by the corner
   // download button. Prefers the locally-cached blob (which survives the
   // WhatsApp-style server purge) and falls back to the remote URL.
   const saveMediaToDevice = useCallback(async (m) => {
+    setMediaBusy((p) => ({ ...p, [m.id]: "saving" }));
     try {
       let blob = null;
       const localUrl = await getLocalMediaUrl(m.id);
@@ -2608,7 +2660,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       if (!blob) throw new Error("no media");
       const fileName = m.fileName || `nextext_${m.type}_${m.id}`;
       await saveToNexTextFolder(fileName, blob, m.type);
+      setMediaBusy((p) => ({ ...p, [m.id]: "saved" }));
+      setTimeout(() => setMediaBusy((p) => { const n = { ...p }; delete n[m.id]; return n; }), 2500);
     } catch {
+      setMediaBusy((p) => { const n = { ...p }; delete n[m.id]; return n; });
       setSendError?.("Couldn't download this media. Try again.");
     }
   }, [setSendError]);
@@ -2616,6 +2671,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const handleDownloadMedia = useCallback(async (m) => {
     if (cachingInFlight.current.has(m.id)) return;
     cachingInFlight.current.add(m.id);
+    setMediaBusy((p) => ({ ...p, [m.id]: "downloading" }));
     try {
       let blob = null;
       // Prefer the locally-cached copy (survives the WhatsApp-style purge).
@@ -2648,7 +2704,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           await updateDoc(doc(db, "chats", chatId, "messages", m.id), { "metadata.blurData": null });
         } catch { /* best-effort */ }
       }
+      setMediaBusy((p) => ({ ...p, [m.id]: "saved" }));
+      setTimeout(() => setMediaBusy((p) => { const n = { ...p }; delete n[m.id]; return n; }), 2500);
     } catch {
+      setMediaBusy((p) => { const n = { ...p }; delete n[m.id]; return n; });
       setSendError?.("Couldn't download this media. Try again.");
     } finally {
       cachingInFlight.current.delete(m.id);
@@ -2667,13 +2726,16 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     return false;
   };
   // Small "save to device" button rendered BELOW the media bubble (it must not
-  // overlap the voice waveform / photo / video).
+  // overlap the voice waveform / photo / video). Shows live save状态.
   const renderDownloadBelow = (m) => {
     if (!shouldShowDownload(m.type)) return null;
+    const busy = mediaBusy[m.id];
+    const label = busy === "saving" ? "Saving…" : busy === "saved" ? "Saved ✓" : "Save to device";
     return (
       <button
-        onClick={(e) => { e.stopPropagation(); saveMediaToDevice(m); }}
+        onClick={(e) => { e.stopPropagation(); if (!busy) saveMediaToDevice(m); }}
         title="Save to device"
+        disabled={busy === "saving"}
         style={{
           marginTop: 4,
           display: "inline-flex",
@@ -2682,14 +2744,20 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           padding: "5px 10px",
           borderRadius: 8,
           border: "none",
-          background: m.senderId === myUid ? "rgba(255,255,255,0.18)" : t.primaryLight,
-          color: m.senderId === myUid ? "#fff" : t.primary,
+          background: busy === "saved" ? "#10B981" : (m.senderId === myUid ? "rgba(255,255,255,0.18)" : t.primaryLight),
+          color: busy === "saved" ? "#fff" : (m.senderId === myUid ? "#fff" : t.primary),
           fontSize: 12,
           fontWeight: 600,
-          cursor: "pointer",
+          cursor: busy ? "default" : "pointer",
+          opacity: busy === "saving" ? 0.7 : 1,
         }}
       >
-        <Download size={14} /> Save to device
+        {busy === "saving" ? (
+          <span style={{ width: 12, height: 12, border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "nextext-spin 0.8s linear infinite" }} />
+        ) : (
+          <Download size={14} />
+        )}
+        {label}
       </button>
     );
   };
@@ -2707,25 +2775,21 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     const localSrc = (autoDelete && !isGroup) ? localMediaUrls[m.id] : null;
     const needDownload = (autoDelete && !isGroup) && !localSrc && m.senderId !== myUid;
     
-    // For voice notes: check if they were sent through the pipeline or stored in DB
-    // Store pipeline info in message metadata for proper display after admin switches pipeline
+    // For voice notes: check if they were sent through the pipeline or stored in DB.
+    // Pipeline (WhatsApp-style) notes do NOT show the "Deletes in X days" badge
+    // — unless this specific note was explicitly stored in the DB (metadata
+    // voiceStoredInDb), which is the per-note "regular pipeline" opt-in.
     const voicePipelineUsed = m.metadata?.voicePipeline === true;
+    const voiceStoredInDb = m.metadata?.voiceStoredInDb === true;
 
-    // Ephemeral (WhatsApp-style pipeline) notes must be downloaded and play
-    // from the local cache. The "Deletes in X days" badge is driven by the
-    // server purge policy (mediaExpiryDays) rather than the storage mode, so it
-    // shows for DB-stored notes AND for pipeline notes that still expire on the
-    // server — only the instant auto-delete (mediaAutoDelete) mode hides it.
     const voiceNoteEphemeral = voiceInPipeline || voicePipelineUsed;
     const voiceNoteLocalSrc = (voiceNoteEphemeral && !isGroup) ? localMediaUrls[m.id] : null;
     const voiceNoteNeedDownload = (voiceNoteEphemeral && !isGroup) && !voiceNoteLocalSrc && m.senderId !== myUid;
-    const voiceNoteIsAutoDelete = autoDelete && !isGroup;
-    const expiryDays = globalSettings?.mediaExpiryDays ?? 3;
-    const voiceNoteShouldShowExpiry = m.type === "voice" && expiryDays > 0 && !voiceNoteIsAutoDelete;
+    const voiceNoteShouldShowExpiry = m.type === "voice" && (voiceNotesStoredInDb || voiceStoredInDb) && !voiceNoteEphemeral;
     if (m.deletedForEveryone) return <div style={{ fontSize: 13, fontStyle: "italic", opacity: 0.6 }}>This message was deleted</div>;
     if (m.type === "poll") return <PollBubble t={t} mine={m.senderId === myUid} poll={m.poll} myUid={myUid} onVote={(optId) => handleVote(m, optId)} textScale={chatTextScale} />;
 
-    if (["image", "video", "voice", "file"].includes(m.type) && isMediaExpired(m, globalSettings?.mediaExpiryDays) && !(autoDelete && !isGroup && localSrc)) {
+    if (["image", "video", "voice", "file"].includes(m.type) && isMediaExpired(m, globalSettings?.mediaExpiryDays) && !(autoDelete && !isGroup && localSrc) && !localMediaUrls[m.id]) {
       const ExpiredIcon = m.type === "image" ? ImageOff : m.type === "video" ? VideoOff : m.type === "voice" ? MicOff : FileX;
       return (
         <div>
@@ -2832,7 +2896,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             )}
             <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
               <Download size={30} />
-              <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tap to download</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600 }}>{mediaBusy[m.id] === "downloading" ? "Downloading…" : mediaBusy[m.id] === "saved" ? "Saved ✓" : "Tap to download"}</span>
             </div>
           </div>
         ) : (
@@ -2841,7 +2905,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </div>
         )}
         {renderDownloadBelow(m)}
-        {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.text}</div>}
+        {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderRichText(m.text)}</div>}
         {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
@@ -2855,7 +2919,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             )}
             <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
               <Download size={30} />
-              <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tap to download</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600 }}>{mediaBusy[m.id] === "downloading" ? "Downloading…" : mediaBusy[m.id] === "saved" ? "Saved ✓" : "Tap to download"}</span>
             </div>
           </div>
         ) : (
@@ -2864,7 +2928,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </div>
         )}
         {renderDownloadBelow(m)}
-        {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.text}</div>}
+        {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderRichText(m.text)}</div>}
         {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
@@ -2874,7 +2938,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         {voiceNoteNeedDownload ? (
           <div onClick={(e) => { e.stopPropagation(); handleDownloadMedia(m); }} style={{ cursor: "pointer", width: 220, height: 64, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.06)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, color: t.textMuted }}>
             <Download size={24} />
-            <span style={{ fontSize: 12, fontWeight: 600 }}>Tap to download</span>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>{mediaBusy[m.id] === "downloading" ? "Downloading…" : mediaBusy[m.id] === "saved" ? "Saved ✓" : "Tap to download"}</span>
           </div>
         ) : (
           <div style={{ position: "relative" }}>
@@ -2946,7 +3010,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               ⏱ Scheduled for {m.scheduledFor.toDate ? m.scheduledFor.toDate().toLocaleString() : ""}
             </div>
           )}
-          {displayText || m.text}
+          {renderRichText(displayText || m.text)}
           {m.editedAt && !blocked && <span style={{ fontSize: 10, opacity: 0.55, marginLeft: 4 }}>edited</span>}
           {isLinkPreviewEnabled() && !blocked && <LinkPreviewCard text={m.text} mine={m.senderId === myUid} t={t} textScale={chatTextScale} />}
           {!blocked && translations[m.id] && !hiddenTranslations[m.id] && (
@@ -3414,15 +3478,26 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <ImageIcon size={Math.max(22, Math.round(25 * composerHeight))} color={galleryActive ? t.primary : t.textMuted} />
                 </div>
               )}
-              <textarea
+               <textarea
                 ref={composerRef}
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (editingMsg) saveEdit(); else send(); } }}
+                onMouseDown={startBoldLongPress}
+                onMouseUp={cancelBoldLongPress}
+                onMouseLeave={cancelBoldLongPress}
+                onTouchStart={startBoldLongPress}
+                onTouchEnd={cancelBoldLongPress}
                 placeholder={editingMsg ? "Edit message…" : "Message"}
                 rows={1}
                 style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: Math.max(14, Math.round(16.5 * composerHeight * 10) / 10), color: t.text, resize: "none", maxHeight: Math.round((42 + composerHeight * 42) * composerHeight), lineHeight: 1.4, paddingTop: Math.round(7 * composerHeight), paddingBottom: Math.round(7 * composerHeight), fontFamily: "inherit", minWidth: 0 }}
               />
+              {boldMenu && (
+                <div style={{ position: "absolute", bottom: "100%", left: 12, marginBottom: 6, background: t.surface, borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.3)", padding: 6, display: "flex", gap: 6, zIndex: 60 }}>
+                  <button onClick={applyBold} style={{ border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, padding: "8px 14px", borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Bold **</button>
+                  <button onClick={() => setBoldMenu(null)} style={{ border: "none", background: "transparent", color: t.textMuted, padding: "8px 12px", borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Cancel</button>
+                </div>
+              )}
               <div
                 onClick={() => { if (showAttach) closeAttach(); else { setShowEmojiPicker(false); openAttach(); } }}
                 style={{ width: Math.max(30, Math.round(32 * composerHeight)), height: Math.max(30, Math.round(32 * composerHeight)), borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: showAttach ? t.primaryLight : "transparent", transform: `rotate(${showAttach ? 45 : 0}deg)`, transition: "transform 0.2s ease" }}

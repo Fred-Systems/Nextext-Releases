@@ -48,7 +48,7 @@ function broadcastAvatarMenu(openUid) {
   avatarMenuListeners.forEach((fn) => fn(openUid));
 }
 
-export default React.memo(function Avatar({ photoURL, name, uid, size = 52, style = {}, hasActiveStatus = false, statusViewed = false, onStatusView, onViewProfile, onViewPicture, onViewGroupInfo, hideLocalOverride = false, blockStatus = false }) {
+export default React.memo(function Avatar({ photoURL, name, uid, size = 52, style = {}, hasActiveStatus = false, statusViewed = false, onStatusView, onViewProfile, onViewPicture, onViewGroupInfo, hideLocalOverride = false, blockStatus = false, aiStyleOverride = null }) {
   const [showMenu, setShowMenu] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const avatarRef = useRef(null);
@@ -63,7 +63,8 @@ export default React.memo(function Avatar({ photoURL, name, uid, size = 52, styl
     : { background: bg };
   const initial = getAvatarInitial(name);
   const fontSize = Math.round(size * 0.38);
-  const aiStyle = useAIIconStyle();
+  const subscribedAiStyle = useAIIconStyle();
+  const aiStyle = aiStyleOverride || subscribedAiStyle;
   const isAI = uid === AI_CONTACT_UID;
   const ringPad = hasActiveStatus ? 3 : 0;
   const outerSize = size + ringPad * 2;

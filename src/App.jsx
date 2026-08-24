@@ -3477,7 +3477,14 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       <img src={activeProfile.iconPath} alt="" style={{ width: 100, height: 100, objectFit: "contain", marginBottom: 20 }} onError={(e) => { e.target.style.display = "none"; }} />
       <div style={{ width: 40, height: 40, border: "4px solid rgba(16, 185, 129, 0.25)", borderTopColor: "#10B981", borderRadius: "50%", animation: "nextext-spin 0.9s linear infinite", marginBottom: 16 }} />
       <span style={{ color: "#fff", fontSize: 20, fontWeight: 700 }}>{activeProfile.label}</span>
-      <style>{`@keyframes nextext-spin { to { transform: rotate(360deg); } }`}</style>
+      {activeProfile?.special && (
+        <div className="nx-splash-words" style={{ marginTop: 18, maxWidth: 300, padding: "0 16px", textAlign: "center" }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: "#10B981", lineHeight: 1.4, animation: "nx-splash-pop 0.5s ease-out both" }}>{globalSettings?.specialIconSplashLine1 || "If you will not use this app...."}</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,0.8)", marginTop: 8, lineHeight: 1.4, animation: "nx-splash-pop 0.5s ease-out 0.25s both" }}>{globalSettings?.specialIconSplashLine2 || "You will go to ....."}</div>
+        </div>
+      )}
+      <style>{`@keyframes nextext-spin { to { transform: rotate(360deg); } }
+        @keyframes nx-splash-pop { 0% { opacity: 0; transform: translateY(10px) scale(0.92); } 60% { opacity: 1; transform: translateY(-2px) scale(1.02); } 100% { opacity: 1; transform: translateY(0) scale(1); } }`}</style>
     </div>;
   }
   if (auth.loading) {
@@ -3812,21 +3819,22 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
            <img src={activeProfile.iconPath} alt="" style={{ width: 180, height: 180, objectFit: "contain" }} />
            <div style={{ fontSize: 24, fontWeight: 800, color: "#fff", marginTop: -10, letterSpacing: 0.3 }}>{activeProfile.label}</div>
            <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.65)" }}>v{getCurrentVersion()}</div>
-           {activeProfile?.special && (
-             <div className="nx-splash-words" style={{ marginTop: 18, maxWidth: 300, fontSize: 19, padding: "0 16px" }}>
-               <div>{globalSettings?.specialIconSplashLine1 || "If you will not use this app...."}</div>
-               <div style={{ marginTop: 8 }}>{globalSettings?.specialIconSplashLine2 || "You will go to ....."}</div>
-             </div>
-           )}
-           <div
-             style={{
-               width: 34, height: 34,
-               border: "3px solid rgba(16, 185, 129, 0.25)",
-               borderTopColor: "#10B981",
-               borderRadius: "50%",
-             }}
-           />
-         </div>
+            {activeProfile?.special && (
+              <div className="nx-splash-words" style={{ marginTop: 18, maxWidth: 300, fontSize: 19, padding: "0 16px", textAlign: "center" }}>
+                <div style={{ fontWeight: 700, color: "#10B981", animation: "nx-splash-pop 0.5s ease-out both" }}>{globalSettings?.specialIconSplashLine1 || "If you will not use this app...."}</div>
+                <div style={{ marginTop: 8, fontWeight: 600, color: "rgba(255,255,255,0.85)", animation: "nx-splash-pop 0.5s ease-out 0.25s both" }}>{globalSettings?.specialIconSplashLine2 || "You will go to ....."}</div>
+              </div>
+            )}
+            <div
+              style={{
+                width: 34, height: 34,
+                border: "3px solid rgba(16, 185, 129, 0.25)",
+                borderTopColor: "#10B981",
+                borderRadius: "50%",
+              }}
+            />
+            <style>{`@keyframes nx-splash-pop { 0% { opacity: 0; transform: translateY(10px) scale(0.92); } 60% { opacity: 1; transform: translateY(-2px) scale(1.02); } 100% { opacity: 1; transform: translateY(0) scale(1); } }`}</style>
+          </div>
       ), document.body)}
 
       {createPortal(showTour ? (

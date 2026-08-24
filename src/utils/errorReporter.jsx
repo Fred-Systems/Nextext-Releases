@@ -25,6 +25,10 @@ export default function ErrorReporter({ children }) {
       const e = event?.error || event;
       const msg = e && (e.message || e.stack || String(e))
         || (typeof event?.message === "string" ? event.message : "Unknown error");
+      // The "ResizeObserver loop limit exceeded" error is benign and fired on
+      // every layout pass by the virtualized chat list when the text size or
+      // scale changes. Surfacing it would just spam the error banner.
+      if (msg && msg.indexOf("ResizeObserver loop") !== -1) return;
       push(`Uncaught: ${msg}`);
     };
     const onRejection = (event) => {

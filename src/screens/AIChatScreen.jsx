@@ -6,8 +6,8 @@ import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, useSystemConfigHook, describeAIError } from "../firebase/ai";
-import { toggleArchive } from "../firebase/chats";
-import { uploadChatFile, deleteChatFile } from "../supabase/media";
+import { getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
+import Avatar from "../components/Avatar";
 
 function ThinkingDots({ color = "#000" }) {
   return (
@@ -110,6 +110,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [sending, setSending] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showPersonaTray, setShowPersonaTray] = useState(false);
+  const [showIconTray, setShowIconTray] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [userDoc, setUserDoc] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -620,6 +621,14 @@ export default function AIChatScreen({ myUid, onBack }) {
               <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>AI Assistant Persona</span>
               <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
             </div>
+            <div
+              onClick={() => { setShowSettings(false); setShowIconTray(true); }}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
+            >
+              <Avatar uid={AI_CONTACT_UID} size={22} aiStyleOverride={getAIIconStyle()} />
+              <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>AI Icon Style</span>
+              <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
+            </div>
             <div onClick={async () => { await ensureChatExists(); await toggleArchive(chatId, myUid, isArchived); setShowSettings(false); onBack(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
               <Archive size={16} color={t.text} />
               <span style={{ fontSize: 14, color: t.text }}>{isArchived ? "Unarchive chat" : "Archive chat"}</span>
@@ -663,6 +672,43 @@ export default function AIChatScreen({ myUid, onBack }) {
                 {currentPersonality === key && <span style={{ marginLeft: "auto", color: t.primary, fontWeight: 700 }}>✓</span>}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {showIconTray && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: "absolute", top: 52, right: 10, background: t.surface, borderRadius: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.25)", overflow: "hidden", zIndex: 50, minWidth: 240 }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderBottom: `1px solid ${t.border}`, cursor: "pointer" }} onClick={() => setShowIconTray(false)}>
+            <span style={{ fontSize: 16, color: t.textMuted }}>‹</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>AI Icon Style</span>
+          </div>
+          <div style={{ padding: "10px 14px", maxHeight: 320, overflowY: "auto" }}>
+            {[
+              { id: "default", label: "Default" },
+              { id: "ai-letters", label: "AI Letters" },
+              { id: "neon", label: "Neon Glow" },
+              { id: "gradient", label: "Gradient" },
+              { id: "mono", label: "Mono Block" },
+            ].map((opt) => {
+              const active = (getAIIconStyle() || "default") === opt.id;
+              return (
+                <div
+                  key={opt.id}
+                  onClick={() => { setUserAIIconStyle(opt.id); }}
+                  style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 8px", cursor: "pointer", background: active ? t.primaryLight : "transparent", borderRadius: 10, marginBottom: 4 }}
+                >
+                  <Avatar uid={AI_CONTACT_UID} size={40} aiStyleOverride={opt.id} />
+                  <span style={{ fontWeight: 600, fontSize: 13.5, color: active ? t.primary : t.text }}>{opt.label}</span>
+                  {active && <span style={{ marginLeft: "auto", color: t.primary, fontWeight: 700 }}>✓</span>}
+                </div>
+              );
+            })}
+            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 6, lineHeight: 1.5 }}>
+              Your choice overrides the admin default just for you.
+            </div>
           </div>
         </div>
       )}
