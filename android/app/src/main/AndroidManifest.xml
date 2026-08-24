@@ -222,6 +222,32 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
+        <activity-alias
+            android:name=".MainActivityAlias14"
+            android:targetActivity=".MainActivity"
+            android:label="NexText"
+            android:icon="@mipmap/ic_icon14"
+            android:roundIcon="@mipmap/ic_icon14"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityAlias15"
+            android:targetActivity=".MainActivity"
+            android:label="NexText"
+            android:icon="@mipmap/ic_icon15"
+            android:roundIcon="@mipmap/ic_icon15"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <provider
             android:name="androidx.core.content.FileProvider"

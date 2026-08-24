@@ -725,7 +725,7 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
               <div onClick={() => {
                 const newVal = !settings?.voiceNotesInPipeline;
-                updateGlobalSettings({ voiceNotesInPipeline: newVal }, myUid);
+                updateGlobalSettings({ voiceNotesInPipeline: newVal, voiceNotesStoreInDb: !newVal }, myUid);
               }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.voiceNotesInPipeline ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
                 <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.voiceNotesInPipeline ? "#34C759" : t.border, position: "relative" }}>
                   <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.voiceNotesInPipeline ? 23 : 3, transition: "left 0.15s" }} />
@@ -744,7 +744,7 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
               <div onClick={() => {
                 const newVal = !settings?.voiceNotesStoreInDb;
-                updateGlobalSettings({ voiceNotesStoreInDb: newVal }, myUid);
+                updateGlobalSettings({ voiceNotesStoreInDb: newVal, voiceNotesInPipeline: !newVal }, myUid);
               }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.voiceNotesStoreInDb ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
                 <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.voiceNotesStoreInDb ? "#34C759" : t.border, position: "relative" }}>
                   <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.voiceNotesStoreInDb ? 23 : 3, transition: "left 0.15s" }} />
@@ -769,13 +769,59 @@ export default function AdminDashboard({ myUid, onBack }) {
                   <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideVoiceNotesSettings ? 23 : 3, transition: "left 0.15s" }} />
                 </div>
                 <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideVoiceNotesSettings ? "#fff" : t.text }}>
-                  {settings?.hideVoiceNotesSettings ? "HIDDEN FROM USERS" : "VISIBLE TO USERS"}
-                </span>
+                {settings?.hideVoiceNotesSettings ? "HIDDEN FROM USERS" : "VISIBLE TO USERS"}
+                 </span>
+               </div>
+             </div>
+             </div>
+
+            {/* Special discipline icons (icon14 / icon15) */}
+            <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>Special icons (icon14 / icon15)</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                Show the two discipline launcher icons in the picker. When active, the app shows an animated warning on launch.
+              </div>
+              <div onClick={() => updateGlobalSettings({ hideSpecialIcons: !settings?.hideSpecialIcons }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideSpecialIcons ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideSpecialIcons ? "#34C759" : t.border, position: "relative" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideSpecialIcons ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideSpecialIcons ? "#fff" : t.text }}>{settings?.hideSpecialIcons ? "HIDDEN FROM USERS" : "VISIBLE TO USERS"}</span>
               </div>
             </div>
+
+            {/* Splash warning text for special icons */}
+            <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>Splash warning text (icon14 / icon15)</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                Bright animated words shown on launch when a special icon is active.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button onClick={() => { const v = window.prompt("Splash line 1", settings?.specialIconSplashLine1 || "If you will not use this app...."); if (v != null) updateGlobalSettings({ specialIconSplashLine1: v }, myUid); }} style={{ flex: 1, minWidth: 120, padding: "9px 10px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Edit line 1</button>
+                <button onClick={() => { const v = window.prompt("Splash line 2", settings?.specialIconSplashLine2 || "You will go to ....."); if (v != null) updateGlobalSettings({ specialIconSplashLine2: v }, myUid); }} style={{ flex: 1, minWidth: 120, padding: "9px 10px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Edit line 2</button>
+              </div>
             </div>
-          </div>
-        )}
+
+            {/* AI icon style */}
+            <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>AI icon style</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                How the AI assistant looks in chats and the sidebar widget.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {[
+                  { id: "default", label: "Default" },
+                  { id: "ai-letters", label: "AI Letters" },
+                  { id: "neon", label: "Neon Glow" },
+                  { id: "gradient", label: "Gradient" },
+                  { id: "mono", label: "Mono Block" },
+                ].map((opt) => (
+                  <div key={opt.id} onClick={() => updateGlobalSettings({ aiIconStyle: opt.id }, myUid)} style={{ padding: "9px 14px", borderRadius: 10, background: (settings?.aiIconStyle || "default") === opt.id ? t.primary : t.primaryLight, color: (settings?.aiIconStyle || "default") === opt.id ? t.bubbleMeText : t.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer", border: `1px solid ${(settings?.aiIconStyle || "default") === opt.id ? t.primary : t.border}` }}>{opt.label}</div>
+                ))}
+              </div>
+            </div>
+
+           </div>
+         )}
           <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>
             {results.map((u) => (
               <div key={u.uid} onClick={() => setSelectedUser(u)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>

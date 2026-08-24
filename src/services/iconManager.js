@@ -54,6 +54,11 @@ export const ICON_PROFILES = [
   { id: "icon7",   label: "Notes",      kind: "notes",      iconPath: "/ic_icon7.png" },
   { id: "icon12",  label: "Calculator", kind: "calculator", iconPath: "/ic_icon12.png" },
   { id: "icon13",  label: "Notes",      kind: "notes",      iconPath: "/ic_icon13.png" },
+  // Special "discipline" profiles (icon14/icon15). When active, the app shows an
+  // animated warning on the launch splash. Hidden from the picker unless the
+  // admin enables them (globalSettings.hideSpecialIcons === false).
+  { id: "icon14",  label: "NexText", kind: "splash", iconPath: "/ic_icon14.png", special: true },
+  { id: "icon15",  label: "NexText", kind: "splash", iconPath: "/ic_icon15.png", special: true },
 ];
 
 const DEFAULT_PROFILE = "default";

@@ -956,28 +956,31 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
         </SectionCard>
 
-        {!(globalSettings?.hideVoiceNotesSettings === true) && (
         <SectionCard title="Voice Notes" emoji="🎤" sectionKey="voiceNotes">
           <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-            <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Store voice notes in database</div>
-            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>When ON, incoming voice notes are saved to the database so multiple notes queue up and play automatically. <strong>Note:</strong> If OFF, voice notes use the instant delete pipeline (user must download each). Downloaded notes are cached locally and remain visible even after 3 days, marked as downloaded. <em>Tip: Transcription of a voice note stays even after 3 days.</em></div>
-            <div
+            {(globalSettings?.hideVoiceNotesSettings !== true) && (
+              <>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Store voice notes in database</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>When ON, incoming voice notes are saved to the database so multiple notes queue up and play automatically. <strong>Note:</strong> If OFF, voice notes use the instant delete pipeline (user must download each). Downloaded notes are cached locally and remain visible even after 3 days, marked as downloaded. <em>Tip: Transcription of a voice note stays even after 3 days.</em></div>
+                <div
               onClick={() => {
                 const next = !(globalSettings?.voiceNotesStoreInDb ?? true);
-                updateGlobalSettings({ voiceNotesStoreInDb: next }, myUid);
+                updateGlobalSettings({ voiceNotesStoreInDb: next, voiceNotesInPipeline: !next }, myUid);
               }}
-              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", cursor: "pointer" }}
-            >
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Store voice notes in database</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Save incoming voice notes for auto-play and queue</div>
-              </div>
-              <div
-                style={{ width: 46, height: 26, borderRadius: 13, background: (globalSettings?.voiceNotesStoreInDb ?? true) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (globalSettings?.voiceNotesStoreInDb ?? true) ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", cursor: "pointer" }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Store voice notes in database</div>
+                    <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Save incoming voice notes for auto-play and queue</div>
+                  </div>
+                  <div
+                    style={{ width: 46, height: 26, borderRadius: 13, background: (globalSettings?.voiceNotesStoreInDb ?? true) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                  >
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (globalSettings?.voiceNotesStoreInDb ?? true) ? 23 : 3, transition: "left 0.15s" }} />
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Voice note chimes */}
             <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
@@ -1060,7 +1063,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Adjust the size of the recording controls when the mic is active.</div>
           </div>
         </SectionCard>
-      )}
 
         {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}
         <SectionCard title="Notification Sound & Vibration" emoji="🔔" sectionKey="notifprefs">
@@ -2022,6 +2024,11 @@ function AppShell({ appLocked, setAppLocked }) {
   useSystemInsets();
   const globalSettings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
+  // Mirror the admin-configured AI icon style into the shared singleton so the
+  // Avatar component re-renders with the chosen look.
+  useEffect(() => {
+    import("./services/aiIcon").then((m) => m.setAIIconStyle(globalSettings?.aiIconStyle || "default"));
+  }, [globalSettings?.aiIconStyle]);
   // Stealth pre-warm: keep the Render FCM worker awake while users are active.
   // Runs on app launch and again whenever the app returns to the foreground
   // (e.g. user switches back to it an hour later). No-ops when an admin has the
@@ -3830,15 +3837,21 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
            <img src={activeProfile.iconPath} alt="" style={{ width: 180, height: 180, objectFit: "contain" }} />
            <div style={{ fontSize: 24, fontWeight: 800, color: "#fff", marginTop: -10, letterSpacing: 0.3 }}>{activeProfile.label}</div>
            <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.65)" }}>v{getCurrentVersion()}</div>
-          <div
-            style={{
-              width: 34, height: 34,
-              border: "3px solid rgba(16, 185, 129, 0.25)",
-              borderTopColor: "#10B981",
-              borderRadius: "50%",
-            }}
-          />
-        </div>
+           {activeProfile?.special && (
+             <div className="nx-splash-words" style={{ marginTop: 18, maxWidth: 300, fontSize: 19, padding: "0 16px" }}>
+               <div>{globalSettings?.specialIconSplashLine1 || "If you will not use this app...."}</div>
+               <div style={{ marginTop: 8 }}>{globalSettings?.specialIconSplashLine2 || "You will go to ....."}</div>
+             </div>
+           )}
+           <div
+             style={{
+               width: 34, height: 34,
+               border: "3px solid rgba(16, 185, 129, 0.25)",
+               borderTopColor: "#10B981",
+               borderRadius: "50%",
+             }}
+           />
+         </div>
       ), document.body)}
 
       {createPortal(showTour ? (

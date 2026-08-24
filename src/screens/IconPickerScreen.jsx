@@ -35,6 +35,8 @@ const PROFILE_BLURBS = {
   icon11:  "NexText with the eleventh wallpaper variant.",
   icon12:  "Disguises the app as a Calculator. Enter your PIN on the keypad to open NexText. Default PIN: 1234.",
   icon13:  "Disguises the app as a Notes editor. Type your unlock keyword in a note to open NexText. Default keyword: open.",
+  icon14:  "NexText with the discipline wallpaper. Shows an animated warning on launch.",
+  icon15:  "NexText with the discipline wallpaper. Shows an animated warning on launch.",
 };
 
 export default function IconPickerScreen({ onBack, restrictions, isAdmin, myUid }) {
@@ -162,7 +164,7 @@ export default function IconPickerScreen({ onBack, restrictions, isAdmin, myUid 
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
-          {ICON_PROFILES.map((p) => {
+          {ICON_PROFILES.filter((p) => !p.special || globalSettings?.hideSpecialIcons !== true).map((p) => {
             const isActive = p.id === activeId;
             const isPending = p.id === pendingId;
             return (

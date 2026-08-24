@@ -295,3 +295,22 @@ body.nextext-no-bounce .nx-scroll {
 #nextext-app-shell.actual-dark-theme [style*="color: #8A7856"] {
   color: #8696a0 !important;
 }
+
+/* Animated warning words shown on the launch splash for the special
+   discipline icon profiles (icon14 / icon15). */
+@keyframes nxSplashPulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.97); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+@keyframes nxSplashHue {
+  0% { color: #FFD60A; text-shadow: 0 0 14px rgba(255, 214, 10, 0.7); }
+  50% { color: #FF453A; text-shadow: 0 0 16px rgba(255, 69, 58, 0.8); }
+  100% { color: #FFD60A; text-shadow: 0 0 14px rgba(255, 214, 10, 0.7); }
+}
+.nx-splash-words {
+  text-align: center;
+  font-weight: 900;
+  line-height: 1.25;
+  letter-spacing: 0.4px;
+  animation: nxSplashPulse 1.6s ease-in-out infinite, nxSplashHue 2.4s linear infinite;
+}

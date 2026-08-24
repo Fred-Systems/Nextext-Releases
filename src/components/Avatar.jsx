@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X, Eye, User, Image as ImageIcon, Info } from "lucide-react";
 import { getAvatarColor, getAvatarStyle, lightenColor, getAvatarInitial } from "../utils/avatarColors";
+import { useAIIconStyle } from "../services/aiIcon";
+import { AI_CONTACT_UID } from "../firebase/ai";
 
 const LOCAL_OVERRIDE_KEY = "nextext_contact_photo_overrides";
 export function getLocalPhotoOverride(uid) {
@@ -12,6 +14,28 @@ export function getLocalPhotoOverride(uid) {
     const overrides = JSON.parse(raw);
     return overrides[uid] || null;
   } catch { return null; }
+}
+
+// Renders the inner circle for the AI assistant avatar based on the chosen
+// style (see src/services/aiIcon.js). Returns a style object + the label.
+export function aiAvatarInner(aiStyle, size, fontSize) {
+  const base = {
+    width: size, height: size, borderRadius: "50%",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize, fontWeight: 800, color: "#fff", userSelect: "none",
+  };
+  switch (aiStyle) {
+    case "ai-letters":
+      return { style: { ...base, background: "#0B141A", color: "#10B981", letterSpacing: 1, fontStyle: "italic" }, label: "AI" };
+    case "neon":
+      return { style: { ...base, background: "#06141A", color: "#39FF14", textShadow: "0 0 8px #39FF14, 0 0 16px #39FF14" }, label: "AI" };
+    case "gradient":
+      return { style: { ...base, background: "linear-gradient(135deg, #10B981, #00A884 60%, #25D366)", color: "#fff" }, label: "AI" };
+    case "mono":
+      return { style: { ...base, background: "#111111", color: "#EDEDED" }, label: "AI" };
+    default:
+      return { style: { ...base, background: "#10B981", color: "#fff" }, label: "AI" };
+  }
 }
 
 // Global avatar-menu coordination: only one 3-button menu may be open at a
@@ -39,6 +63,8 @@ export default React.memo(function Avatar({ photoURL, name, uid, size = 52, styl
     : { background: bg };
   const initial = getAvatarInitial(name);
   const fontSize = Math.round(size * 0.38);
+  const aiStyle = useAIIconStyle();
+  const isAI = uid === AI_CONTACT_UID;
   const ringPad = hasActiveStatus ? 3 : 0;
   const outerSize = size + ringPad * 2;
   const hasPhoto = !!effectivePhotoURL;
@@ -129,6 +155,8 @@ export default React.memo(function Avatar({ photoURL, name, uid, size = 52, styl
     >
       {effectivePhotoURL ? (
         <img src={effectivePhotoURL} alt={name || "avatar"} className="nx-avatar-thumb" style={{ width: size, height: size, objectFit: "cover" }} />
+      ) : isAI ? (
+        (() => { const a = aiAvatarInner(aiStyle, size, fontSize); return <div style={a.style}>{a.label}</div>; })()
       ) : (
         <div style={{ width: size, height: size, borderRadius: "50%", ...bgStyle, display: "flex", alignItems: "center", justifyContent: "center", fontSize, fontWeight: 700, color: "#fff", userSelect: "none" }}>
           {initial}
