@@ -22,7 +22,6 @@ import { doc, getDoc, onSnapshot, addDoc, collection, serverTimestamp, updateDoc
 import { db } from "../firebase/config";
 import { registerPlugin } from "@capacitor/core";
 import { Capacitor } from "@capacitor/core";
-import { Filesystem, Directory, Encoding } from "@capacitor/filesystem";
 import Avatar, { getLocalPhotoOverride } from "../components/Avatar";
 import { extractFirstUrl, fetchLinkPreview, isLinkPreviewEnabled } from "../utils/linkPreview";
 import { playVoicePing, playVoiceEndChime } from "../utils/pingSounds";
@@ -34,26 +33,27 @@ const NEX_TEXT_FOLDER = "NexText";
 
 async function saveToNexTextFolder(fileName, blob, mimeType) {
   try {
-    const base64 = await blobToBase64(blob);
-    if (Capacitor.isNativePlatform()) {
-      await Filesystem.writeFile({
-        path: `NexText/${fileName}`,
-        data: base64,
-        directory: Directory.Downloads,
-        encoding: Encoding.UTF8,
-        recursive: true,
-      });
-    } else {
+    if (Capacitor.getPlatform() === "web" && typeof window.showDirectoryPicker === "function") {
       const handle = await window.showDirectoryPicker({ mode: "readwrite" });
       const nexTextDir = await handle.getDirectoryHandle("NexText", { create: true });
       const fileHandle = await nexTextDir.getFileHandle(fileName, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(blob);
       await writable.close();
+    } else {
+      // Android/iOS WebView: trigger a download into the device's Downloads folder.
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     }
   } catch (error) {
     console.error("Failed to save to NexText folder:", error);
-    const url = URL.createObjectURL(new Blob([blob]));
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = fileName;
@@ -62,14 +62,6 @@ async function saveToNexTextFolder(fileName, blob, mimeType) {
   }
 }
 
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result.split(",")[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
 import { useStatuses } from "../firebase/status";
 import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote, useSystemConfigHook, translateMessage, LANGUAGES, getLanguageLabel } from "../firebase/ai";
 import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
