@@ -6,7 +6,7 @@ import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, useSystemConfigHook, describeAIError } from "../firebase/ai";
-import { getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
+import { useAIIconStyle, getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
 import Avatar from "../components/Avatar";
 
 function ThinkingDots({ color = "#000" }) {
@@ -111,6 +111,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [showSettings, setShowSettings] = useState(false);
   const [showPersonaTray, setShowPersonaTray] = useState(false);
   const [showIconTray, setShowIconTray] = useState(false);
+  const aiIcon = useAIIconStyle();
   const [showProfile, setShowProfile] = useState(false);
   const [userDoc, setUserDoc] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -625,7 +626,7 @@ export default function AIChatScreen({ myUid, onBack }) {
               onClick={() => { setShowSettings(false); setShowIconTray(true); }}
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
             >
-              <Avatar uid={AI_CONTACT_UID} size={22} aiStyleOverride={getAIIconStyle()} />
+              <Avatar uid={AI_CONTACT_UID} size={22} aiStyleOverride={aiIcon} />
               <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>AI Icon Style</span>
               <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
             </div>
@@ -693,7 +694,7 @@ export default function AIChatScreen({ myUid, onBack }) {
               { id: "gradient", label: "Gradient" },
               { id: "mono", label: "Mono Block" },
             ].map((opt) => {
-              const active = (getAIIconStyle() || "default") === opt.id;
+              const active = (aiIcon || "default") === opt.id;
               return (
                 <div
                   key={opt.id}
