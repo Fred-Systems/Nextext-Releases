@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { X, Eye, User, Image as ImageIcon, Info } from "lucide-react";
+import { X, Eye, User, Image as ImageIcon, Info, Check } from "lucide-react";
 import { getAvatarColor, getAvatarStyle, lightenColor, getAvatarInitial } from "../utils/avatarColors";
 import { useAIIconStyle } from "../services/aiIcon";
 import { AI_CONTACT_UID } from "../firebase/ai";
@@ -48,7 +48,7 @@ function broadcastAvatarMenu(openUid) {
   avatarMenuListeners.forEach((fn) => fn(openUid));
 }
 
-export default React.memo(function Avatar({ photoURL, name, uid, size = 52, style = {}, hasActiveStatus = false, statusViewed = false, onStatusView, onViewProfile, onViewPicture, onViewGroupInfo, hideLocalOverride = false, blockStatus = false, aiStyleOverride = null }) {
+export default React.memo(function Avatar({ photoURL, name, uid, size = 52, style = {}, hasActiveStatus = false, statusViewed = false, onStatusView, onViewProfile, onViewPicture, onViewGroupInfo, hideLocalOverride = false, blockStatus = false, aiStyleOverride = null, verified = false }) {
   const [showMenu, setShowMenu] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const avatarRef = useRef(null);
@@ -166,9 +166,24 @@ export default React.memo(function Avatar({ photoURL, name, uid, size = 52, styl
     </div>
   );
 
+  const badgeSize = Math.max(14, Math.round(size * 0.34));
   return (
     <>
-      {avatarNode}
+      <span style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+        {avatarNode}
+        {verified && (
+          <span
+            title="Verified"
+            style={{
+              position: "absolute", right: 0, bottom: 0, width: badgeSize, height: badgeSize,
+              borderRadius: "50%", background: "#1DA1F2", border: "2px solid #fff",
+              display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2,
+            }}
+          >
+            <Check size={Math.round(badgeSize * 0.62)} color="#fff" strokeWidth={3} />
+          </span>
+        )}
+      </span>
       {showMenu && createPortal(
         <div onClick={closeMenu} style={{ position: "fixed", inset: 0, zIndex: 99998 }}>
           <div ref={menuContentRef} onClick={(e) => e.stopPropagation()} style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(30,30,30,0.97)", borderRadius: 12, overflowY: "auto", maxHeight: "70vh", zIndex: 99999, boxShadow: "0 8px 30px rgba(0,0,0,0.5)", minWidth: 200, whiteSpace: "nowrap", WebkitOverflowScrolling: "touch" }}>

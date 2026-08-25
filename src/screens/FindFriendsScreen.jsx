@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ChevronLeft, Users, RefreshCw, Smartphone, Share2, Package } from "lucide-react";
+import { ChevronLeft, Users, RefreshCw, Smartphone, Share2, Package, Check } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, getDocs } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -170,7 +170,7 @@ export default function FindFriendsScreen({ myUid, onBack }) {
         if (d.id === myUid) return;
         const num = normalizePhone(data.phoneNumberNormalized || data.phoneNumber);
         if (!num) return;
-        usersByPhone.set(num, { uid: d.id, displayName: data.displayName || data.username || "NexText user", username: data.username || "", phone: num });
+        usersByPhone.set(num, { uid: d.id, displayName: data.displayName || data.username || "NexText user", username: data.username || "", phone: num, verified: data.verified, hideVerified: data.hideVerified });
       });
 
       const found = [];
@@ -263,7 +263,7 @@ export default function FindFriendsScreen({ myUid, onBack }) {
               <div key={u.uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", borderBottom: `1px solid ${t.border}` }}>
                 <div style={{ width: 40, height: 40, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, color: t.primary }}>{u.displayName?.[0] || "?"}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14.5, color: t.text }}>{u.displayName}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 600, fontSize: 14.5, color: t.text }}>{u.displayName}{u.verified && !u.hideVerified && <Check size={14} color="#1DA1F2" strokeWidth={3} />}</div>
                   <div style={{ fontSize: 12, color: t.textMuted }}>@{u.username}</div>
                 </div>
                 <button disabled={sentTo.includes(u.uid)} onClick={() => handleAdd(u.uid)} style={{ padding: "7px 14px", borderRadius: 16, border: "none", background: sentTo.includes(u.uid) ? t.border : t.primary, color: sentTo.includes(u.uid) ? t.textMuted : t.bubbleMeText, fontSize: 12.5, fontWeight: 700, cursor: sentTo.includes(u.uid) ? "default" : "pointer" }}>

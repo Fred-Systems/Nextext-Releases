@@ -304,6 +304,15 @@ export default function AdminDashboard({ myUid, onBack }) {
     }
   };
 
+  const toggleUserVerified = async (uid, currentVal) => {
+    setError("");
+    try {
+      await updateDoc(doc(db, "users", uid), { verified: !currentVal });
+    } catch (e) {
+      setError("Couldn't update verified status: " + e.message);
+    }
+  };
+
   const toggleUserHideAISettings = async (uid, currentVal) => {
     setError("");
     try {
@@ -829,7 +838,7 @@ export default function AdminDashboard({ myUid, onBack }) {
                   { id: "gradient", label: "Gradient" },
                   { id: "mono", label: "Mono Block" },
                 ].map((opt) => (
-                  <div key={opt.id} onClick={() => updateGlobalSettings({ aiIconStyle: opt.id }, myUid)} style={{ padding: "9px 14px", borderRadius: 10, background: (settings?.aiIconStyle || "default") === opt.id ? t.primary : t.primaryLight, color: (settings?.aiIconStyle || "default") === opt.id ? t.bubbleMeText : t.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer", border: `1px solid ${(settings?.aiIconStyle || "default") === opt.id ? t.primary : t.border}` }}>{opt.label}</div>
+                  <div key={opt.id} onClick={() => updateGlobalSettings({ aiIconStyle: opt.id }, myUid)} style={{ padding: "9px 14px", borderRadius: 10, background: (settings?.aiIconStyle || "neon") === opt.id ? t.primary : t.primaryLight, color: (settings?.aiIconStyle || "neon") === opt.id ? t.bubbleMeText : t.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer", border: `1px solid ${(settings?.aiIconStyle || "neon") === opt.id ? t.primary : t.border}` }}>{opt.label}</div>
                 ))}
               </div>
             </div>
@@ -902,6 +911,10 @@ export default function AdminDashboard({ myUid, onBack }) {
                 <div onClick={(e) => { e.stopPropagation(); toggleUserHideAISettings(u.uid, !!u.hideAISettings); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.hideAISettings ? "#FFF3CD" : t.bg, border: `1px solid ${u.hideAISettings ? "#856404" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
                   <EyeOff size={12} color={u.hideAISettings ? "#856404" : t.textMuted} />
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: u.hideAISettings ? "#856404" : t.textMuted }}>{u.hideAISettings ? "AI Settings Hidden" : "AI Settings Visible"}</span>
+                </div>
+                <div onClick={(e) => { e.stopPropagation(); toggleUserVerified(u.uid, !!u.verified); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.verified ? "#E1F0FF" : t.bg, border: `1px solid ${u.verified ? "#1DA1F2" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
+                  <Check size={12} color={u.verified ? "#1DA1F2" : t.textMuted} />
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: u.verified ? "#1DA1F2" : t.textMuted }}>{u.verified ? "Verified" : "Verify"}</span>
                 </div>
               </div>
             </div>

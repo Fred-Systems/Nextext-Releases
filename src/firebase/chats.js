@@ -426,9 +426,9 @@ export async function sendForwardedMessage(targetChatId, senderUid, sourceMsg, o
     editedAt: null,
     editHistory: [],
     editWindowExpiresAt: null,
-    disappearing: null,
+    disappearing: disappearing || null,
     screenshotDetected: false,
-    replyTo: null,
+    replyTo,
     reactions: {},
     poll: null,
     statusRef: null,
@@ -556,7 +556,7 @@ export async function reactToMessage(chatId, messageId, myUid, emoji) {
 // already live in Supabase Storage by the time this is called (see
 // src/supabase/media.js); this just records the message doc pointing at it.
 export async function sendMediaMessage(chatId, senderUid, type, uploadResult, otherParticipants, options = {}) {
-  const { replyTo = null, durationSeconds = null, statusRef = null, text = null } = options;
+  const { replyTo = null, durationSeconds = null, statusRef = null, text = null, disappearing = null } = options;
   const sender = await snapshotSenderName(senderUid);
   await addDoc(collection(db, "chats", chatId, "messages"), {
     senderId: senderUid,

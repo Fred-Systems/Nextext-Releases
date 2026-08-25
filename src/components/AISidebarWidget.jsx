@@ -1,11 +1,15 @@
 import React from "react";
 import { useSystemConfigHook } from "../firebase/ai";
+import { useAIIconStyle, aiAvatarInner } from "../services/aiIcon";
 
 export default function AISidebarWidget({ userDoc, onOpenAI }) {
   const sysConfig = useSystemConfigHook();
+  const aiStyle = useAIIconStyle();
 
   const aiApproved = userDoc?.aiApproved && !sysConfig?.aiGloballyDisabled && !sysConfig?.hideAiEverywhere && userDoc?.restrictions?.blockAI !== true;
   if (!aiApproved) return null;
+
+  const inner = aiAvatarInner(aiStyle, 30, 13);
 
   return (
     <div
@@ -29,7 +33,7 @@ export default function AISidebarWidget({ userDoc, onOpenAI }) {
         transition: "transform 0.2s, background 0.2s",
       }}
     >
-      <span style={{ fontSize: 24, opacity: 0.7 }}>🤖</span>
+      <div style={inner.style}>{inner.label}</div>
     </div>
   );
 }

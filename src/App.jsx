@@ -448,7 +448,7 @@ function NotificationPrefsRow({ t, auth, myUid }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale,   showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth, appGlobalSettings, darkLettering, setDarkLettering, actualDarkTheme, setActualDarkTheme, setThemeKey }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale,   showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth, appGlobalSettings, darkLettering, setDarkLettering, actualDarkTheme, setActualDarkTheme, splashDuration, setSplashDuration, moreRounded, setMoreRounded, setThemeKey }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -1089,6 +1089,48 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 style={{ width: 46, height: 26, borderRadius: 13, background: (showSplash ?? true) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
               >
                 <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: showSplash ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Splash duration — how long the launch screen (with the words) shows */}
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 8 }}>Launch screen duration</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                  <div
+                    key={s}
+                    onClick={() => setSplashDuration(s)}
+                    style={{ padding: "6px 12px", borderRadius: 10, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: splashDuration === s ? t.primary : t.bg, color: splashDuration === s ? t.bubbleMeText : t.text, border: `1px solid ${splashDuration === s ? t.primary : t.border}` }}
+                  >{s}s</div>
+                ))}
+              </div>
+            </div>
+
+            {/* More rounded UI */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Rounded UI</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Use softer, more rounded corners on cards, buttons and bubbles.</div>
+              </div>
+              <div
+                onClick={() => setMoreRounded(!moreRounded)}
+                style={{ width: 46, height: 26, borderRadius: 13, background: moreRounded ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: moreRounded ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Hide my verified badge */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Hide my verified badge</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>If you've been verified, hide the blue check from your profile and search results.</div>
+              </div>
+              <div
+                onClick={() => { const next = !userDoc?.hideVerified; try { updateDoc(doc(db, "users", auth.user.uid), { hideVerified: next }); } catch (e) { setSendError?.("Couldn't update: " + e.message); } }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: userDoc?.hideVerified ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: userDoc?.hideVerified ? 23 : 3, transition: "left 0.15s" }} />
               </div>
             </div>
 
@@ -2028,7 +2070,7 @@ function AppShell({ appLocked, setAppLocked }) {
   // Mirror the admin-configured AI icon style into the shared singleton so the
   // Avatar component re-renders with the chosen look.
   useEffect(() => {
-    import("./services/aiIcon").then((m) => m.setAIIconStyle(globalSettings?.aiIconStyle || "default"));
+    import("./services/aiIcon").then((m) => m.setAIIconStyle(globalSettings?.aiIconStyle || "neon"));
   }, [globalSettings?.aiIconStyle]);
   // Stealth pre-warm: keep the Render FCM worker awake while users are active.
   // Runs on app launch and again whenever the app returns to the foreground
@@ -2136,6 +2178,10 @@ function AppShell({ appLocked, setAppLocked }) {
   });
   const [storyViewerOpen, setStoryViewerOpen] = useState(false);
   const [showSplash, setShowSplash] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
+  const [splashDuration, setSplashDuration] = useState(() => Number(localStorage.getItem("nextext_splash_duration")) || 4);
+  useEffect(() => { try { localStorage.setItem("nextext_splash_duration", String(splashDuration)); } catch {} }, [splashDuration]);
+  const [moreRounded, setMoreRounded] = useState(() => localStorage.getItem("nextext_more_rounded") === "on");
+  useEffect(() => { try { localStorage.setItem("nextext_more_rounded", moreRounded ? "on" : "off"); } catch {} }, [moreRounded]);
   const [hangBanner, setHangBanner] = useState(false);
 
   // If auth stays "loading" too long (e.g. Firebase auth hangs on a particular
@@ -2171,7 +2217,7 @@ function AppShell({ appLocked, setAppLocked }) {
     } catch { /* best-effort */ }
   }, []);
   const [darkLettering, setDarkLettering] = useState(() => localStorage.getItem("nextext_dark_lettering") === "on");
-  const [actualDarkTheme, setActualDarkTheme] = useState(() => localStorage.getItem("nextext_actual_dark_theme") === "on");
+  const [actualDarkTheme, setActualDarkTheme] = useState(() => localStorage.getItem("nextext_actual_dark_theme") !== "off");
 const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
   const [splashFading, setSplashFading] = useState(false);
   const [splashHold, setSplashHold] = useState(true);
@@ -2184,7 +2230,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const [swipeBounce, setSwipeBounce] = useState(() => localStorage.getItem("nextext_swipe_bounce") !== "off");
   const [navConfigLocked, setNavConfigLocked] = useState(() => localStorage.getItem("nextext_nav_config_locked") === "true");
   const [composerButtonOrder, setComposerButtonOrder] = useState(() => localStorage.getItem("nextext_composer_button_order") || "stt-voice");
-  const [searchBarScale, setSearchBarScale] = useState(() => { try { return Number(localStorage.getItem("nextext_search_bar_scale")) || 1; } catch { return 1; } });
+  const [searchBarScale, setSearchBarScale] = useState(() => { try { return Number(localStorage.getItem("nextext_search_bar_scale")) || 1.25; } catch { return 1.25; } });
   const [pendingUpdate, setPendingUpdate] = useState(null);
   const [showTour, setShowTour] = useState(false);
   const [tourStep, setTourStep] = useState(0);
@@ -2354,7 +2400,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // have expired long before the chat interface first appeared).
   useEffect(() => {
     if (!myUid) {
-      const t = setTimeout(() => setSplashHold(false), 8000);
+      const t = setTimeout(() => setSplashHold(false), splashDuration * 1000);
       return () => clearTimeout(t);
     }
     if (localStorage.getItem("nextext_splash_enabled") !== "off") {
@@ -2364,7 +2410,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     setSplashHold(true);
     // Hard fallback — shorter now that the awake-kick repair is disabled
     // (flex layout fixes the geometry on first paint).
-    const t = setTimeout(() => setSplashHold(false), 4000);
+    const t = setTimeout(() => setSplashHold(false), splashDuration * 1000);
     return () => clearTimeout(t);
   }, [myUid]);
   useLayoutEffect(() => {
@@ -3559,6 +3605,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const shellClass = ["nextext-app-shell"];
   if (darkLettering) shellClass.push("dark-lettering");
   if (actualDarkTheme) shellClass.push("actual-dark-theme");
+  if (moreRounded) shellClass.push("nx-rounded");
 
   return (
     <>
@@ -3722,9 +3769,13 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
  appGlobalSettings={globalSettings}
  darkLettering={darkLettering}
  setDarkLettering={setDarkLettering}
- actualDarkTheme={actualDarkTheme}
- setActualDarkTheme={setActualDarkTheme}
- setThemeKey={setThemeKey}
+  actualDarkTheme={actualDarkTheme}
+  setActualDarkTheme={setActualDarkTheme}
+  splashDuration={splashDuration}
+  setSplashDuration={setSplashDuration}
+  moreRounded={moreRounded}
+  setMoreRounded={setMoreRounded}
+  setThemeKey={setThemeKey}
               />
               </PageErrorBoundary>
             </div>

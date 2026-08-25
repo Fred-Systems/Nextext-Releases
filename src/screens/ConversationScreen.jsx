@@ -646,6 +646,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [sendError, setSendError] = useState("");
   const [chatSetupError, setChatSetupError] = useState("");
   const [showAttach, setShowAttach] = useState(false);
+  const [disappearingMode, setDisappearingMode] = useState(false);
+  const [viewingDisappearing, setViewingDisappearing] = useState(null);
+  const [viewedDisappearing, setViewedDisappearing] = useState(() => new Set());
   const [attachRendered, setAttachRendered] = useState(false);
   const [attachClosing, setAttachClosing] = useState(false);
   const [galleryActive, setGalleryActive] = useState(false);
@@ -1737,7 +1740,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     try {
       const result = await uploadChatFile(chatId, myUid, pm.file, { compress: pm.isImage });
       const caption = captionText.trim();
-      await sendMediaMessage(chatId, myUid, pm.isImage ? "image" : "video", result, otherParticipants, { replyTo: replyingTo, text: caption || null });
+      await sendMediaMessage(chatId, myUid, pm.isImage ? "image" : "video", result, otherParticipants, { replyTo: replyingTo, text: caption || null, disappearing: disappearingMode ? { viewOnce: true } : null });
+      setDisappearingMode(false);
       setReplyingTo(null);
       cancelPendingMedia();
     } catch (err) {
@@ -1754,15 +1758,26 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setSendError("");
     setUploading(true);
     try {
-      const result = await uploadChatFile(chatId, myUid, file);
-      await sendMediaMessage(chatId, myUid, "file", result, otherParticipants, { replyTo: replyingTo });
-      setReplyingTo(null);
+       const result = await uploadChatFile(chatId, myUid, file);
+       await sendMediaMessage(chatId, myUid, "file", result, otherParticipants, { replyTo: replyingTo, disappearing: disappearingMode ? { viewOnce: true } : null });
+       setDisappearingMode(false);
+       setReplyingTo(null);
     } catch (err) {
       if (err instanceof FileTooLargeError) setSendError("Files must be under 50MB.");
       else setSendError("Couldn't send: " + err.message);
     }
     setUploading(false);
     closeAttach();
+  };
+
+  const closeDisappearingViewer = async () => {
+    const m = viewingDisappearing;
+    if (!m) { setViewingDisappearing(null); return; }
+    // Mark as viewed so it never re-shows, then delete for everyone + purge file.
+    setViewingDisappearing(null);
+    setViewedDisappearing((prev) => { const n = new Set(prev); n.add(m.id); return n; });
+    try { await deleteMessageForEveryone(chatId, m.id); } catch {}
+    try { if (m.mediaPath) await deleteChatFile(m.mediaPath); } catch {}
   };
 
   const getMicrophoneStream = async (constraints) => {
@@ -2787,6 +2802,23 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   const renderBubble = (m) => {
+    // Disappearing (view-once) media: the recipient sees a "tap to view"
+    // placeholder instead of the media itself. Once opened it is deleted for
+    // everyone after the viewer is closed. The sender always sees what they sent.
+    if (m.disappearing && m.senderId !== myUid && !viewedDisappearing.has(m.id)) {
+      const label = m.type === "file" ? "Disappearing file" : m.type === "video" ? "Disappearing video" : "Disappearing photo";
+      return (
+        <div>
+          <StatusReplyBlock statusRef={m.statusRef} mine={false} t={t} />
+          <div onClick={(e) => { e.stopPropagation(); setViewingDisappearing(m); }} style={{ cursor: "pointer", width: 220, borderRadius: 12, background: "rgba(255,59,48,0.10)", border: "1px solid rgba(255,59,48,0.35)", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: "#FF3B30" }}>
+            <EyeOff size={28} />
+            <div style={{ fontSize: 13.5, fontWeight: 700, textAlign: "center" }}>{label}</div>
+            <div style={{ fontSize: 11.5, opacity: 0.85, textAlign: "center" }}>Tap to view once. It will be deleted after you close.</div>
+          </div>
+          {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderRichText(m.text)}</div>}
+        </div>
+      );
+    }
     const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays ?? 3);
     // WhatsApp-style instant media delete (one-on-one only).
     // Voice notes: check voiceNotesStoreInDb setting.
@@ -3418,6 +3450,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     <Camera size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Camera</span>
                   </div>
                 )}
+                <div onClick={() => { setDisappearingMode(true); closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <EyeOff size={17} color="#FF3B30" /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Disappearing media (view once)</span>
+                </div>
               </div>
               </>,
               document.body
@@ -3487,6 +3522,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             )}
             <input ref={photoInputRef} type="file" accept="image/*,video/*" style={{ display: "none" }} onChange={handlePhotoOrVideoPick} onCancel={() => setGalleryActive(false)} />
             <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={handleFilePick} />
+            {disappearingMode && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 16px", padding: "8px 12px", borderRadius: 12, background: "rgba(255,59,48,0.12)", border: "1px solid rgba(255,59,48,0.4)", flexShrink: 0 }}>
+                <EyeOff size={15} color="#FF3B30" />
+                <span style={{ flex: 1, fontSize: 12.5, color: "#FF3B30", fontWeight: 600 }}>Disappearing media — the next photo, video, or file you send will vanish after the recipient views it once.</span>
+                <div onClick={() => setDisappearingMode(false)} style={{ padding: "4px 8px", borderRadius: 8, background: "rgba(255,59,48,0.18)", fontSize: 12, fontWeight: 700, color: "#FF3B30", cursor: "pointer", flexShrink: 0 }}>Cancel</div>
+              </div>
+            )}
             <div style={{ flex: 1, display: "flex", alignItems: "center", background: t.surface, borderRadius: 24, padding: `${Math.round(8 * composerHeight)}px 6px ${Math.round(8 * composerHeight)}px 10px`, gap: 2, minWidth: 0 }}>
               <div
                 onClick={() => { if (showEmojiPicker) setShowEmojiPicker(false); else { closeAttach(); setShowEmojiPicker(true); } }}
@@ -3814,7 +3856,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   setUploading(true);
                   try {
                     const result = await uploadChatFile(chatId, myUid, p.file, { compress: true });
-                    await sendMediaMessage(chatId, myUid, "image", result, otherParticipants);
+                    await sendMediaMessage(chatId, myUid, "image", result, otherParticipants, { disappearing: disappearingMode ? { viewOnce: true } : null });
+                    setDisappearingMode(false);
                     setCapturedPhotos((prev) => prev.filter((_, j) => j !== i));
                   } catch (err) {
                     setSendError("Couldn't send photo: " + err.message);
@@ -3838,7 +3881,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   setUploading(true);
                   try {
                     const result = await uploadChatFile(chatId, myUid, last.file, { compress: true });
-                    await sendMediaMessage(chatId, myUid, "image", result, otherParticipants);
+                    await sendMediaMessage(chatId, myUid, "image", result, otherParticipants, { disappearing: disappearingMode ? { viewOnce: true } : null });
+                    setDisappearingMode(false);
                     setCapturedPhotos((prev) => prev.filter((_, j) => j !== prev.length - 1));
                   } catch (err) {
                     setSendError("Couldn't send photo: " + err.message);
@@ -3870,6 +3914,23 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </div>
           <div style={{ flex: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 16px 30px", boxSizing: "border-box" }}>
             <ZoomableMedia src={fullscreenImage} type="image" onTap={() => setFullscreenImage(null)} />
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {viewingDisappearing && createPortal(
+        <div className="nextext-overlay-backdrop" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.96)", zIndex: 999999, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ position: "absolute", top: 14, right: 14, display: "flex", gap: 14, zIndex: 61 }}>
+            <div onClick={() => closeDisappearingViewer()} style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <X size={18} color="#fff" />
+            </div>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, width: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: "60px 16px 30px", boxSizing: "border-box" }}>
+            {viewingDisappearing.type === "image" && <img src={viewingDisappearing.mediaURL} alt="" style={{ maxWidth: "100%", maxHeight: "68%", objectFit: "contain", borderRadius: 10 }} onError={() => setImgErrorIds((prev) => new Set(prev).add(viewingDisappearing.id))} />}
+            {viewingDisappearing.type === "video" && <video src={viewingDisappearing.mediaURL} controls autoPlay playsInline style={{ maxWidth: "100%", maxHeight: "68%", borderRadius: 10 }} onError={() => setImgErrorIds((prev) => new Set(prev).add(viewingDisappearing.id))} />}
+            {viewingDisappearing.type === "file" && <a href={viewingDisappearing.mediaURL} target="_blank" rel="noopener noreferrer" download={viewingDisappearing.fileName || undefined} style={{ color: "#fff", fontSize: 15, fontWeight: 600, textDecoration: "underline" }}>Open file: {viewingDisappearing.fileName || "file"}</a>}
+            <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 13, textAlign: "center", maxWidth: 300, lineHeight: 1.4 }}>This disappearing media will be deleted for everyone once you leave this view. Please don't screenshot or screen-record.</div>
           </div>
         </div>,
         document.body
@@ -4067,7 +4128,12 @@ const MessageList = React.memo(function MessageList({ ctx }) {
     } else if (firstMount.current || isAppend) {
       const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       if (firstMount.current || distFromBottom < 250) {
-        virtualizer.scrollToIndex(displayMessages.length - 1, { align: "end", behavior: "auto" });
+        // Defer past the current lifecycle method: calling scrollToIndex here
+        // forces the virtualizer to synchronously re-measure (flushSync), which
+        // spams "flushSync was called from inside a lifecycle method" ~20x.
+        setTimeout(() => {
+          try { virtualizer.scrollToIndex(displayMessages.length - 1, { align: "end", behavior: "auto" }); } catch {}
+        }, 0);
       }
     }
 
