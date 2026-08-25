@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { ThemeProvider, useTheme, themes, ROTATE_INTERVALS, isThemeDark } from "./theme/ThemeContext";
 
@@ -61,7 +61,7 @@ import UserStatsCard from "./components/UserStatsCard";
 import PageErrorBoundary from "./components/PageErrorBoundary";
 import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, openDownloadUrl, saveApkToDevice, setLastSeenRelease } from "./updater/updateChecker";
 import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
-import { updateGlobalSettings, useGlobalSettings, useGlobalSettingsQuotaLimited } from "./firebase/config-settings";
+import { updateGlobalSettings, useGlobalSettings, subscribe as subscribeGlobalSettings, getQuotaSnapshot } from "./firebase/config-settings";
 import { runPreWarmPing } from "./firebase/prewarm";
 import { useSystemInsets } from "./utils/useSystemInsets";
 import { changeNames, isNameChangeBlocked, isUsernameAvailable } from "./firebase/names";
@@ -464,7 +464,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const appLockPassRef = useRef(null);
   const sysConfig = useSystemConfigHook();
   const globalSettings = useGlobalSettings();
-  const settingsQuotaLimited = useGlobalSettingsQuotaLimited();
 
   // Cache the admin version override in localStorage so the updater can read it synchronously.
   useEffect(() => {
@@ -3563,11 +3562,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
   return (
     <>
-    {settingsQuotaLimited && (
-      <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999998, background: "#B8860B", color: "#fff", padding: "8px 12px", fontSize: 12.5, fontWeight: 600, textAlign: "center", boxSizing: "border-box" }}>
-        ⚠ Firebase free quota reached (too many requests). Showing cached data and retrying automatically — some settings may be temporarily out of date.
-      </div>
-    )}
+    <QuotaBanner />
     <div
       ref={shellRef}
       id="nextext-app-shell"
@@ -3941,6 +3936,20 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
     </div>
     </>
+  );
+}
+
+// Shows a non-blocking amber banner when Firestore is returning 429
+// (resource-exhausted) for the global-config doc, so the app keeps working off
+// cached settings instead of looking broken. Uses the store primitives directly
+// (not a wrapper hook) to avoid the wrapper being tree-shaken.
+function QuotaBanner() {
+  const limited = useSyncExternalStore(subscribeGlobalSettings, getQuotaSnapshot, getQuotaSnapshot);
+  if (!limited) return null;
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999998, background: "#B8860B", color: "#fff", padding: "8px 12px", fontSize: 12.5, fontWeight: 600, textAlign: "center", boxSizing: "border-box" }}>
+      ⚠ Firebase free quota reached (too many requests). Showing cached data and retrying automatically — some settings may be temporarily out of date.
+    </div>
   );
 }
 

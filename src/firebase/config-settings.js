@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { doc, onSnapshot, getDoc, setDoc } from "firebase/firestore";
-import { db } from "./config";
+import { db, auth } from "./config";
+import { onAuthStateChanged } from "firebase/auth";
 
 const CONFIG_REF_PATH = ["config", "globalSettings"];
 const CACHE_KEY = "nextext_global_settings_cache";
@@ -16,13 +17,18 @@ function loadCache() {
 
 // A single shared subscription backs every useGlobalSettings() consumer. This
 // collapses what used to be ~24 concurrent onSnapshot listeners (one per
-// component) on the same doc into ONE Firestore listener — critical because
-// each listener is a BatchGetDocuments RPC and the free tier quickly returns
-// 429 "resource-exhausted" under that load.
+// component) on the same doc into ONE Firestore listener.
+//
+// CRITICAL: the Firestore rule for config/{doc} requires isSignedIn(). Starting
+// the listener before auth resolves made the first read unauthenticated, which
+// Firestore denied ("Missing or insufficient permissions") — and our retry
+// loop then hammered the backend into a 429 all day. So we only subscribe once
+// the user is actually signed in.
 let cache = loadCache();
 let quotaLimited = false;
 const listeners = new Set();
 let unsub = null;
+let authSub = null;
 let retryTimer = null;
 
 function emit() {
@@ -38,6 +44,16 @@ function isQuotaError(err) {
 
 function start() {
   if (unsub) return;
+  if (!auth.currentUser) {
+    // Wait for auth before subscribing, so we never read unauthenticated
+    // (which trips the isSignedIn() rule and starts a deny/retry loop).
+    if (!authSub) {
+      authSub = onAuthStateChanged(auth, (u) => {
+        if (u && !unsub) start();
+      });
+    }
+    return;
+  }
   try {
     unsub = onSnapshot(
       doc(db, ...CONFIG_REF_PATH),
@@ -48,16 +64,16 @@ function start() {
         emit();
       },
       (err) => {
+        // Only retry on quota errors. Permission errors mean we're not
+        // supposed to read this — retrying would just loop into another 429.
         if (isQuotaError(err)) {
           quotaLimited = true;
           console.warn("[globalSettings] Firestore quota limited (429). Using cached/default values and retrying.");
+          if (!retryTimer) {
+            retryTimer = setTimeout(() => { retryTimer = null; restart(); }, 20000);
+          }
         } else {
           console.error("[globalSettings] listener error:", err);
-        }
-        // Firestore retries on its own, but add a manual re-subscribe backoff so
-        // we recover once the quota window resets.
-        if (!retryTimer) {
-          retryTimer = setTimeout(() => { retryTimer = null; restart(); }, 20000);
         }
         emit();
       }
@@ -72,21 +88,19 @@ function restart() {
   start();
 }
 
-function subscribe(cb) {
+export function subscribe(cb) {
   listeners.add(cb);
   start();
   return () => { listeners.delete(cb); };
 }
 
-function getSnapshot() { return cache; }
-function getQuotaSnapshot() { return quotaLimited; }
+export function getSnapshot() { return cache; }
+export function getQuotaSnapshot() { return quotaLimited; }
 
 export function useGlobalSettings() {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-// True while Firestore is returning 429 resource-exhausted for the config doc.
-// Lets the UI show a non-blocking "temporarily busy" banner instead of a blank.
 export function useGlobalSettingsQuotaLimited() {
   return useSyncExternalStore(subscribe, getQuotaSnapshot, getQuotaSnapshot);
 }
