@@ -5,9 +5,11 @@ import { collection, query, where, getDocs, limit as fbLimit } from "firebase/fi
 import { db } from "../firebase/config";
 import DownloadApkButton from "../components/DownloadApkButton";
 import ApkDownloadCount from "../components/ApkDownloadCount";
+import { useGlobalSettings } from "../firebase/config-settings";
 
 export default function AuthScreen({ auth }) {
   const { t } = useTheme();
+  const globalSettings = useGlobalSettings();
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -199,7 +201,7 @@ export default function AuthScreen({ auth }) {
           {mode === "signin" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
         </div>
 
-        <DownloadApkButton subtle />
+        {!globalSettings?.hideDownloadCount && <DownloadApkButton subtle />}
         <ApkDownloadCount />
       </div>
 
@@ -243,7 +245,7 @@ function friendlyError(err) {
     "auth/wrong-password": "Incorrect password.",
     "auth/user-not-found": "No account found with that email.",
     "auth/invalid-credential": "Incorrect email or password.",
-    "auth/argument-error": "Please make sure play store is enabled on your device.",
+    "auth/argument-error": "Google sign-in failed. This is usually a configuration issue — make sure the app's SHA-1/SHA-256 fingerprint and OAuth web client ID are registered in the Firebase Console.",
     "auth/popup-closed-by-user": "Google sign-in was cancelled. Please try again.",
     "auth/popup-blocked": "Pop-up was blocked by your browser. Please allow pop-ups for this site.",
     "auth/unauthorized-domain": "Google sign-in is not allowed on this device. Try signing in with email instead.",
@@ -273,11 +275,11 @@ function friendlyError(err) {
   const rawMsg = typeof err?.message === "string" && err.message ? err.message.trim() : "";
   if (rawMsg) {
     if (
-      rawMsg.includes("argument-error") ||
       rawMsg.toLowerCase().includes("play services") ||
-      rawMsg.toLowerCase().includes("play store")
+      rawMsg.toLowerCase().includes("play store") ||
+      rawMsg.toLowerCase().includes("google play")
     ) {
-      return "Please make sure play store is enabled on your device.";
+      return "Please make sure Play Store / Google Play Services is enabled on your device, then try again.";
     }
     if (rawMsg !== String(code)) {
       return `Google sign-in failed: ${rawMsg}`;

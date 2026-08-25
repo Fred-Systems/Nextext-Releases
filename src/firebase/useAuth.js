@@ -231,14 +231,17 @@ export function useAuth() {
   // error string.
   function playStoreFriendlyError(err) {
     const code = err?.code || "";
-    const msg = String(err?.message || "");
+    const msg = String(err?.message || "").toLowerCase();
+    // Only flag a genuine Play Services / Play Store problem. A generic
+    // auth/argument-error is almost always an OAuth/client-id/SHA config issue,
+    // NOT a missing Play Store — mislabeling it sends users down the wrong path.
     const isPlayStoreIssue =
-      code === "auth/argument-error" ||
-      msg.includes("argument-error") ||
-      msg.toLowerCase().includes("play services") ||
-      msg.toLowerCase().includes("play store");
+      msg.includes("play services") ||
+      msg.includes("play store") ||
+      msg.includes("google play services") ||
+      msg.includes("google play store");
     if (isPlayStoreIssue) {
-      const e = new Error("Please make sure play store is enabled on your device.");
+      const e = new Error("Please make sure Play Store / Google Play Services is enabled on your device, then try again.");
       e.code = "auth/argument-error";
       return e;
     }

@@ -2221,6 +2221,7 @@ function AppShell({ appLocked, setAppLocked }) {
 const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
   const [splashFading, setSplashFading] = useState(false);
   const [splashHold, setSplashHold] = useState(true);
+  const splashStartRef = useRef(0);
   const [aiSidebarOn, setAiSidebarOn] = useState(() => localStorage.getItem("nextext_ai_sidebar") !== "off");
   const [searchMode, setSearchMode] = useState(() => localStorage.getItem("nextext_search_mode") || "visible");
   const [topBarVisible, setTopBarVisible] = useState(() => localStorage.getItem("nextext_top_bar_visible") !== "false");
@@ -2408,11 +2409,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       setSplashVisible(true);
     }
     setSplashHold(true);
-    // Hard fallback — shorter now that the awake-kick repair is disabled
-    // (flex layout fixes the geometry on first paint).
+    splashStartRef.current = Date.now();
+    // Hold for the user-configured splash duration.
     const t = setTimeout(() => setSplashHold(false), splashDuration * 1000);
     return () => clearTimeout(t);
-  }, [myUid]);
+  }, [myUid, splashDuration]);
   useLayoutEffect(() => {
     if (!myUid) return;
     // Run SYNCHRONOUSLY (useLayoutEffect) so the target screen/tab is set
@@ -2605,9 +2606,13 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       try { window.__nxCapturedErrors.push(diag); } catch { /* best-effort */ }
       // Release the splash so it fades normally — any recovery above already
       // ran under the opaque repair cover (or behind the still-held splash),
-      // so nothing ever flashes. A separate 8s fallback guarantees the splash
-      // can't trap the user even if this effect never reaches this point.
-      setSplashHold(false);
+      // so nothing ever flashes. Respect the user's splash duration: don't
+      // release until at least splashDuration has elapsed since the splash
+      // was shown (the auth-screen timer is the real authority, this just
+      // waits for it so the repair never cuts the splash short).
+      const elapsed = Date.now() - splashStartRef.current;
+      const wait = Math.max(0, splashDuration * 1000 - elapsed);
+      setTimeout(() => setSplashHold(false), wait);
       // Force a fresh bar remount the moment the splash is
       // released. On Android WebViews with a stuck compositor, the bar's
       // `key={barEpoch}` might not re-attach to the new frame until the React
