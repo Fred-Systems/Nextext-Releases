@@ -20,7 +20,7 @@ import { FileTooLargeError } from "../media/mediaCompression";
 import { cacheMedia, getLocalMediaUrl, hasCachedMedia } from "../media/localMediaCache";
 import { doc, getDoc, onSnapshot, addDoc, collection, serverTimestamp, updateDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { registerPlugin } from "@capacitor/core";
+import NextextNative from "../native/nextextNative";
 import { Capacitor } from "@capacitor/core";
 import Avatar, { getLocalPhotoOverride } from "../components/Avatar";
 import ZoomableMedia from "../components/ZoomableMedia";
@@ -29,7 +29,7 @@ import { playVoicePing, playVoiceEndChime } from "../utils/pingSounds";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { getSystemInsets } from "../utils/systemInsets";
 
-const NextextNative = registerPlugin("NextextNative");
+
 const NEX_TEXT_FOLDER = "NexText";
 
 function blobToBase64(blob) {

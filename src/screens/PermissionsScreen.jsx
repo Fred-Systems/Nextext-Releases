@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { ChevronLeft, Mic, Camera, Bell, Users, Image as ImageIcon, ExternalLink, RefreshCw, MapPin } from "lucide-react";
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor } from "@capacitor/core";
+import NextextNative from "../native/nextextNative";
 import { PushNotifications } from "@capacitor/push-notifications";
 import { useTheme } from "../theme/ThemeContext";
 import { initNotifications } from "../firebase/notifications";
 
-const NextextNative = registerPlugin("NextextNative");
+
 
 const STATUS_META = {
   granted: { label: "Allowed", color: "#00A884" },

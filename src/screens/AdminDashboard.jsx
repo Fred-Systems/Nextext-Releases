@@ -12,6 +12,8 @@ import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequests
 
 export default function AdminDashboard({ myUid, onBack }) {
   const { t } = useTheme();
+  const settings = useGlobalSettings();
+  const sysConfig = useSystemConfigHook();
   const [tab, setTab] = useState("users");
   const [search, setSearch] = useState("");
   const [results, setResults] = useState([]);
@@ -38,8 +40,6 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [groupActionStatus, setGroupActionStatus] = useState("");
   const [groupAIName, setGroupAIName] = useState("NexText AI");
   const [groupAIPersonality, setGroupAIPersonality] = useState("default");
-  const settings = useGlobalSettings();
-  const sysConfig = useSystemConfigHook();
   const [preWarmOn, setPreWarmOn] = useState(false);
   useEffect(() => {
     getPreWarmConfig().then((c) => setPreWarmOn(!!c.preWarmEnabled)).catch(() => {});

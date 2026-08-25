@@ -5,9 +5,10 @@ import { collection, query, getDocs } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { sendContactRequest } from "../firebase/contacts";
 import { getLatestApkUrl } from "../updater/updateChecker";
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor } from "@capacitor/core";
+import NextextNative from "../native/nextextNative";
 
-const NextextNative = registerPlugin("NextextNative");
+
 
 function normalizePhone(raw) {
   // Strip everything except digits; keep leading + for country code detection
