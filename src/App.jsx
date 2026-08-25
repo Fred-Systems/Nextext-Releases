@@ -3526,12 +3526,6 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     </div>
   ) : null;
 
-  const quotaBannerEl = settingsQuotaLimited ? (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999998, background: "#B8860B", color: "#fff", padding: "8px 12px", fontSize: 12.5, fontWeight: 600, textAlign: "center", boxSizing: "border-box" }}>
-      ⚠ Firebase free quota reached (too many requests). Showing cached data and retrying automatically — some settings may be temporarily out of date.
-    </div>
-  ) : null;
-
   if (auth.loading && showSplash) {
     return <div style={{ ...containerStyle, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0B141A" }}>
       <img src={activeProfile.iconPath} alt="" style={{ width: 100, height: 100, objectFit: "contain", marginBottom: 20 }} onError={(e) => { e.target.style.display = "none"; }} />
@@ -3569,7 +3563,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
   return (
     <>
-    {quotaBannerEl}
+    {settingsQuotaLimited && (
+      <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999998, background: "#B8860B", color: "#fff", padding: "8px 12px", fontSize: 12.5, fontWeight: 600, textAlign: "center", boxSizing: "border-box" }}>
+        ⚠ Firebase free quota reached (too many requests). Showing cached data and retrying automatically — some settings may be temporarily out of date.
+      </div>
+    )}
     <div
       ref={shellRef}
       id="nextext-app-shell"
