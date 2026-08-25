@@ -2802,10 +2802,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   const renderBubble = (m) => {
-    // Disappearing (view-once) media: the recipient sees a "tap to view"
-    // placeholder instead of the media itself. Once opened it is deleted for
-    // everyone after the viewer is closed. The sender always sees what they sent.
-    if (m.disappearing && m.senderId !== myUid && !viewedDisappearing.has(m.id)) {
+    // Disappearing (view-once) media: the recipient (or, in a self-chat, the
+    // sender) sees a "tap to view" placeholder instead of the media itself.
+    // Once opened it is deleted for everyone after the viewer is closed.
+    if (m.disappearing && !viewedDisappearing.has(m.id) && (m.senderId !== myUid || isSelfChat)) {
       const label = m.type === "file" ? "Disappearing file" : m.type === "video" ? "Disappearing video" : "Disappearing photo";
       return (
         <div>
@@ -2820,6 +2820,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       );
     }
     const expiryText = getMediaExpiryText(m.sentAt, globalSettings?.mediaExpiryDays ?? 3);
+    // Sender-side confirmation that a message was sent as disappearing.
+    const disappearingTag = (m.disappearing && m.senderId === myUid && !isSelfChat) ? (
+      <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4, fontSize: 11, fontWeight: 700, color: "#FF3B30" }}>
+        <EyeOff size={12} /> Disappearing · deletes after they view it once
+      </div>
+    ) : null;
     // WhatsApp-style instant media delete (one-on-one only).
     // Voice notes: check voiceNotesStoreInDb setting.
     // - When voiceNotesStoreInDb is true (default): voice notes stored in DB with 3-day expiry, show "Deletes in X days"
@@ -2962,6 +2968,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         )}
         {renderDownloadBelow(m)}
         {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderRichText(m.text)}</div>}
+        {disappearingTag}
         {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
@@ -2985,6 +2992,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         )}
         {renderDownloadBelow(m)}
         {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderRichText(m.text)}</div>}
+        {disappearingTag}
         {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3, fontStyle: "italic" }}>{expiryText}</div>}
       </div>
     );
@@ -3043,6 +3051,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </div>
         )}
         {!suppressExpiry && expiryText && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2, fontStyle: "italic" }}>{expiryText}</div>}
+        {disappearingTag}
       </div>
     );
     const emojiOnly = emojiBigOn && emojiAnimations && !blocked && !m.isScheduled && isEmojiOnly(m.text);
