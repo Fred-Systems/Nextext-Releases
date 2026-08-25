@@ -30,6 +30,9 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [expiryNever, setExpiryNever] = useState(false);
   const [allGroups, setAllGroups] = useState([]);
   const [allGroupsLoading, setAllGroupsLoading] = useState(false);
+  const [splashLine1, setSplashLine1] = useState(settings?.specialIconSplashLine1 ?? "If you will not use this app....");
+  const [splashLine2, setSplashLine2] = useState(settings?.specialIconSplashLine2 ?? "You will go to .....");
+  const [splashSaved, setSplashSaved] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [groupMemberNames, setGroupMemberNames] = useState({});
   const [groupActionStatus, setGroupActionStatus] = useState("");
@@ -795,9 +798,20 @@ export default function AdminDashboard({ myUid, onBack }) {
               <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
                 Bright animated words shown on launch when a special icon is active.
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button onClick={() => { const v = window.prompt("Splash line 1", settings?.specialIconSplashLine1 || "If you will not use this app...."); if (v != null) updateGlobalSettings({ specialIconSplashLine1: v }, myUid); }} style={{ flex: 1, minWidth: 120, padding: "9px 10px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Edit line 1</button>
-                <button onClick={() => { const v = window.prompt("Splash line 2", settings?.specialIconSplashLine2 || "You will go to ....."); if (v != null) updateGlobalSettings({ specialIconSplashLine2: v }, myUid); }} style={{ flex: 1, minWidth: 120, padding: "9px 10px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Edit line 2</button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <textarea value={splashLine1} onChange={(ev) => { setSplashLine1(ev.target.value); setSplashSaved(false); }} placeholder="Splash line 1" rows={2} style={{ width: "100%", padding: "9px 10px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 13, resize: "vertical", boxSizing: "border-box" }} />
+                <textarea value={splashLine2} onChange={(ev) => { setSplashLine2(ev.target.value); setSplashSaved(false); }} placeholder="Splash line 2" rows={2} style={{ width: "100%", padding: "9px 10px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 13, resize: "vertical", boxSizing: "border-box" }} />
+                <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Live preview (special-icon splash):</div>
+                <div style={{ background: "#0B141A", borderRadius: 10, padding: "16px 12px", textAlign: "center", overflow: "hidden" }}>
+                  <style>{`@keyframes nx-splash-pop-prev { 0% { opacity: 0; transform: translateY(10px) scale(0.92); } 60% { opacity: 1; transform: translateY(-2px) scale(1.02); } 100% { opacity: 1; transform: translateY(0) scale(1); } }`}</style>
+                  <div style={{ fontSize: 17, fontWeight: 700, color: "#10B981", lineHeight: 1.4, animation: "nx-splash-pop-prev 0.5s ease-out both" }}>{splashLine1}</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,0.8)", marginTop: 8, lineHeight: 1.4, animation: "nx-splash-pop-prev 0.5s ease-out 0.25s both" }}>{splashLine2}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button onClick={async () => { await updateGlobalSettings({ specialIconSplashLine1: splashLine1, specialIconSplashLine2: splashLine2 }, myUid); setSplashSaved(true); }} style={{ flex: 1, minWidth: 120, padding: "9px 10px", borderRadius: 9, border: "none", background: "#10B981", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Save splash words</button>
+                  <button onClick={() => { setSplashLine1("If you will not use this app...."); setSplashLine2("You will go to ....."); setSplashSaved(false); }} style={{ flex: 1, minWidth: 120, padding: "9px 10px", borderRadius: 9, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Reset to defaults</button>
+                </div>
+                {splashSaved && <div style={{ fontSize: 12, color: "#10B981", fontWeight: 600 }}>Splash words saved.</div>}
               </div>
             </div>
 

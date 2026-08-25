@@ -2136,6 +2136,40 @@ function AppShell({ appLocked, setAppLocked }) {
   });
   const [storyViewerOpen, setStoryViewerOpen] = useState(false);
   const [showSplash, setShowSplash] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
+  const [hangBanner, setHangBanner] = useState(false);
+
+  // If auth stays "loading" too long (e.g. Firebase auth hangs on a particular
+  // WebView), show a non-blocking banner instead of an indefinite dark screen,
+  // plus auto-retry once after 25s.
+  useEffect(() => {
+    if (!auth.loading) { setHangBanner(false); return; }
+    setHangBanner(false);
+    const t1 = setTimeout(() => setHangBanner(true), 15000);
+    const t2 = setTimeout(() => { if (auth.loading) window.location.reload(); }, 25000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [auth.loading]);
+
+  // First-boot local-data migration: if a previous install (or a debug build
+  // with a different signature) left stale/corrupt local data, wipe it so the
+  // app starts clean instead of hanging on bad auth/persistence state. Runs
+  // once whenever the stored schema version is behind APP_DATA_VERSION.
+  const APP_DATA_VERSION = 3;
+  useEffect(() => {
+    try {
+      const key = "nx_app_data_version";
+      const v = parseInt(localStorage.getItem(key) || "0", 10);
+      if (v < APP_DATA_VERSION) {
+        console.warn("[nextext] app data v" + v + " < " + APP_DATA_VERSION + " — clearing local data for a clean start");
+        localStorage.clear();
+        if (indexedDB && indexedDB.databases) {
+          indexedDB.databases().then((dbs) => {
+            (dbs || []).forEach((d) => { try { indexedDB.deleteDatabase(d.name); } catch {} });
+          }).catch(() => {});
+        }
+        localStorage.setItem(key, String(APP_DATA_VERSION));
+      }
+    } catch { /* best-effort */ }
+  }, []);
   const [darkLettering, setDarkLettering] = useState(() => localStorage.getItem("nextext_dark_lettering") === "on");
   const [actualDarkTheme, setActualDarkTheme] = useState(() => localStorage.getItem("nextext_actual_dark_theme") === "on");
 const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
@@ -3472,6 +3506,25 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     );
   }
 
+  const testConnection = async () => {
+    try {
+      const t0 = Date.now();
+      await fetch("https://www.gstatic.com/generate_204", { mode: "no-cors", cache: "no-store" });
+      alert("Connection OK (" + (Date.now() - t0) + "ms)");
+    } catch (e) {
+      alert("Connection FAILED: " + ((e && e.message) || e));
+    }
+  };
+
+  const hangBannerEl = hangBanner ? (
+    <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 9999999, background: "#1a1a1a", borderTop: "2px solid #FF3B30", padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, color: "#fff", fontSize: 13, boxSizing: "border-box" }}>
+      <span style={{ flex: 1, minWidth: 0 }}>⚠ Having trouble connecting. Retrying…</span>
+      <button onClick={testConnection} style={{ flexShrink: 0, padding: "7px 10px", border: "none", borderRadius: 8, background: "#10B981", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Test</button>
+      <button onClick={() => window.location.reload()} style={{ flexShrink: 0, padding: "7px 10px", border: "none", borderRadius: 8, background: "rgba(255,255,255,0.2)", color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Retry</button>
+      <span onClick={() => setHangBanner(false)} style={{ flexShrink: 0, cursor: "pointer", fontSize: 16, padding: "0 4px" }}>×</span>
+    </div>
+  ) : null;
+
   if (auth.loading && showSplash) {
     return <div style={{ ...containerStyle, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0B141A" }}>
       <img src={activeProfile.iconPath} alt="" style={{ width: 100, height: 100, objectFit: "contain", marginBottom: 20 }} onError={(e) => { e.target.style.display = "none"; }} />
@@ -3485,10 +3538,15 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       )}
       <style>{`@keyframes nextext-spin { to { transform: rotate(360deg); } }
         @keyframes nx-splash-pop { 0% { opacity: 0; transform: translateY(10px) scale(0.92); } 60% { opacity: 1; transform: translateY(-2px) scale(1.02); } 100% { opacity: 1; transform: translateY(0) scale(1); } }`}</style>
+      {hangBannerEl}
     </div>;
   }
   if (auth.loading) {
-    return <div style={{ ...containerStyle, background: "#0B141A" }} />;
+    return <div style={{ ...containerStyle, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0B141A" }}>
+      <div style={{ width: 40, height: 40, border: "4px solid rgba(16, 185, 129, 0.25)", borderTopColor: "#10B981", borderRadius: "50%", animation: "nextext-spin 0.9s linear infinite", marginBottom: 16 }} />
+      <span style={{ color: "#fff", fontSize: 18, fontWeight: 700 }}>{activeProfile?.label || "NexText"}</span>
+      {hangBannerEl}
+    </div>;
   }
   if (!auth.user) {
     return <div style={containerStyle}><AuthScreen auth={auth} /></div>;
