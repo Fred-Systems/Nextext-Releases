@@ -3446,7 +3446,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     overflow: "hidden",
     fontFamily: appFont,
     width: "100%",
-    ...(dvhSupported ? {} : { height: appHeight > 0 ? `${appHeight}px` : "100%" }),
+    ...(dvhSupported ? { height: "100dvh" } : { height: appHeight > 0 ? `${appHeight}px` : "100%" }),
     paddingTop: "var(--safe-top)",
     // NOTE: no paddingBottom — the bottom bar is a flex child and manages its own
     // safe-area inset so it can sit flush against the visual bottom edge.
