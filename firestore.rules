@@ -243,7 +243,10 @@ service cloud.firestore {
 
     // ── global config (admin write, everyone reads to apply limits) ──
     match /config/{doc} {
-      allow read: if isSignedIn();
+      // Public read: globalSettings carries no secrets (only limits/flags) and
+      // must be readable even before sign-in so the login screen can honor
+      // admin flags like hideDownloadCount.
+      allow read: if true;
       // Bootstrap exception: any signed-in user can CREATE this doc only if
       // it doesn't already exist yet (first app load ensures sane defaults
       // exist) -- once created, only an admin can change it.

@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic } from "lucide-react";
+import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic, MessageCircle } from "lucide-react";
 import { useTheme, FONTS } from "../theme/ThemeContext";
 import { postStatus, useStatuses, viewStatus, useStatusViewers, deleteStatus } from "../firebase/status";
 import { useContacts } from "../firebase/contacts";
+import { getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
 import { uploadChatFile } from "../supabase/media";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -24,6 +25,13 @@ const CAMERA_FILTERS = [
   { id: "warm", label: "Warm", css: "sepia(0.35) saturate(1.4) hue-rotate(-15deg)" },
   { id: "noir", label: "Noir", css: "grayscale(1) contrast(1.6) brightness(0.9)" },
   { id: "fade", label: "Fade", css: "contrast(0.85) brightness(1.1) sepia(0.2)" },
+  { id: "vintage", label: "Vintage", css: "sepia(0.55) contrast(1.2) saturate(1.3) brightness(1.05)" },
+  { id: "cool2", label: "Icy", css: "hue-rotate(200deg) saturate(1.5) brightness(1.05)" },
+  { id: "warm2", label: "Sunset", css: "sepia(0.4) saturate(1.6) hue-rotate(-25deg) brightness(1.05)" },
+  { id: "pop", label: "Pop", css: "saturate(2) contrast(1.3)" },
+  { id: "blur", label: "Dream", css: "blur(1.5px) brightness(1.05)" },
+  { id: "invert", label: "Negative", css: "invert(1) hue-rotate(180deg)" },
+  { id: "bw", label: "B&W", css: "grayscale(1) brightness(1.1)" },
 ];
 
 const VIEWED_KEY = "nextext_status_viewed";
@@ -213,7 +221,14 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   const [cameraFacing, setCameraFacing] = useState("user");
   const [cameraMode, setCameraMode] = useState("photo");
   const [cameraFilter, setCameraFilter] = useState("");
+  const [cameraZoom, setCameraZoom] = useState(1);
   const [cameraStreamKey, setCameraStreamKey] = useState(0);
+  // After a capture we show an action sheet: send the media to a chat, or
+  // continue into the status composer. This avoids jumping straight into the
+  // composer and lets the user pick where the capture goes.
+  const [showCaptureActions, setShowCaptureActions] = useState(false);
+  const [_sendingToChat, setSendingToChat] = useState(false);
+  const [chatSendTarget, setChatSendTarget] = useState(null);
   const photoInputRef = useRef(null);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [showZoomHint, setShowZoomHint] = useState(false);
@@ -515,8 +530,12 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
             setPostMedia(file);
             setPostMediaType("video");
             setPostMode("media");
+            // Videos default to ending once the clip finishes playing.
+            setWaitForVideo(true);
+            setCameraZoom(1);
             setShowCamera(false);
             stopCameraStream();
+            setShowCaptureActions(true);
           };
           cameraRecordingRef.current.start();
         }
@@ -529,6 +548,29 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
     if (cameraRecordingRef.current && cameraRecordingRef.current.state === "recording") return;
     startCamera(cameraMode, cameraFacing === "user" ? "environment" : "user");
   };
+
+  // Pinch-to-zoom on the live preview. Tracks two-finger distance and maps the
+  // ratio to a 1x–4x zoom applied as a CSS scale on the <video>.
+  const camPinchRef = useRef({ dist: 0, zoom: 1 });
+  const onCamTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      camPinchRef.current = { dist: Math.hypot(dx, dy), zoom: cameraZoom };
+    }
+  };
+  const onCamTouchMove = (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const ratio = camPinchRef.current.dist ? dist / camPinchRef.current.dist : 1;
+      const next = Math.min(4, Math.max(1, camPinchRef.current.zoom * ratio));
+      setCameraZoom(next);
+      e.preventDefault();
+    }
+  };
+  const zoomBy = (delta) => setCameraZoom((z) => Math.min(4, Math.max(1, +(z + delta).toFixed(2))));
 
   // Robustly attach the live stream to the <video> preview and start playback.
   // Runs after the stream is (re)started (cameraStreamKey changes on every
@@ -569,9 +611,36 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       setPostMedia(file);
       setPostMediaType("image");
       setPostMode("media");
+      setWaitForVideo(false);
+      setCameraZoom(1);
       setShowCamera(false);
       stopCameraStream();
+      setShowCaptureActions(true);
     }, "image/jpeg", 0.92);
+  };
+
+  const sendCaptureToChat = async (targetUid) => {
+    if (!postMedia || !targetUid || !myUid) return;
+    try {
+      setSendingToChat(true);
+      setPostError("");
+      // Resolve / create the direct chat first so uploadChatFile can put the
+      // media into the right Supabase folder.
+      const chatId = await getOrCreateDirectChat(myUid, targetUid);
+      const isImage = postMediaType === "image";
+      const result = await uploadChatFile(chatId, myUid, postMedia, { compress: isImage });
+      await sendMediaMessage(chatId, myUid, isImage ? "image" : "video", result, [targetUid]);
+      setShowCaptureActions(false);
+      setShowPost(false);
+      setPostMedia(null);
+      setPostMediaType(null);
+      setPostMode("text");
+      setChatSendTarget(null);
+    } catch (err) {
+      setPostError(err?.message || "Couldn't send to chat.");
+    } finally {
+      setSendingToChat(false);
+    }
   };
 
   const stopCameraStream = () => {
@@ -855,6 +924,11 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           <div style={{ position: "fixed", inset: 0, width: "100vw", height: "100dvh", background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "calc(12px + var(--safe-top)) 16px 12px", minHeight: 44, flexShrink: 0, position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
               <X size={22} color="#fff" onClick={() => { setShowCamera(false); stopCameraStream(); }} style={{ cursor: "pointer" }} />
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: 6 }}>
+                <div onClick={() => zoomBy(-0.25)} style={{ width: 34, height: 34, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#fff", fontSize: 16, fontWeight: 700 }}>−</div>
+                <div style={{ fontSize: 11.5, color: "#fff", fontWeight: 700, minWidth: 30, textAlign: "center" }}>{cameraZoom.toFixed(1)}x</div>
+                <div onClick={() => zoomBy(0.25)} style={{ width: 34, height: 34, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#fff", fontSize: 16, fontWeight: 700 }}>+</div>
+              </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <div onClick={() => setCameraMode((m) => (m === "photo" ? "video" : "photo"))} style={{ padding: "7px 16px", borderRadius: 99, background: "rgba(255,255,255,0.18)", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                   {cameraMode === "photo" ? "Photo" : "Video"}
@@ -879,8 +953,10 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
               autoPlay
               playsInline
               muted
+              onTouchStart={onCamTouchStart}
+              onTouchMove={onCamTouchMove}
               onLoadedData={(e) => { try { e.target.play(); } catch {} }}
-              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", background: "#000", zIndex: 1, filter: cameraFilter || "none", transform: cameraFacing === "user" ? "scaleX(-1)" : "none" }}
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", background: "#000", zIndex: 1, filter: cameraFilter || "none", transform: `${cameraFacing === "user" ? "scaleX(-1) " : ""}scale(${cameraZoom})`, transformOrigin: "center center" }}
             />
             {cameraError && <div style={{ position: "absolute", bottom: "calc(190px + var(--safe-bottom))", left: 0, right: 0, textAlign: "center", color: "#FF3B30", fontSize: 13, fontWeight: 600, zIndex: 11 }}>{cameraError}</div>}
             <div style={{ position: "absolute", left: 0, right: 0, bottom: "calc(118px + var(--safe-bottom))", display: "flex", gap: 8, overflowX: "auto", padding: "0 16px", zIndex: 10 }}>
@@ -913,6 +989,53 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           </div>,
           document.body
         )}
+
+      {/* Capture actions: send to chat or post to status */}
+      {showCaptureActions && createPortal(
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147483000, display: "flex", alignItems: "flex-end" }} onClick={() => { setShowCaptureActions(false); setPostMedia(null); setPostMediaType(null); setPostMode("text"); }}>
+          <div style={{ background: t.surface, width: "100%", borderRadius: "20px 20px 0 0", padding: "24px 20px 30px", display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 -4px 24px rgba(0,0,0,0.3)" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 17, color: t.text }}>{postMediaType === "video" ? "Video captured" : "Photo captured"}</span>
+              <X size={22} color={t.textMuted} onClick={() => { setShowCaptureActions(false); setPostMedia(null); setPostMediaType(null); setPostMode("text"); }} style={{ cursor: "pointer" }} />
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <div onClick={() => { setShowCaptureActions(false); }} style={{ flex: 1, padding: "16px 12px", borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 15, textAlign: "center", cursor: "pointer" }}>
+                <Camera size={20} style={{ display: "block", margin: "0 auto 6px" }} />
+                Post to Status
+              </div>
+              <div onClick={() => setChatSendTarget("pick")} style={{ flex: 1, padding: "16px 12px", borderRadius: 12, background: t.bg, border: `1px solid ${t.border}`, color: t.text, fontWeight: 700, fontSize: 15, textAlign: "center", cursor: "pointer" }}>
+                <MessageCircle size={20} style={{ display: "block", margin: "0 auto 6px" }} />
+                Send to Chat
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Chat picker for sending the capture */}
+      {chatSendTarget === "pick" && createPortal(
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147483010, display: "flex", flexDirection: "column" }} onClick={() => setChatSendTarget(null)}>
+          <div style={{ background: t.surface, width: "100%", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 -4px 24px rgba(0,0,0,0.3)" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
+              <span style={{ fontWeight: 700, fontSize: 17, color: t.text }}>Send to Chat</span>
+              <X size={22} color={t.textMuted} onClick={() => setChatSendTarget(null)} style={{ cursor: "pointer" }} />
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+              {contacts?.map((c) => (
+                <div key={c.uid} onClick={() => { setChatSendTarget(c.uid); sendCaptureToChat(c.uid); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", cursor: "pointer" }}>
+                  <Avatar src={c.photoURL} name={c.name} size={42} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: t.text, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
+                    {c.status && <div style={{ fontSize: 12, color: t.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.status}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Post status sheet */}
       {showPost && !showCamera && createPortal(

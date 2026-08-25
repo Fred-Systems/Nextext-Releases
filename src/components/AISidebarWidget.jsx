@@ -2,7 +2,7 @@ import React from "react";
 import { useSystemConfigHook } from "../firebase/ai";
 import { useAIIconStyle, aiAvatarInner } from "../services/aiIcon";
 
-export default function AISidebarWidget({ userDoc, onOpenAI }) {
+export default function AISidebarWidget({ userDoc, onOpenAI, right = 16, bottom }) {
   const sysConfig = useSystemConfigHook();
   const aiStyle = useAIIconStyle();
 
@@ -11,14 +11,16 @@ export default function AISidebarWidget({ userDoc, onOpenAI }) {
 
   const inner = aiAvatarInner(aiStyle, 30, 13);
 
+  const posStyle = bottom != null
+    ? { bottom, right, transform: "none" }
+    : { top: "50%", right, transform: "translateY(-50%)" };
+
   return (
     <div
       onClick={() => onOpenAI()}
       style={{
         position: "absolute",
-        top: "50%",
-        right: 16,
-        transform: "translateY(-50%)",
+        ...posStyle,
         width: 50,
         height: 50,
         borderRadius: "50%",

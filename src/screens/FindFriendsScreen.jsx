@@ -118,13 +118,11 @@ export default function FindFriendsScreen({ myUid, onBack }) {
       if (apk) apkLine = `\nDownload the latest Android app here: ${apk}`;
     }
     const text = `Hey${name ? " " + name : ""}! Let's chat on NexText — a fast, private messaging app. Sign up here: ${link}${apkLine}`;
-    // navigator.share works well in desktop/web browsers but is unreliable
-    // inside the Android (Capacitor) WebView on Android 11 — it often exists
-    // yet rejects or does nothing. So on Android we skip it and reliably copy
-    // the invite to the clipboard (with an execCommand fallback), then tell the
-    // user to paste it. On non-Android we still prefer the native share sheet.
-    const isAndroid = /android/i.test(navigator.userAgent || "");
-    if (navigator.share && !isAndroid) {
+    // Prefer the native share sheet (navigator.share) on every platform — on
+    // Android it surfaces WhatsApp / Messages / email etc. so the user can pick
+    // how to send the invite. Only fall back to clipboard copy when the sheet
+    // is unavailable or the user cancels/rejects it.
+    if (navigator.share) {
       try {
         await navigator.share({ text });
         setInvited((s) => [...s, phone]);

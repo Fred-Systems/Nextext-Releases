@@ -448,7 +448,7 @@ function NotificationPrefsRow({ t, auth, myUid }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale,   showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth, appGlobalSettings, darkLettering, setDarkLettering, actualDarkTheme, setActualDarkTheme, splashDuration, setSplashDuration, moreRounded, setMoreRounded, setThemeKey }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale,   showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth, appGlobalSettings, darkLettering, setDarkLettering, actualDarkTheme, setActualDarkTheme, splashDuration, setSplashDuration, moreRounded, setMoreRounded, voiceSpacing, setVoiceSpacing, setThemeKey }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -1189,6 +1189,18 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                   {["stt-voice", "voice-stt"].map((key) => (
                     <div key={key} onClick={() => { setComposerButtonOrder(key); localStorage.setItem("nextext_composer_button_order", key); }} style={{ flex: 1, padding: "7px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: composerButtonOrder === key ? t.primary : t.bg, color: composerButtonOrder === key ? t.bubbleMeText : t.text, border: `1px solid ${composerButtonOrder === key ? t.primary : t.border}` }}>{key === "stt-voice" ? "STT → Voice" : "Voice → STT"}</div>
                   ))}
+                </div>
+              </div>
+            )}
+            {/* Voice button spacing */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Space the voice buttons</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Add a gap between the voice-note and speech-to-text buttons so they don't touch.</div>
+                </div>
+                <div onClick={() => setVoiceSpacing(!voiceSpacing)} style={{ width: 50, height: 30, borderRadius: 15, background: voiceSpacing ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.2s" }}>
+                  <div style={{ position: "absolute", top: 3, left: voiceSpacing ? 23 : 3, width: 24, height: 24, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
                 </div>
               </div>
             )}
@@ -2331,6 +2343,13 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
   const screenRef = useRef(screen);
   useEffect(() => { screenRef.current = screen; }, [screen]);
+  // In-app navigation history so the Android hardware Back button walks back
+  // through screens instead of immediately closing the app.
+  const navHistoryRef = useRef([screen]);
+  useEffect(() => {
+    navHistoryRef.current.push(screen);
+    if (navHistoryRef.current.length > 40) navHistoryRef.current.shift();
+  }, [screen]);
   const storyViewerOpenRef = useRef(storyViewerOpen);
   useEffect(() => { storyViewerOpenRef.current = storyViewerOpen; }, [storyViewerOpen]);
   const tourVisibleRef = useRef(showTour);
@@ -2914,11 +2933,15 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // nav — the reported "everything is dead until I tap Settings" bug.
   useEffect(() => {
     if (!splashVisible) return;
+    // Safety net: only force-hide if the splash somehow outlives its intended
+    // duration by a comfortable margin. Previously this fired at a hard 2.5s,
+    // which clipped the user-configured splash duration (1–8s) down to 2.5s.
+    const safetyMs = Math.max(5000, splashDuration * 1000 + 2500);
     const t = setTimeout(() => {
       if (splashVisible) setSplashVisible(false);
-    }, 2500);
+    }, safetyMs);
     return () => clearTimeout(t);
-  }, [splashVisible, screen]);
+  }, [splashVisible, screen, splashDuration]);
 
   // Auto-check for app updates once after login (delayed 5s to not block load).
   // Only runs when the "Notify me about app updates" setting is on, and skips
@@ -3087,6 +3110,24 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     if (window.Capacitor?.isNativePlatform?.()) {
       CapApp.getState().then(({ isActive }) => { if (!isActive) relockNative({ isActive: false }); }).catch(() => {});
       CapApp.addListener("appStateChange", relockNative).then((l) => { capListener = l; }).catch(() => {});
+      // Android hardware Back: navigate within the app. Pop the current screen
+      // (and any trailing duplicates) off the history; if a distinct previous
+      // screen exists, go there, otherwise let the OS close the app.
+      let backListener = null;
+      const onBack = () => {
+        const cur = screenRef.current;
+        const hist = navHistoryRef.current;
+        while (hist.length && hist[hist.length - 1] === cur) hist.pop();
+        const prev = hist.pop();
+        if (!prev || prev === cur) { CapApp.exitApp(); return; }
+        setScreen(prev);
+      };
+      CapApp.addListener("backButton", onBack).then((l) => { backListener = l; }).catch(() => {});
+      return () => {
+        document.removeEventListener("visibilitychange", relock);
+        capListener?.remove();
+        backListener?.remove();
+      };
     }
     return () => {
       document.removeEventListener("visibilitychange", relock);
@@ -3778,9 +3819,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   setActualDarkTheme={setActualDarkTheme}
   splashDuration={splashDuration}
   setSplashDuration={setSplashDuration}
-  moreRounded={moreRounded}
-  setMoreRounded={setMoreRounded}
-  setThemeKey={setThemeKey}
+   moreRounded={moreRounded}
+   setMoreRounded={setMoreRounded}
+   voiceSpacing={voiceSpacing}
+   setVoiceSpacing={setVoiceSpacing}
+   setThemeKey={setThemeKey}
               />
               </PageErrorBoundary>
             </div>
@@ -3846,7 +3889,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       )}
 
       {aiSidebarOn && !storyViewerOpen && screen === "list" && (
-        <AISidebarWidget myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenAI={() => setScreen("aiChat")} />
+        <AISidebarWidget myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenAI={() => setScreen("aiChat")} right={20} bottom={hideNav ? 84 : 148} />
       )}
 
         {showThemeSheet && (

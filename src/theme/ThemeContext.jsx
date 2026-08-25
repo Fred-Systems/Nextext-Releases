@@ -73,6 +73,7 @@ export function ThemeProvider({ children }) {
   // message takes up most of the screen by default, with the option to switch.
   const [messageWidth, setMessageWidthState] = useState(() => localStorage.getItem(MESSAGE_WIDTH_KEY) || "wide");
   const [composerButtonOrder, setComposerButtonOrderState] = useState(() => localStorage.getItem("nextext_composer_button_order") || "stt-voice");
+  const [voiceSpacing, setVoiceSpacingState] = useState(() => localStorage.getItem("nextext_voice_spacing") === "on");
 
   const setThemeKey = (key) => {
     setThemeKeyState(key);
@@ -120,6 +121,10 @@ export function ThemeProvider({ children }) {
     setComposerButtonOrderState(val);
     localStorage.setItem("nextext_composer_button_order", val);
   };
+  const setVoiceSpacing = (v) => {
+    setVoiceSpacingState(v);
+    localStorage.setItem("nextext_voice_spacing", v ? "on" : "off");
+  };
 
   const appFont = FONTS.find((f) => f.id === appFontId)?.value || FONTS[0].value;
 
@@ -145,7 +150,7 @@ export function ThemeProvider({ children }) {
   const t = themeKey === "custom" && customTheme ? customTheme : (themes[themeKey] || themes.emeraldNight);
 
   return (
-    <ThemeContext.Provider value={{ t, themeKey, setThemeKey, customTheme, setCustomThemeColors, rotateDays, setRotateDays, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, appFont, composerHeight, setComposerHeight, messageWidth, setMessageWidth, composerButtonOrder, setComposerButtonOrder }}>
+    <ThemeContext.Provider value={{ t, themeKey, setThemeKey, customTheme, setCustomThemeColors, rotateDays, setRotateDays, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, appFont, composerHeight, setComposerHeight, messageWidth, setMessageWidth, composerButtonOrder, setComposerButtonOrder, voiceSpacing, setVoiceSpacing }}>
       {children}
     </ThemeContext.Provider>
   );

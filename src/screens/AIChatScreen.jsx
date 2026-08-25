@@ -103,7 +103,7 @@ function formatAIDateDivider(date) {
 }
 
 export default function AIChatScreen({ myUid, onBack }) {
-  const { t, composerButtonOrder } = useTheme();
+  const { t, composerButtonOrder, voiceSpacing } = useTheme();
   const globalSettings = useGlobalSettings();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -894,7 +894,9 @@ export default function AIChatScreen({ myUid, onBack }) {
         {composerButtonOrder === "voice-stt" ? (
           <>
             {sttEnabled && !globalSettings?.hideStt && (
-              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={34} useRealtime />
+              <div style={{ display: "flex", alignItems: "center", marginLeft: voiceSpacing ? 10 : 0 }}>
+                <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={34} useRealtime />
+              </div>
             )}
             <div onClick={handleSend} style={{ width: 38, height: 38, borderRadius: "50%", background: input.trim() && !sending ? t.primary : t.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "default" }}>
               <Send size={17} color={input.trim() && !sending ? "#fff" : t.textMuted} />

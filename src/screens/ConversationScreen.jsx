@@ -585,7 +585,7 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
 // Pinch-to-zoom + drag-to-pan media viewer is imported from ZoomableMedia.
 
 export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, recordingBarScale = 1, userDoc, emojiAnimations = true, emojiBigOn = true, onOpenAskAI }) {
-  const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth, composerButtonOrder } = useTheme();
+  const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth, composerButtonOrder, voiceSpacing } = useTheme();
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
@@ -3581,7 +3581,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               </div>
             </div>
             {sttEnabled && !globalSettings?.hideStt && composerButtonOrder === "stt-voice" && (
-              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) send(text.trim()); }} autoSend={sttAutoSend} composerHeight={composerHeight} size={42} useRealtime />
+              <div style={{ display: "flex", alignItems: "center", marginRight: voiceSpacing ? 10 : 0 }}>
+                <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) send(text.trim()); }} autoSend={sttAutoSend} composerHeight={composerHeight} size={42} useRealtime />
+              </div>
             )}
             {input.trim() || editingMsg ? (
               <button
