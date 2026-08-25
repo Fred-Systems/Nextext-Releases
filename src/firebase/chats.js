@@ -6,6 +6,138 @@ import {
 import { db } from "./config";
 import { deleteChatFile } from "../supabase/media";
 
+// ── Offline outbox ──────────────────────────────────────────────────────────
+// When a send fails because the device is offline or Firestore is blocked
+// (e.g. an eero router / ad-blocker), we MUST NOT hammer Firestore with instant
+// retries — that floods the WebChannel write stream ("RPC Write stream transport
+// errored" several times a second). Instead we persist the message locally and
+// flush it later on a calm interval + on the 'online' event, with no tight loop.
+const OUTBOX_KEY = "nextext_outbox_v1";
+function readOutbox() {
+  try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]"); } catch { return []; }
+}
+function writeOutbox(arr) {
+  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(arr)); } catch { /* quota/disabled */ }
+}
+function isOffline() {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+function isNetworkError(e) {
+  if (!e) return false;
+  const msg = String(e && (e.message || e.name) || "").toLowerCase();
+  const code = e && e.code;
+  return (
+    msg.includes("network") ||
+    msg.includes("offline") ||
+    msg.includes("failed to fetch") ||
+    msg.includes("transport") ||
+    msg.includes("webchannel") ||
+    msg.includes("unavailable") ||
+    code === "unavailable" ||
+    code === "resource-exhausted"
+  );
+}
+function buildTextPayload(sender, text, options, senderUid) {
+  const { replyTo = null, scheduledFor = null, statusRef = null } = options || {};
+  return {
+    senderId: senderUid,
+    senderName: sender.senderName,
+    senderUsername: sender.senderUsername,
+    type: "text",
+    text,
+    mediaURL: null,
+    mediaThumbURL: null,
+    mediaDurationSeconds: null,
+    mediaSizeBytes: null,
+    mediaExpiresAt: null,
+    mediaExpired: false,
+    mediaSavedBy: [],
+    fileName: null,
+    fileExtension: null,
+    fileSizeBytes: null,
+    gifURL: null,
+    gifSourceProvider: null,
+    scheduledFor: scheduledFor,
+    isScheduled: !!scheduledFor,
+    sentAt: serverTimestamp(),
+    deliveredTo: [],
+    readBy: [],
+    deletedForEveryone: false,
+    deletedForSelf: [],
+    editedAt: null,
+    editHistory: [],
+    editWindowExpiresAt: null,
+    disappearing: null,
+    screenshotDetected: false,
+    replyTo,
+    reactions: {},
+    poll: null,
+    statusRef,
+  };
+}
+async function sendTextMessageRaw(chatId, senderUid, text, otherParticipants, options) {
+  const sender = await snapshotSenderName(senderUid);
+  if (otherParticipants && otherParticipants.length === 1) {
+    try { getOrCreateDirectChat(senderUid, otherParticipants[0]); } catch { /* non-fatal */ }
+  }
+  await addDoc(collection(db, "chats", chatId, "messages"), buildTextPayload(sender, text, options, senderUid));
+  const { scheduledFor = null } = options || {};
+  if (!scheduledFor) {
+    const chatRef = doc(db, "chats", chatId);
+    await updateDoc(chatRef, {
+      lastMessage: { text, senderId: senderUid, sentAt: serverTimestamp(), type: "text" },
+    });
+    await incrementUnreadCounts(chatId, otherParticipants);
+  }
+}
+let outboxFlushing = false;
+let outboxWatcherStarted = false;
+async function flushOutbox() {
+  if (outboxFlushing) return;
+  if (isOffline()) return;
+  const items = readOutbox();
+  if (!items.length) return;
+  outboxFlushing = true;
+  try {
+    for (const item of items) {
+      if (isOffline()) break;
+      try {
+        await sendTextMessageRaw(item.chatId, item.senderUid, item.text, item.otherParticipants, item.options);
+        writeOutbox(readOutbox().filter((x) => x._id !== item._id));
+      } catch (e) {
+        if (!isNetworkError(e)) {
+          // Non-retryable (e.g. permission denied) — drop it so we don't loop forever.
+          writeOutbox(readOutbox().filter((x) => x._id !== item._id));
+        }
+        // network error -> keep for the next calm flush
+      }
+    }
+  } finally {
+    outboxFlushing = false;
+  }
+}
+function ensureOutboxWatcher() {
+  if (outboxWatcherStarted) return;
+  outboxWatcherStarted = true;
+  if (typeof window !== "undefined") {
+    window.addEventListener("online", () => { flushOutbox(); });
+    // Calm retry cadence — 20s, NOT a per-second storm.
+    setInterval(() => { flushOutbox(); }, 20000);
+  }
+  flushOutbox();
+}
+function queueTextMessage(chatId, senderUid, text, otherParticipants, options) {
+  const item = {
+    _id: Date.now() + "-" + Math.random().toString(36).slice(2),
+    chatId, senderUid, text, otherParticipants, options: options || {},
+  };
+  const arr = readOutbox();
+  arr.push(item);
+  writeOutbox(arr);
+  ensureOutboxWatcher();
+  return { queued: true };
+}
+
 // Deterministic chat id for 1:1 chats -- group chat ids are random (see
 // createGroupChat below), direct chat ids are the two sorted uids joined.
 function directChatId(uidA, uidB) {
@@ -177,58 +309,18 @@ export async function snapshotSenderName(senderUid) {
 
 // Sends a text message and updates the chat's lastMessage preview + unread counts.
 export async function sendTextMessage(chatId, senderUid, text, otherParticipants, options = {}) {
-  const { replyTo = null, scheduledFor = null, statusRef = null } = options;
-  const sender = await snapshotSenderName(senderUid);
-
-  // If this is a 1-on-1 chat whose doc was deleted (e.g. the other person
-  // hard-deleted it), recreate it with both participants so the conversation
-  // can resurface for the receiver on this new message.
-  if (otherParticipants && otherParticipants.length === 1) {
-    try { getOrCreateDirectChat(senderUid, otherParticipants[0]); } catch { /* non-fatal */ }
-  }
-
-  await addDoc(collection(db, "chats", chatId, "messages"), {
-    senderId: senderUid,
-    senderName: sender.senderName,
-    senderUsername: sender.senderUsername,
-    type: "text",
-    text,
-    mediaURL: null,
-    mediaThumbURL: null,
-    mediaDurationSeconds: null,
-    mediaSizeBytes: null,
-    mediaExpiresAt: null,
-    mediaExpired: false,
-    mediaSavedBy: [],
-    fileName: null,
-    fileExtension: null,
-    fileSizeBytes: null,
-    gifURL: null,
-    gifSourceProvider: null,
-    scheduledFor: scheduledFor,
-    isScheduled: !!scheduledFor,
-    sentAt: serverTimestamp(),
-    deliveredTo: [],
-    readBy: [],
-    deletedForEveryone: false,
-    deletedForSelf: [],
-    editedAt: null,
-    editHistory: [],
-    editWindowExpiresAt: null,
-    disappearing: null,
-    screenshotDetected: false,
-    replyTo,
-    reactions: {},
-    poll: null,
-    statusRef,
-  });
-
-  if (!scheduledFor) {
-    const chatRef = doc(db, "chats", chatId);
-    await updateDoc(chatRef, {
-      lastMessage: { text, senderId: senderUid, sentAt: serverTimestamp(), type: "text" },
-    });
-    await incrementUnreadCounts(chatId, otherParticipants);
+  // Offline: don't even touch Firestore — queue and return. This is what stops
+  // the per-second WebChannel "Write stream transport errored" flood, because
+  // there is no pending write for the SDK to keep retrying.
+  if (isOffline()) return queueTextMessage(chatId, senderUid, text, otherParticipants, options);
+  try {
+    await sendTextMessageRaw(chatId, senderUid, text, otherParticipants, options);
+    return { queued: false };
+  } catch (e) {
+    // Network/blocked (eero, ad-blocker) -> queue for a calm later retry instead
+    // of throwing into an instant retry loop.
+    if (isNetworkError(e)) return queueTextMessage(chatId, senderUid, text, otherParticipants, options);
+    throw e;
   }
 }
 

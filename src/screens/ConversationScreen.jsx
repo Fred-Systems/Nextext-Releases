@@ -386,7 +386,12 @@ async function computeWaveFromAudio(url, buckets = 40) {
   }
 }
 
-function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, isAutoPlayTarget, nowPlayingId, onPlayStart }) {
+// Cache computed waveforms by URL so a re-render or remount (e.g. the parent
+// re-rendering the whole message list) never re-downloads + re-decodes the
+// audio file from Supabase. This is what stops the 100+ redundant GETs.
+const WAVE_CACHE = new Map();
+
+const VoicePlayer = React.memo(function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, isAutoPlayTarget, nowPlayingId, onPlayStart }) {
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [totalDuration, setTotalDuration] = useState(duration || 0);
@@ -400,14 +405,28 @@ function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, is
   const barRef = useRef(null);
   const dragging = useRef(false);
 
-  // Compute the static wave once per note.
+  // Compute the static wave once per note (cached so re-renders/remounts don't
+  // re-download the audio from Supabase).
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const cached = WAVE_CACHE.get(url);
+    if (cached !== undefined) {
+      if (cached instanceof Promise) {
+        cached.then((w) => { if (!cancelled) setWave(w); }).catch(() => {});
+      } else {
+        setWave(cached);
+      }
+      return;
+    }
+    const seeded = seededWave(hashSeed(String(url) + String(msgId || "")));
+    const p = (async () => {
       const real = await computeWaveFromAudio(url);
-      if (cancelled) return;
-      setWave(real || seededWave(hashSeed(String(url) + String(msgId || ""))));
+      const w = real || seeded;
+      WAVE_CACHE.set(url, w);
+      return w;
     })();
+    WAVE_CACHE.set(url, p);
+    p.then((w) => { if (!cancelled) setWave(w); }).catch(() => { if (!cancelled) setWave(seeded); });
     return () => { cancelled = true; };
   }, [url, msgId]);
 
@@ -483,6 +502,7 @@ function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, is
       <audio
         ref={audioRef}
         src={url}
+        preload="none"
         onPlay={() => { setPlaying(true); }}
         onPause={() => { setPlaying(false); }}
         onEnded={() => { setPlaying(false); onPlayStart?.(null); onEnded?.(msgId); }}
@@ -530,7 +550,7 @@ function VoicePlayer({ url, duration, mine, t, msgId, onEnded, autoPlayToken, is
       </div>
     </div>
   );
-}
+});
 
 function ScheduleSendSheet({ t, onClose, onSchedule }) {
   const [customValue, setCustomValue] = useState("");
@@ -1236,10 +1256,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (!chatId) { setSendError("Chat isn't ready yet — please wait a moment and try again."); return; }
     setInput("");
     autoResizeComposer();
-    try {
-      await sendTextMessage(chatId, myUid, textToSend, otherParticipants, { replyTo: replyingTo });
-      setReplyingTo(null);
-      if (isGroup && shouldTriggerGroupAI(textToSend)) {
+  try {
+    const sendResult = await sendTextMessage(chatId, myUid, textToSend, otherParticipants, { replyTo: replyingTo });
+    setReplyingTo(null);
+    // If the message was queued (offline / Firestore blocked), don't also fire
+    // the group-AI reply now — it would queue a second message and the AI can't
+    // see the (not-yet-sent) prompt anyway. It will send normally when online.
+    if (sendResult && sendResult.queued) return;
+    if (isGroup && shouldTriggerGroupAI(textToSend)) {
         const hasAI = (chatMeta?.participants || []).includes(AI_CONTACT_UID);
         if (hasAI) {
           sendGroupAIMessage(myUid, chatId, textToSend, messages).then(async (aiResponse) => {
