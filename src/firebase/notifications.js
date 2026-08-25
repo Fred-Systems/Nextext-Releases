@@ -1,12 +1,11 @@
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 import { app } from "./config";
 import { doc, updateDoc, arrayRemove } from "firebase/firestore";
 import { db } from "./config";
 import { playChime, isChimeId } from "../utils/pingSounds";
-
-const NextextNative = registerPlugin("NextextNative");
+import NextextNative from "../native/nextextNative";
 
 const VAPID_KEY = "BDPG3EWg1tJKh1nN_yOnWgK3BYJjQ-fpYTk1NQrGqU0EHTRZWMWhOUNyANHv52BnUvPBmZFK8ssfsOKWLtqJasA";
 

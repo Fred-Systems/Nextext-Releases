@@ -1,6 +1,5 @@
-import { Capacitor, registerPlugin } from "@capacitor/core";
-
-const NextextNative = registerPlugin("NextextNative");
+import { Capacitor } from "@capacitor/core";
+import NextextNative from "../native/nextextNative";
 
 let cached = null;
 
