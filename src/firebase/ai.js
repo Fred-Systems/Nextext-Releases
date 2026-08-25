@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, where, orderBy, getDocs, addDoc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "./config";
+import { onAuthStateChanged } from "firebase/auth";
+import { db, auth } from "./config";
 
 export const AI_CONTACT_UID = "nextext-ai-system";
 export const AI_CHAT_PREFIX = "ai_";
@@ -172,10 +173,20 @@ export async function setSystemConfig(patch, adminUid) {
 export function useSystemConfigHook() {
   const [config, setConfig] = useState(null);
   useEffect(() => {
-    const unsub = onSnapshot(SYSTEM_CONFIG_REF, (snap) => {
-      setConfig(snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, tourDisabled: false, groqApiKey: "", aiMode: "old", aiLiveModel: "groq/compound" });
-    }, () => {});
-    return unsub;
+    let unsub = null;
+    let authSub = null;
+    const start = () => {
+      if (unsub) return;
+      if (!auth.currentUser) {
+        authSub = onAuthStateChanged(auth, (u) => { if (u && !unsub) start(); });
+        return;
+      }
+      unsub = onSnapshot(SYSTEM_CONFIG_REF, (snap) => {
+        setConfig(snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, tourDisabled: false, groqApiKey: "", aiMode: "old", aiLiveModel: "groq/compound" });
+      }, () => {});
+    };
+    start();
+    return () => { if (unsub) unsub(); if (authSub) authSub(); };
   }, []);
   return config;
 }

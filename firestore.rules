@@ -251,6 +251,16 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // ── pre-warm config (system_config/settings) ──
+    // Same access model as config/{doc}: any signed-in user can read it
+    // (it only carries preWarmEnabled); only admins can change it. Without
+    // this rule the doc is denied by default, producing a 403 every launch.
+    match /system_config/{doc} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && !exists(/databases/$(database)/documents/system_config/$(doc));
+      allow update, delete: if isAdmin();
+    }
+
     // ── AI access requests (user creates own, admin reads/writes all) ──
     match /aiRequests/{docId} {
       allow create: if isSignedIn();

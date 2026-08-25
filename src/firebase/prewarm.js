@@ -1,5 +1,5 @@
 import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, runTransaction } from "firebase/firestore";
-import { db } from "./config";
+import { db, auth } from "./config";
 
 // Stealth pre-warm: when an admin enables it, every app launch / foreground
 // tick writes a tiny silent document to the `messages` collection group. The
@@ -10,6 +10,9 @@ const PREWARM_REF = doc(db, "system_config", "settings");
 const PREWARM_THRESHOLD_MS = 14 * 60 * 1000;
 
 export async function getPreWarmConfig() {
+  // Only read once signed in — the system_config/{doc} rule requires
+  // isSignedIn(), and reading before auth resolves just 403s uselessly.
+  if (!auth.currentUser) return { preWarmEnabled: false };
   try {
     const snap = await getDoc(PREWARM_REF);
     return snap.exists() ? snap.data() : { preWarmEnabled: false };
@@ -30,6 +33,7 @@ export async function setPreWarmEnabled(value) {
 // transaction so only ONE device performs the write per 14-minute window
 // (avoids a thundering herd of ping docs from many online users at once).
 export async function runPreWarmPing() {
+  if (!auth.currentUser) return;
   try {
     const shouldPing = await runTransaction(db, async (tx) => {
       const snap = await tx.get(PREWARM_REF);
