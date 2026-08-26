@@ -140,10 +140,6 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [groupMenu, setGroupMenu] = useState(null);
   const [groupPictureFullscreen, setGroupPictureFullscreen] = useState(null);
   const [showGlobalCamera, setShowGlobalCamera] = useState(false);
-  useEffect(() => {
-    if (showGlobalCamera) window.dispatchEvent(new Event("nx-camera-open"));
-    else window.dispatchEvent(new Event("nx-camera-close"));
-  }, [showGlobalCamera]);
   const [globalCameraError, setGlobalCameraError] = useState("");
   const [globalCameraMode, setGlobalCameraMode] = useState("photo"); // "photo" | "video"
   const [globalCameraFacing, setGlobalCameraFacing] = useState("environment"); // "environment" | "user"
@@ -154,10 +150,18 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [globalCameraZoom, setGlobalCameraZoom] = useState(1);
   const [selectedRecipients, setSelectedRecipients] = useState([]);
   const [globalCameraDisappearing, setGlobalCameraDisappearing] = useState(false);
+  // Hide the bottom nav whenever the in-app camera (or its preview/send step)
+  // is on screen, and bring it back only once the whole flow is finished.
   const pinchStartRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const [cameraPreviewStep, setCameraPreviewStep] = useState(false);
+  // Hide the bottom nav whenever the in-app camera (or its preview/send step)
+  // is on screen, and bring it back only once the whole flow is finished.
+  useEffect(() => {
+    const active = showGlobalCamera || (capturedMedia && cameraPreviewStep);
+    window.dispatchEvent(new Event(active ? "nx-camera-open" : "nx-camera-close"));
+  }, [showGlobalCamera, capturedMedia, cameraPreviewStep]);
   const [cameraCaption, setCameraCaption] = useState("");
   const [customLists, setCustomLists] = useState(() => {
     try { const raw = localStorage.getItem("nextext_custom_lists"); return raw ? JSON.parse(raw) : []; } catch { return []; }
@@ -475,21 +479,25 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const openGlobalCamera = async () => {
     setGlobalCameraError("");
     setGlobalCameraZoom(1);
+    setShowGlobalCamera(true);
     try {
+      if (globalCameraStreamRef.current) {
+        globalCameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
+        globalCameraStreamRef.current = null;
+      }
       const wantsVideo = globalCameraMode === "video";
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: globalCameraFacing },
         audio: wantsVideo,
       });
       globalCameraStreamRef.current = stream;
-      setShowGlobalCamera(true);
       setTimeout(() => {
         if (globalCameraVideoRef.current) {
           globalCameraVideoRef.current.srcObject = stream;
           if (wantsVideo) globalCameraVideoRef.current.muted = false;
           globalCameraVideoRef.current.play().catch(() => {});
         }
-      }, 100);
+      }, 30);
     } catch {
       setGlobalCameraError("Camera access denied or unavailable.");
     }
@@ -835,7 +843,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       {topBarVisible && <div style={{ padding: "calc(12px + var(--safe-top)) 16px 6px", background: t.surface, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, position: "relative", zIndex: 1 }}>
         <span style={{ color: t.text, fontWeight: 800, fontSize: 20, flexShrink: 0 }}>NexText</span>
         <div style={{ display: "flex", gap: 18, alignItems: "center", flexShrink: 0 }}>
-          <Camera size={20} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={openGlobalCamera} />
+          <Camera size={20} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => (showGlobalCamera ? closeGlobalCamera() : openGlobalCamera())} />
           {searchMode !== "visible" && <Search size={20} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => setShowSearch(!showSearch)} />}
           <Settings size={20} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={onOpenSettings} />
         </div>
@@ -1089,8 +1097,8 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         <Plus size={26} color="#fff" style={{ transform: showFab ? "rotate(45deg)" : "none", transition: "transform 0.2s" }} />
       </button>
 
-      {showAIWidget && !showGlobalCamera && !capturedMedia && !cameraPreviewStep && !showFab && (
-        <AISidebarWidget myUid={myUid} userDoc={userDoc} onOpenAI={onOpenAI} right={20} bottom={hideNav ? 148 : 212} />
+      {showAIWidget && !showGlobalCamera && !capturedMedia && !cameraPreviewStep && (
+        <AISidebarWidget myUid={myUid} userDoc={userDoc} onOpenAI={onOpenAI} right={20} />
       )}
 
       {showAddContact && <AddContactSheet myUid={myUid} onClose={() => setShowAddContact(false)} />}
@@ -1111,7 +1119,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Camera</span>
             <span style={{ width: 50 }} />
           </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "6px 12px", flexShrink: 0 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: 10, padding: "6px 12px", flexShrink: 0 }}>
             <div style={{ display: "flex", background: "rgba(255,255,255,0.12)", borderRadius: 20, overflow: "hidden" }}>
               {["photo", "video"].map((m) => (
                 <span

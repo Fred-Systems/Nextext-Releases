@@ -5,9 +5,8 @@ import { useTheme, FONTS } from "../theme/ThemeContext";
 import { postStatus, useStatuses, viewStatus, useStatusViewers, deleteStatus } from "../firebase/status";
 import { useContacts } from "../firebase/contacts";
 import { useChats, getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
-import GlobalCamera from "../components/GlobalCamera";
 import { uploadChatFile } from "../supabase/media";
-import { doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, setDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import Avatar from "../components/Avatar";
 import StatusStoryViewer from "./StatusStoryViewer";
@@ -183,7 +182,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   }, [myUid]);
   // Status look is a PER-USER preference (the admin can no longer force a layout
   // onto everyone). Persisted to the user's profile and localStorage so it sticks.
-  const [statusLayout, setStatusLayout] = useState(() => localStorage.getItem("nextext_status_layout") || "new");
+  const [statusLayout, setStatusLayout] = useState(() => localStorage.getItem("nextext_status_layout") || "cards");
   const [statusPreviewSize, setStatusPreviewSize] = useState(() => localStorage.getItem("nextext_status_preview_size") || "compact");
   useEffect(() => {
     if (!myUid) return;
@@ -199,12 +198,12 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   const changeStatusLayout = (l) => {
     setStatusLayout(l);
     try { localStorage.setItem("nextext_status_layout", l); } catch {}
-    if (myUid) updateDoc(doc(db, "users", myUid), { statusLayout: l }).catch(() => {});
+    if (myUid) setDoc(doc(db, "users", myUid), { statusLayout: l }, { merge: true }).catch(() => {});
   };
   const changeStatusPreviewSize = (s) => {
     setStatusPreviewSize(s);
     try { localStorage.setItem("nextext_status_preview_size", s); } catch {}
-    if (myUid) updateDoc(doc(db, "users", myUid), { statusPreviewSize: s }).catch(() => {});
+    if (myUid) setDoc(doc(db, "users", myUid), { statusPreviewSize: s }, { merge: true }).catch(() => {});
   };
   const [showPost, setShowPost] = useState(false);
   const [postText, setPostText] = useState("");
@@ -217,7 +216,6 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   const [viewStoryOwner, setViewStoryOwner] = useState(null);
   const [viewedMap, setViewedMap] = useState(() => getStoredViewed());
   const [showCamera, setShowCamera] = useState(false);
-  const [showGlobalCamera, setShowGlobalCamera] = useState(false);
   const { chats } = useChats(myUid);
   const [cameraError, setCameraError] = useState("");
   const [postError, setPostError] = useState("");
@@ -519,6 +517,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
 
     const startCamera = async (captureMode, facing = cameraFacing) => {
       setCameraError("");
+      setShowCamera(true);
       try {
         if (cameraStreamRef.current) {
           cameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
@@ -854,11 +853,11 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       <div style={{ display: "flex", alignItems: "center", padding: "calc(16px + var(--safe-top)) 16px 16px", gap: 12, background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
         <ChevronLeft size={22} color={t.text} onClick={onBack} style={{ cursor: "pointer" }} />
         <span style={{ color: t.text, fontWeight: 700, fontSize: 18 }}>Status</span>
-        <div onClick={() => setShowGlobalCamera(true)} title="Camera" style={{ marginLeft: "auto", width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+        <div onClick={() => startCamera()} title="Camera" style={{ marginLeft: "auto", width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <Camera size={20} color={t.primary} />
         </div>
         <div style={{ display: "flex", background: t.primaryLight, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
-          {["new", "old"].map((l) => (
+          {["cards", "list"].map((l) => (
             <span
               key={l}
               onClick={() => changeStatusLayout(l)}
@@ -866,7 +865,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
             >{l}</span>
           ))}
         </div>
-        {statusLayout === "new" && (
+        {statusLayout === "cards" && (
           <div style={{ display: "flex", background: t.primaryLight, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
             {["compact", "cozy"].map((s) => (
               <span
@@ -878,19 +877,6 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           </div>
         )}
       </div>
-
-      {showGlobalCamera && createPortal(
-        <GlobalCamera
-          t={t}
-          myUid={myUid}
-          chats={chats}
-          contacts={acceptedContacts}
-          hideNav={false}
-          onClose={() => setShowGlobalCamera(false)}
-          onOpenChat={() => setShowGlobalCamera(false)}
-        />,
-        document.body
-      )}
 
       <div className="nx-scroll" style={{ flex: 1, paddingBottom: 70, minHeight: 0 }}>
         <SectionHeader label="My Status" />
@@ -933,7 +919,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
         ))}
 
         {Object.keys(grouped).length > 0 && <SectionHeader label="Recent Updates" />}
-        {statusLayout === "old" ? (
+        {statusLayout === "list" ? (
           Object.entries(grouped).map(([uid, items]) => {
             const contact = acceptedContacts.find((c) => c.uid === uid);
             const name = contact?.profile?.displayName || "Unknown";

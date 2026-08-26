@@ -29,7 +29,7 @@ import { FONTS } from "./theme/ThemeContext";
 import Avatar from "./components/Avatar";
 import AvatarColorPicker from "./components/AvatarColorPicker";
 import { uploadChatFile } from "./supabase/media";
-import { doc, getDoc, updateDoc, onSnapshot, collection, query, where, orderBy } from "firebase/firestore";
+import { doc, getDoc, updateDoc, setDoc, onSnapshot, collection, query, where, orderBy } from "firebase/firestore";
 import { db } from "./firebase/config";
 import AuthScreen from "./screens/AuthScreen";
 import CompleteProfileScreen from "./screens/CompleteProfileScreen";
@@ -447,7 +447,7 @@ function NotificationPrefsRow({ t, auth, myUid }) {
   );
 }
 
-function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale,   showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth, appGlobalSettings, darkLettering, setDarkLettering, actualDarkTheme, setActualDarkTheme, splashDuration, setSplashDuration, moreRounded, setMoreRounded, voiceSpacing, setVoiceSpacing, setThemeKey }) {
+function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale,   showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth, appGlobalSettings, darkLettering, setDarkLettering, actualDarkTheme, setActualDarkTheme, splashDuration, setSplashDuration, moreRounded, setMoreRounded,   voiceSpacing, setVoiceSpacing, setThemeKey, pendingSplashDuration, setPendingSplashDuration }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
   const profilePhotoRef = useRef(null);
@@ -1104,7 +1104,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 ))}
               </div>
               <button
-                onClick={() => { applySplashDuration(pendingSplashDuration); window.location.reload(); }}
+                onClick={() => { setSplashDuration(pendingSplashDuration); window.location.reload(); }}
                 style={{ marginTop: 10, width: "100%", padding: "10px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer" }}
               >Save &amp; preview (restarts app to show launch screen)</button>
             </div>
@@ -2348,7 +2348,9 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const applySplashDuration = (s) => {
     setSplashDuration(s);
     try { localStorage.setItem("nextext_splash_duration", String(s)); } catch {}
-    if (myUid) { try { updateDoc(doc(db, "users", myUid), { splashDuration: s }); } catch {} }
+    // Use setDoc(merge) so this works even if the profile doc was just created
+    // and isn't visible to the rules yet (avoids "No document to update").
+    if (myUid) { try { setDoc(doc(db, "users", myUid), { splashDuration: s }, { merge: true }); } catch {} }
   };
   useEffect(() => {
     if (!myUid) return;
@@ -2357,7 +2359,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       if (prof !== splashDuration) { setSplashDuration(prof); try { localStorage.setItem("nextext_splash_duration", String(prof)); } catch {} }
     } else {
       const local = Number(localStorage.getItem("nextext_splash_duration"));
-      if (local > 0) { try { updateDoc(doc(db, "users", myUid), { splashDuration: local }); } catch {} }
+      if (local > 0) { try { setDoc(doc(db, "users", myUid), { splashDuration: local }, { merge: true }); } catch {} }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid, auth.userDoc?.splashDuration]);
@@ -3859,6 +3861,8 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   setActualDarkTheme={setActualDarkTheme}
   splashDuration={splashDuration}
   setSplashDuration={applySplashDuration}
+  pendingSplashDuration={pendingSplashDuration}
+  setPendingSplashDuration={setPendingSplashDuration}
    moreRounded={moreRounded}
    setMoreRounded={setMoreRounded}
    voiceSpacing={voiceSpacing}
