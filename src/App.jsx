@@ -2074,7 +2074,7 @@ function TourOverlay({ step, total, onNext, onPrev, onSkip }) {
 }
 
 function AppShell({ appLocked, setAppLocked }) {
-  const { t, themeKey, setThemeKey, hideNav, appFont } = useTheme();
+  const { t, themeKey, setThemeKey, hideNav, appFont, voiceSpacing, setVoiceSpacing } = useTheme();
   const auth = useAuth();
   useSystemInsets();
   const globalSettings = useGlobalSettings();

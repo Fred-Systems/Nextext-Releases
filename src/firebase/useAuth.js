@@ -142,6 +142,10 @@ export function useAuth() {
     // Creates the Firestore profile for a brand-new Google account and marks it
     // complete when this was the sign-up flow (which already collected names).
     const ensureProfile = async (user, extra) => {
+      // Force-refresh the ID token so Firestore's auth context is current
+      // before we write the user doc — otherwise the first write right after
+      // sign-in can hit "Missing or insufficient permissions" on native.
+      try { await user.getIdToken(true); } catch { /* non-fatal */ }
       const ref = doc(db, "users", user.uid);
       const snap = await getDoc(ref);
       if (!snap.exists()) {
@@ -168,7 +172,7 @@ export function useAuth() {
           "Play Services unavailable"
         );
         const legacyUser = await signInWithCredential(auth, buildGoogleCredential(legacy || {}));
-        return await ensureProfile(legacyUser, legacy);
+        return await ensureProfile(legacyUser.user, legacy);
       } catch (legacyErr) {
         if (legacyErr?.code === "CANCELLED" || legacyErr?.message?.includes("cancelled")) {
           throw legacyErr;
@@ -182,7 +186,7 @@ export function useAuth() {
           "Play Services unavailable"
         );
         const capgoUser = await signInWithCredential(auth, buildGoogleCredential(capgoRes?.response || {}));
-        return await ensureProfile(capgoUser, capgoRes?.response);
+        return await ensureProfile(capgoUser.user, capgoRes?.response);
       } catch (capgoErr) {
         if (capgoErr?.code === "CANCELLED" || capgoErr?.message?.includes("cancelled")) {
           throw capgoErr;
