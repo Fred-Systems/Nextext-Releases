@@ -1271,10 +1271,12 @@ public class NextextNativePlugin extends Plugin {
                     { "icon10",   "com.nextext.app.MainActivityAlias10" },
                     { "icon11",   "com.nextext.app.MainActivityAlias11" },
                     { "icon12",   "com.nextext.app.MainActivityAlias12" },
-                    { "icon13",   "com.nextext.app.MainActivityAlias13" },
-                    { "icon14",   "com.nextext.app.MainActivityAlias14" },
-                    { "icon15",   "com.nextext.app.MainActivityAlias15" }
-                };
+                     { "icon13",   "com.nextext.app.MainActivityAlias13" },
+                     { "icon14",   "com.nextext.app.MainActivityAlias14" },
+                     { "icon15",   "com.nextext.app.MainActivityAlias15" },
+                     { "icon16",   "com.nextext.app.MainActivityAlias16" },
+                     { "icon17",   "com.nextext.app.MainActivityAlias17" }
+                 };
                 for (String[] p : profiles) {
                     String id = p[0];
                     String comp = p[1];
@@ -1342,9 +1344,11 @@ public class NextextNativePlugin extends Plugin {
             { "icon11",   "NexText",         "ic_icon11" },
             { "icon12",   "Calculator",      "ic_icon12" },
             { "icon13",   "Notes",           "ic_icon13" },
-            { "icon14",   "NexText",         "ic_icon14" },
-            { "icon15",   "NexText",         "ic_icon15" }
-        };
+             { "icon14",   "NexText",         "ic_icon14" },
+             { "icon15",   "NexText",         "ic_icon15" },
+             { "icon16",   "Mizrachi mode",   "ic_launcher" },
+             { "icon17",   "Mizrachi mode",   "ic_launcher" }
+         };
         try {
             for (String[] p : profiles) {
                 org.json.JSONObject o = new org.json.JSONObject();

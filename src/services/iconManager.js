@@ -59,6 +59,13 @@ export const ICON_PROFILES = [
   // admin enables them (globalSettings.hideSpecialIcons === false).
   { id: "icon14",  label: "NexText", kind: "splash", iconPath: "/ic_icon14.png", special: true },
   { id: "icon15",  label: "NexText", kind: "splash", iconPath: "/ic_icon15.png", special: true },
+  // Mizrachi mode (icon16/icon17). Same launch behaviour as icon14/icon15
+  // (special splash words, hidden by the admin "hide special icons" toggle),
+  // but shown in the picker under the "Mizrachi mode" name. On the device home
+  // screen they resolve to the default NexText launcher icon (see native
+  // aliases + NextextNativePlugin mapping).
+  { id: "icon16",  label: "Mizrachi mode", kind: "splash", iconPath: "/ic_icon16.png", special: true },
+  { id: "icon17",  label: "Mizrachi mode", kind: "splash", iconPath: "/ic_icon17.png", special: true },
 ];
 
 const DEFAULT_PROFILE = "default";

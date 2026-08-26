@@ -6,7 +6,7 @@ import { useChats, toggleArchive, toggleFavorite, toggleLocked, togglePinned, de
 import { useContacts, searchUsersByUsername, sendContactRequest, acceptContactRequest, getContactDisplayName } from "../firebase/contacts";
 import { sendMediaMessage, getOrCreateDirectChat } from "../firebase/chats";
 import { usePresence, formatLastSeen } from "../firebase/presence";
-import { useStatuses } from "../firebase/status";
+import { useStatuses, postStatus } from "../firebase/status";
 import { useSystemConfigHook, getAIContact, AI_CONTACT_UID } from "../firebase/ai";
 import { useBroadcastLists, createBroadcastList, deleteBroadcastList, sendBroadcastText } from "../firebase/broadcast";
 import { useGlobalSettings } from "../firebase/config-settings";
@@ -21,6 +21,19 @@ import NewGroupScreen from "./NewGroupScreen";
 import FindFriendsScreen from "./FindFriendsScreen";
 import { doc, onSnapshot, updateDoc, collection, getCountFromServer } from "firebase/firestore";
 import { db } from "../firebase/config";
+
+const GLOBAL_CAMERA_FILTERS = [
+  { id: "none", label: "None", css: "" },
+  { id: "mono", label: "Mono", css: "grayscale(1) contrast(1.05)" },
+  { id: "sepia", label: "Sepia", css: "sepia(0.85)" },
+  { id: "vivid", label: "Vivid", css: "saturate(1.8) contrast(1.1)" },
+  { id: "cool", label: "Cool", css: "hue-rotate(180deg) saturate(1.2)" },
+  { id: "warm", label: "Warm", css: "sepia(0.35) saturate(1.4) hue-rotate(-15deg)" },
+  { id: "noir", label: "Noir", css: "grayscale(1) contrast(1.6) brightness(0.9)" },
+  { id: "pop", label: "Pop", css: "saturate(2) contrast(1.3)" },
+  { id: "vintage", label: "Vintage", css: "sepia(0.55) contrast(1.2) saturate(1.3) brightness(1.05)" },
+  { id: "bw", label: "B&W", css: "grayscale(1) brightness(1.1)" },
+];
 
 function highlightText(text, query, color) {
   if (!query.trim() || !text) return text;
@@ -127,7 +140,14 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [groupPictureFullscreen, setGroupPictureFullscreen] = useState(null);
   const [showGlobalCamera, setShowGlobalCamera] = useState(false);
   const [globalCameraError, setGlobalCameraError] = useState("");
-  const [capturedPhoto, setCapturedPhoto] = useState(null);
+  const [globalCameraMode, setGlobalCameraMode] = useState("photo"); // "photo" | "video"
+  const [globalCameraFacing, setGlobalCameraFacing] = useState("environment"); // "environment" | "user"
+  const [globalCameraFilter, setGlobalCameraFilter] = useState(0);
+  const [capturedMedia, setCapturedMedia] = useState(null); // { type:"image"|"video", blob, url, ext, mime }
+  const [recording, setRecording] = useState(false);
+  const [postingStatus, setPostingStatus] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
   const [cameraPreviewStep, setCameraPreviewStep] = useState(false);
   const [cameraCaption, setCameraCaption] = useState("");
   const [customLists, setCustomLists] = useState(() => {
@@ -446,12 +466,17 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const openGlobalCamera = async () => {
     setGlobalCameraError("");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      const wantsVideo = globalCameraMode === "video";
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: globalCameraFacing },
+        audio: wantsVideo,
+      });
       globalCameraStreamRef.current = stream;
       setShowGlobalCamera(true);
       setTimeout(() => {
         if (globalCameraVideoRef.current) {
           globalCameraVideoRef.current.srcObject = stream;
+          if (wantsVideo) globalCameraVideoRef.current.muted = false;
           globalCameraVideoRef.current.play().catch(() => {});
         }
       }, 100);
@@ -460,23 +485,83 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     }
   };
 
+  const switchGlobalCameraFacing = () => {
+    setGlobalCameraFacing((f) => (f === "environment" ? "user" : "environment"));
+    const wasVideo = globalCameraMode === "video";
+    if (globalCameraStreamRef.current) {
+      globalCameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
+      globalCameraStreamRef.current = null;
+    }
+    // Re-open with the new facing direction. Keep the current mode.
+    setTimeout(() => openGlobalCamera(), 50);
+  };
+
+  const cycleGlobalFilter = () => {
+    setGlobalCameraFilter((i) => (i + 1) % GLOBAL_CAMERA_FILTERS.length);
+  };
+
   const captureGlobalPhoto = () => {
     if (!globalCameraVideoRef.current) return;
     const video = globalCameraVideoRef.current;
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
+    const ctx = canvas.getContext("2d");
+    const filter = GLOBAL_CAMERA_FILTERS[globalCameraFilter]?.css;
+    if (filter) ctx.filter = filter;
+    // Mirror the preview for selfie shots so the captured image matches what the user saw.
+    if (globalCameraFacing === "user") {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0);
+    ctx.filter = "none";
     canvas.toBlob((blob) => {
       if (!blob) return;
+      const url = URL.createObjectURL(blob);
       closeGlobalCamera();
-      setCapturedPhoto(blob);
+      setCapturedMedia({ type: "image", blob, url, ext: "jpg", mime: "image/jpeg" });
       setCameraCaption("");
       setCameraPreviewStep(true);
     }, "image/jpeg", 0.92);
   };
 
+  const startGlobalRecording = () => {
+    if (!globalCameraStreamRef.current || recording) return;
+    recordedChunksRef.current = [];
+    let recorder;
+    try {
+      recorder = new MediaRecorder(globalCameraStreamRef.current, { mimeType: "video/webm" });
+    } catch {
+      try { recorder = new MediaRecorder(globalCameraStreamRef.current); } catch { return; }
+    }
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunksRef.current.push(e.data); };
+    recorder.onstop = () => {
+      const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || "video/webm" });
+      if (!blob.size) return;
+      const url = URL.createObjectURL(blob);
+      setCapturedMedia({ type: "video", blob, url, ext: "webm", mime: blob.type });
+      setCameraCaption("");
+      setCameraPreviewStep(true);
+      closeGlobalCamera();
+    };
+    mediaRecorderRef.current = recorder;
+    recorder.start();
+    setRecording(true);
+  };
+
+  const stopGlobalRecording = () => {
+    setRecording(false);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
   const closeGlobalCamera = () => {
+    if (recording && mediaRecorderRef.current) {
+      try { mediaRecorderRef.current.stop(); } catch { /* noop */ }
+      setRecording(false);
+    }
     if (globalCameraStreamRef.current) {
       globalCameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
       globalCameraStreamRef.current = null;
@@ -484,22 +569,64 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     setShowGlobalCamera(false);
   };
 
-  const sendCapturedPhotoTo = async (targetChat) => {
-    if (!capturedPhoto || !myUid) return;
-    setCapturedPhoto(null);
+  const discardCapturedMedia = () => {
+    if (capturedMedia?.url) URL.revokeObjectURL(capturedMedia.url);
+    setCapturedMedia(null);
+    setCameraCaption("");
+    setCameraPreviewStep(false);
+    setPostingStatus(false);
+  };
+
+  const sendCapturedMediaTo = async (targetChat) => {
+    if (!capturedMedia || !myUid) return;
+    const media = capturedMedia;
+    discardCapturedMedia();
     let chatId = targetChat.id;
     if (targetChat.type !== "group") {
       const otherUid = targetChat.participants?.find((p) => p !== myUid);
       chatId = await getOrCreateDirectChat(myUid, otherUid);
     }
-    const file = new File([capturedPhoto], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
+    const file = new File([media.blob], `camera-${Date.now()}.${media.ext}`, { type: media.mime });
     try {
-      const result = await uploadChatFile(chatId, myUid, file, { compress: true });
+      const result = await uploadChatFile(chatId, myUid, file, { compress: media.type !== "video" });
       const participants = targetChat.participants || [];
-      await sendMediaMessage(chatId, myUid, "image", result, participants);
+      await sendMediaMessage(chatId, myUid, media.type, result, participants);
       openChatRow(targetChat);
     } catch {
       // silent
+    }
+  };
+
+  const postCapturedMediaToStatus = async () => {
+    if (!capturedMedia || !myUid) return;
+    setPostingStatus(true);
+    try {
+      const media = capturedMedia;
+      const file = new File([media.blob], `status-${Date.now()}.${media.ext}`, { type: media.mime });
+      const result = await uploadChatFile(`status-${myUid}`, myUid, file, { compress: media.type !== "video" });
+      let durationMs = null;
+      if (media.type === "video") {
+        const v = document.createElement("video");
+        v.preload = "metadata";
+        v.src = media.url;
+        await new Promise((res) => {
+          v.onloadedmetadata = () => { durationMs = Math.round(v.duration * 1000); res(); };
+          v.onerror = () => res();
+        });
+      }
+      await postStatus(myUid, {
+        text: cameraCaption.trim() || null,
+        mediaURL: result.url,
+        mediaType: media.type,
+        backgroundColor: null,
+        fontFamily: null,
+        durationMs: durationMs || 8000,
+        textOverlay: cameraCaption.trim() || null,
+        waitForVideo: media.type === "video",
+      });
+      discardCapturedMedia();
+    } catch {
+      setPostingStatus(false);
     }
   };
 
@@ -915,34 +1042,57 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Camera</span>
             <span style={{ width: 50 }} />
           </div>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", minHeight: 0 }}>
-            <video ref={globalCameraVideoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", maxHeight: "70vh", objectFit: "contain" }} />
-          </div>
-          {globalCameraError && <div style={{ color: "#FF3B30", fontSize: 13, textAlign: "center", padding: 8, flexShrink: 0 }}>{globalCameraError}</div>}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 16px 24px", flexShrink: 0, gap: 16 }}>
-            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 12, overflowX: "auto", paddingBottom: 8, maxWidth: "70%" }}>
-              {acceptedContacts.slice(0, 8).map((c) => (
-                <div key={c.uid} onClick={() => { closeGlobalCamera(); setCapturedPhoto(null); sendCapturedPhotoTo(chatForContact || { id: null, type: "direct", participants: [myUid, otherUid] }); }} style={{ flexShrink: 0, width: 56, height: 56, borderRadius: "50%", overflow: "hidden", border: "2px solid rgba(255,255,255,0.3)", cursor: "pointer", background: t.primaryLight }}>
-                  <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={48} />
-                </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "6px 12px", flexShrink: 0 }}>
+            <div style={{ display: "flex", background: "rgba(255,255,255,0.12)", borderRadius: 20, overflow: "hidden" }}>
+              {["photo", "video"].map((m) => (
+                <span
+                  key={m}
+                  onClick={() => setGlobalCameraMode(m)}
+                  style={{ padding: "6px 16px", fontSize: 13, fontWeight: 700, color: globalCameraMode === m ? "#000" : "#fff", background: globalCameraMode === m ? "#fff" : "transparent", borderRadius: 20, cursor: "pointer", textTransform: "capitalize" }}
+                >{m}</span>
               ))}
             </div>
-            <div onClick={captureGlobalPhoto} style={{ width: 64, height: 64, borderRadius: "50%", border: "4px solid #fff", background: "rgba(255,255,255,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#fff" }} />
-            </div>
+            <span onClick={cycleGlobalFilter} style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.12)", borderRadius: 16, cursor: "pointer" }}>
+              {GLOBAL_CAMERA_FILTERS[globalCameraFilter]?.label || "None"}
+            </span>
+            <span onClick={switchGlobalCameraFacing} title="Flip camera" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(255,255,255,0.12)", cursor: "pointer" }}>
+              <Camera size={18} color="#fff" />
+            </span>
+          </div>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", minHeight: 0 }}>
+            <video ref={globalCameraVideoRef} autoPlay playsInline muted={globalCameraMode !== "video"} style={{ width: "100%", height: "100%", maxHeight: "70vh", objectFit: "contain", transform: globalCameraFacing === "user" ? "scaleX(-1)" : "none", filter: GLOBAL_CAMERA_FILTERS[globalCameraFilter]?.css }} />
+          </div>
+          {globalCameraError && <div style={{ color: "#FF3B30", fontSize: 13, textAlign: "center", padding: 8, flexShrink: 0 }}>{globalCameraError}</div>}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 16px 24px", flexShrink: 0 }}>
+            {globalCameraMode === "photo" ? (
+              <div onClick={captureGlobalPhoto} style={{ width: 64, height: 64, borderRadius: "50%", border: "4px solid #fff", background: "rgba(255,255,255,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#fff" }} />
+              </div>
+            ) : (
+              <div onClick={recording ? stopGlobalRecording : startGlobalRecording} style={{ width: 64, height: 64, borderRadius: "50%", border: "4px solid #fff", background: recording ? "#FF3B30" : "rgba(255,255,255,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <div style={{ width: recording ? 26 : 52, height: recording ? 26 : 52, borderRadius: recording ? 6 : "50%", background: "#fff" }} />
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {capturedPhoto && !cameraPreviewStep && (
+      {capturedMedia && !cameraPreviewStep && (
         <div style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 60, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", background: t.surface, flexShrink: 0, borderBottom: `1px solid ${t.border}` }}>
-            <span onClick={() => setCapturedPhoto(null)} style={{ color: t.text, fontSize: 15, cursor: "pointer" }}>Cancel</span>
+            <span onClick={discardCapturedMedia} style={{ color: t.text, fontSize: 15, cursor: "pointer" }}>Cancel</span>
             <span style={{ color: t.text, fontWeight: 700, fontSize: 16 }}>Send to…</span>
             <span style={{ width: 50 }} />
           </div>
           <div style={{ padding: 16, borderBottom: `1px solid ${t.border}` }}>
-            <img src={URL.createObjectURL(capturedPhoto)} alt="Captured" style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover" }} />
+            {capturedMedia.type === "video"
+              ? <video src={capturedMedia.url} style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover" }} />
+              : <img src={capturedMedia.url} alt="Captured" style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover" }} />}
+          </div>
+          <div style={{ padding: "10px 16px", borderBottom: `1px solid ${t.border}` }}>
+            <div onClick={postCapturedMediaToStatus} style={{ padding: "12px 14px", borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer", opacity: postingStatus ? 0.6 : 1 }}>
+              {postingStatus ? "Posting…" : "Post on Status"}
+            </div>
           </div>
       <div className="nx-scroll" style={{ flex: 1, paddingBottom: hideNav ? 80 : 140 }}>
             {acceptedContacts.length === 0 && <div style={{ padding: 20, textAlign: "center", color: t.textMuted, fontSize: 13 }}>No contacts to send to.</div>}
@@ -950,14 +1100,14 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               const otherUid = c.uid;
               const chatForContact = chats.find((ch) => ch.type !== "group" && ch.participants?.includes(myUid) && ch.participants?.includes(otherUid));
               return (
-                <div key={c.uid} onClick={() => sendCapturedPhotoTo(chatForContact || { id: null, type: "direct", participants: [myUid, otherUid] })} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
+                <div key={c.uid} onClick={() => sendCapturedMediaTo(chatForContact || { id: null, type: "direct", participants: [myUid, otherUid] })} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
                   <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={42} />
                   <span style={{ fontSize: 15, fontWeight: 600, color: t.text }}>{c.profile?.displayName}</span>
                 </div>
               );
             })}
             {chats.filter((c) => c.type === "group").map((c) => (
-              <div key={c.id} onClick={() => sendCapturedPhotoTo(c)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
+              <div key={c.id} onClick={() => sendCapturedMediaTo(c)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
                 <div style={{ width: 42, height: 42, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center" }}><Users size={20} color={t.primary} /></div>
                 <span style={{ fontSize: 15, fontWeight: 600, color: t.text }}>{c.groupName}</span>
               </div>
@@ -966,15 +1116,17 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         </div>
       )}
 
-      {capturedPhoto && cameraPreviewStep && (
+      {capturedMedia && cameraPreviewStep && (
         <div style={{ position: "absolute", inset: 0, background: "#000", zIndex: 60, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
-            <span onClick={() => { setCameraPreviewStep(false); setCapturedPhoto(null); setCameraCaption(""); }} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Discard</span>
+            <span onClick={discardCapturedMedia} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Discard</span>
             <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Preview</span>
             <span style={{ width: 50 }} />
           </div>
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", minHeight: 0 }}>
-            <img src={URL.createObjectURL(capturedPhoto)} alt="captured" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+            {capturedMedia.type === "video"
+              ? <video src={capturedMedia.url} controls style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+              : <img src={capturedMedia.url} alt="captured" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />}
           </div>
           <div style={{ padding: "12px 16px", flexShrink: 0 }}>
             <input
@@ -984,11 +1136,14 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, background: "rgba(255,255,255,0.1)", color: "#fff", boxSizing: "border-box" }}
             />
           </div>
-          <div style={{ display: "flex", gap: 16, justifyContent: "center", padding: "0 16px 24px", flexShrink: 0 }}>
-            <div onClick={() => { setCameraPreviewStep(false); setCapturedPhoto(null); setCameraCaption(""); openGlobalCamera(); }} style={{ flex: 1, padding: 13, borderRadius: 12, border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", padding: "0 16px 24px", flexShrink: 0 }}>
+            <div onClick={() => { setCameraPreviewStep(false); setCameraCaption(""); openGlobalCamera(); }} style={{ flex: 1, padding: 13, borderRadius: 12, border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
               Retake
             </div>
-            <div onClick={() => setCameraPreviewStep(false)} style={{ flex: 2, padding: 13, borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
+            <div onClick={postCapturedMediaToStatus} style={{ flex: 1, padding: 13, borderRadius: 12, border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer", opacity: postingStatus ? 0.6 : 1 }}>
+              {postingStatus ? "Posting…" : "Status"}
+            </div>
+            <div onClick={() => setCameraPreviewStep(false)} style={{ flex: 1, padding: 13, borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
               Send
             </div>
           </div>

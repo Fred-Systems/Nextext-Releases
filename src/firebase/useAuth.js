@@ -196,12 +196,32 @@ export function useAuth() {
 
     // Web-based Google OAuth flow (works on all devices including those without Play Services).
     // - On a normal desktop browser, signInWithPopup opens the OAuth window.
-    // - On a mobile browser, popup may be blocked; we fall back to redirect.
+    // - On a mobile browser, popup may be blocked; we use redirect directly.
     // - On a Capacitor/Android WebView *without* Play Services, both native
     //   paths above already failed silently — signInWithRedirect opens the
     //   system browser (or an embedded Web View with the OAuth consent page),
     //   completes the standard Google OAuth 2.0 web flow, and on return the
     //   getRedirectResult() handler in onAuthStateChanged resolves the credential.
+    //
+    // On mobile / WebView, popups are unreliable and (on devices without Play
+    // Store) surface the "Cross-Origin-Opener-Policy policy would block the
+    // window.closed call" warning and hang. Go straight to the redirect flow.
+    const isMobile =
+      Capacitor.isNativePlatform() ||
+      /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+
+    if (isMobile) {
+      try {
+        await signInWithRedirect(auth, googleProvider);
+        // Resolution happens asynchronously via getRedirectResult in
+        // onAuthStateChanged (see line ~88). Return null so the caller does not
+        // wait on a popup that never resolves.
+        return null;
+      } catch (redirectErr) {
+        throw playStoreFriendlyError(redirectErr);
+      }
+    }
+
     try {
       const cred = await signInWithPopup(auth, googleProvider);
       return await ensureProfile(cred.user, null);

@@ -37,6 +37,8 @@ const PROFILE_BLURBS = {
   icon13:  "Disguises the app as a Notes editor. Type your unlock keyword in a note to open NexText. Default keyword: open.",
   icon14:  "NexText with the discipline wallpaper. Shows an animated warning on launch.",
   icon15:  "NexText with the discipline wallpaper. Shows an animated warning on launch.",
+  icon16:  "Mizrachi mode. Shows an animated warning on launch (same as icon14/icon15).",
+  icon17:  "Mizrachi mode. Shows an animated warning on launch (same as icon14/icon15).",
 };
 
 export default function IconPickerScreen({ onBack, restrictions, isAdmin, myUid }) {
