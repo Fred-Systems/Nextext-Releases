@@ -18,7 +18,7 @@ import { usePresence, formatLastSeen } from "../firebase/presence";
 import { uploadChatFile, deleteChatFile } from "../supabase/media";
 import { FileTooLargeError } from "../media/mediaCompression";
 import { cacheMedia, getLocalMediaUrl, hasCachedMedia } from "../media/localMediaCache";
-import { doc, getDoc, onSnapshot, addDoc, collection, serverTimestamp, updateDoc } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, addDoc, collection, serverTimestamp, updateDoc, increment } from "firebase/firestore";
 import { db } from "../firebase/config";
 import NextextNative from "../native/nextextNative";
 import { Capacitor } from "@capacitor/core";
@@ -646,7 +646,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [sendError, setSendError] = useState("");
   const [chatSetupError, setChatSetupError] = useState("");
   const [showAttach, setShowAttach] = useState(false);
-  const [disappearingMode, setDisappearingMode] = useState(false);
+  const [disappearingViews, setDisappearingViews] = useState(0); // 0 = off; otherwise # of allowed views
   const [viewingDisappearing, setViewingDisappearing] = useState(null);
   const [viewedDisappearing, setViewedDisappearing] = useState(() => new Set());
   const [attachRendered, setAttachRendered] = useState(false);
@@ -1740,8 +1740,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     try {
       const result = await uploadChatFile(chatId, myUid, pm.file, { compress: pm.isImage });
       const caption = captionText.trim();
-      await sendMediaMessage(chatId, myUid, pm.isImage ? "image" : "video", result, otherParticipants, { replyTo: replyingTo, text: caption || null, disappearing: disappearingMode ? { viewOnce: true } : null });
-      setDisappearingMode(false);
+      await sendMediaMessage(chatId, myUid, pm.isImage ? "image" : "video", result, otherParticipants, { replyTo: replyingTo, text: caption || null, disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
+      setDisappearingViews(0);
       setReplyingTo(null);
       cancelPendingMedia();
     } catch (err) {
@@ -1759,8 +1759,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setUploading(true);
     try {
        const result = await uploadChatFile(chatId, myUid, file);
-       await sendMediaMessage(chatId, myUid, "file", result, otherParticipants, { replyTo: replyingTo, disappearing: disappearingMode ? { viewOnce: true } : null });
-       setDisappearingMode(false);
+       await sendMediaMessage(chatId, myUid, "file", result, otherParticipants, { replyTo: replyingTo, disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
+       setDisappearingViews(0);
        setReplyingTo(null);
     } catch (err) {
       if (err instanceof FileTooLargeError) setSendError("Files must be under 50MB.");
@@ -2756,8 +2756,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   // Per-media-type "save to device" visibility, controlled by admin toggles,
   // plus a per-user setting (localStorage) to hide the button entirely.
   const hideSaveButton = typeof window !== "undefined" && localStorage.getItem("nextext_hide_save_button") === "on";
-  const shouldShowDownload = (type) => {
+   const shouldShowDownload = (m) => {
+    const type = m.type;
     if (hideSaveButton) return false;
+    // Disappearing media cannot be saved/downloaded by the recipient.
+    if (m.disappearing) return false;
     if (type === "voice") return !globalSettings?.hideDownloadVoice;
     if (type === "image") return !globalSettings?.hideDownloadImages;
     if (type === "video") return !globalSettings?.hideDownloadVideos;
@@ -2767,7 +2770,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   // Small "save to device" button rendered BELOW the media bubble (it must not
   // overlap the voice waveform / photo / video). Shows live save状态.
   const renderDownloadBelow = (m) => {
-    if (!shouldShowDownload(m.type)) return null;
+      if (!shouldShowDownload(m)) return null;
     const busy = mediaBusy[m.id];
     const label = busy === "saving" ? "Saving…" : busy === "saved" ? "Saved ✓" : "Save to device";
     return (
@@ -2802,18 +2805,44 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   const renderBubble = (m) => {
-    // Disappearing (view-once) media: the recipient (or, in a self-chat, the
-    // sender) sees a "tap to view" placeholder instead of the media itself.
-    // Once opened it is deleted for everyone after the viewer is closed.
-    if (m.disappearing && !viewedDisappearing.has(m.id) && (m.senderId !== myUid || isSelfChat)) {
+    // Disappearing media: the recipient (or, in a self-chat, the sender) sees a
+    // "tap to view" placeholder. They may open it up to `viewsAllowed` times;
+    // each open is counted on the server so it can't be replayed indefinitely,
+    // and saving/downloading is disabled. Once the view budget is used up the
+    // placeholder locks to "viewed".
+    if (m.disappearing && (m.senderId !== myUid || isSelfChat)) {
+      const dAllowed = m.disappearing.viewsAllowed || 1;
+      const dMyViews = (m.disappearing.views && m.disappearing.views[myUid]) || 0;
       const label = m.type === "file" ? "Disappearing file" : m.type === "video" ? "Disappearing video" : "Disappearing photo";
+      if (dMyViews < dAllowed) {
+        const remaining = dAllowed - dMyViews;
+        return (
+          <div>
+            <StatusReplyBlock statusRef={m.statusRef} mine={false} t={t} />
+            <div onClick={(e) => {
+              e.stopPropagation();
+              if (!viewedDisappearing.has(m.id)) {
+                setViewedDisappearing((prev) => { const n = new Set(prev); n.add(m.id); return n; });
+                try { updateDoc(doc(db, "chats", chatId, "messages", m.id), { [`disappearing.views.${myUid}`]: increment(1) }); } catch {}
+              }
+              setViewingDisappearing(m);
+            }} style={{ cursor: "pointer", width: 220, borderRadius: 12, background: "rgba(255,59,48,0.10)", border: "1px solid rgba(255,59,48,0.35)", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: "#FF3B30" }}>
+              <EyeOff size={28} />
+              <div style={{ fontSize: 13.5, fontWeight: 700, textAlign: "center" }}>{label}</div>
+              <div style={{ fontSize: 11.5, opacity: 0.85, textAlign: "center" }}>Tap to view{remaining > 1 ? ` — ${remaining} views left` : ""}. Cannot be saved or screenshotted.</div>
+            </div>
+            {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderRichText(m.text)}</div>}
+          </div>
+        );
+      }
+      // View budget exhausted (or locally already viewed) → locked.
       return (
         <div>
           <StatusReplyBlock statusRef={m.statusRef} mine={false} t={t} />
-          <div onClick={(e) => { e.stopPropagation(); setViewingDisappearing(m); }} style={{ cursor: "pointer", width: 220, borderRadius: 12, background: "rgba(255,59,48,0.10)", border: "1px solid rgba(255,59,48,0.35)", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: "#FF3B30" }}>
+          <div style={{ width: 220, borderRadius: 12, background: "rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.12)", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: t.textMuted }}>
             <EyeOff size={28} />
             <div style={{ fontSize: 13.5, fontWeight: 700, textAlign: "center" }}>{label}</div>
-            <div style={{ fontSize: 11.5, opacity: 0.85, textAlign: "center" }}>Tap to view once. It will be deleted after you close.</div>
+            <div style={{ fontSize: 11.5, opacity: 0.85, textAlign: "center" }}>Viewed · no longer available</div>
           </div>
           {m.text && <div style={{ fontSize: 14.5 * chatTextScale, lineHeight: 1.35, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{renderRichText(m.text)}</div>}
         </div>
@@ -3534,11 +3563,16 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             )}
             <input ref={photoInputRef} type="file" accept="image/*,video/*" style={{ display: "none" }} onChange={handlePhotoOrVideoPick} onCancel={() => setGalleryActive(false)} />
             <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={handleFilePick} />
-            {disappearingMode && (
+            {disappearingViews > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 16px", padding: "8px 12px", borderRadius: 12, background: "rgba(255,59,48,0.12)", border: "1px solid rgba(255,59,48,0.4)", flexShrink: 0 }}>
                 <EyeOff size={15} color="#FF3B30" />
-                <span style={{ flex: 1, fontSize: 12.5, color: "#FF3B30", fontWeight: 600 }}>Disappearing media — the next photo, video, or file you send will vanish after the recipient views it once.</span>
-                <div onClick={() => setDisappearingMode(false)} style={{ padding: "4px 8px", borderRadius: 8, background: "rgba(255,59,48,0.18)", fontSize: 12, fontWeight: 700, color: "#FF3B30", cursor: "pointer", flexShrink: 0 }}>Cancel</div>
+                <span style={{ flex: 1, fontSize: 12.5, color: "#FF3B30", fontWeight: 600 }}>Disappearing — the next media you send is viewable</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {[1, 3, 5, 10].map((n) => (
+                    <div key={n} onClick={() => setDisappearingViews(n)} style={{ padding: "4px 8px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", color: disappearingViews === n ? "#fff" : "#FF3B30", background: disappearingViews === n ? "#FF3B30" : "rgba(255,59,48,0.18)" }}>{n}×</div>
+                  ))}
+                  <div onClick={() => setDisappearingViews(0)} style={{ padding: "4px 8px", borderRadius: 8, background: "rgba(255,59,48,0.18)", fontSize: 12, fontWeight: 700, color: "#FF3B30", cursor: "pointer" }}>Off</div>
+                </div>
               </div>
             )}
             <div style={{ flex: 1, display: "flex", alignItems: "center", background: t.surface, borderRadius: 24, padding: `${Math.round(8 * composerHeight)}px 6px ${Math.round(8 * composerHeight)}px 10px`, gap: 2, minWidth: 0 }}>
@@ -3870,8 +3904,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   setUploading(true);
                   try {
                     const result = await uploadChatFile(chatId, myUid, p.file, { compress: true });
-                    await sendMediaMessage(chatId, myUid, "image", result, otherParticipants, { disappearing: disappearingMode ? { viewOnce: true } : null });
-                    setDisappearingMode(false);
+                    await sendMediaMessage(chatId, myUid, "image", result, otherParticipants, { disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
+                    setDisappearingViews(0);
                     setCapturedPhotos((prev) => prev.filter((_, j) => j !== i));
                   } catch (err) {
                     setSendError("Couldn't send photo: " + err.message);
@@ -3895,8 +3929,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   setUploading(true);
                   try {
                     const result = await uploadChatFile(chatId, myUid, last.file, { compress: true });
-                    await sendMediaMessage(chatId, myUid, "image", result, otherParticipants, { disappearing: disappearingMode ? { viewOnce: true } : null });
-                    setDisappearingMode(false);
+                    await sendMediaMessage(chatId, myUid, "image", result, otherParticipants, { disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
+                    setDisappearingViews(0);
                     setCapturedPhotos((prev) => prev.filter((_, j) => j !== prev.length - 1));
                   } catch (err) {
                     setSendError("Couldn't send photo: " + err.message);

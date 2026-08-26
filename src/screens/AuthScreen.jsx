@@ -35,6 +35,10 @@ export default function AuthScreen({ auth }) {
     setUsernameTaken(false);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
+      // A username-availability lookup needs isSignedIn(), which isn't true
+      // until the account exists — so skip the live check while unauthenticated
+      // (the real uniqueness gate runs inside signUpWithEmail after sign-in).
+      if (!auth.user) { setCheckingUsername(false); return; }
       try {
         const lower = username.trim().toLowerCase();
         const q = query(
@@ -73,19 +77,6 @@ export default function AuthScreen({ auth }) {
         }
         if (!agreedToPrivacy) {
           setError("You must agree to the Privacy Policy to create an account.");
-          setBusy(false);
-          return;
-        }
-        const lower = username.trim().toLowerCase();
-        const q = query(
-          collection(db, "users"),
-          where("usernameLower", ">=", lower),
-          where("usernameLower", "<=", lower + "\uf8ff"),
-          fbLimit(1)
-        );
-        const snap = await getDocs(q);
-        if (snap.docs.some((d) => d.data().usernameLower === lower)) {
-          setError("That username is already taken. Please choose another.");
           setBusy(false);
           return;
         }
@@ -246,6 +237,7 @@ function friendlyError(err) {
       "auth/user-not-found": "No account found with that email.",
       "auth/invalid-credential": "Incorrect email or password.",
       "permission-denied": "We couldn't save your account profile. Please check your connection and try again.",
+      "username-taken": "That username is already taken. Please choose another.",
       "auth/argument-error": "Google sign-in failed. This is usually a configuration issue — make sure the app's SHA-1/SHA-256 fingerprint and OAuth web client ID are registered in the Firebase Console.",
     "auth/popup-closed-by-user": "Google sign-in was cancelled. Please try again.",
     "auth/popup-blocked": "Pop-up was blocked by your browser. Please allow pop-ups for this site.",

@@ -7,7 +7,7 @@ import { useContacts } from "../firebase/contacts";
 import { useChats, getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
 import GlobalCamera from "../components/GlobalCamera";
 import { uploadChatFile } from "../supabase/media";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import Avatar from "../components/Avatar";
 import StatusStoryViewer from "./StatusStoryViewer";
@@ -181,7 +181,31 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
     });
     return unsub;
   }, [myUid]);
-  const [statusLayout, setStatusLayout] = useState("new");
+  // Status look is a PER-USER preference (the admin can no longer force a layout
+  // onto everyone). Persisted to the user's profile and localStorage so it sticks.
+  const [statusLayout, setStatusLayout] = useState(() => localStorage.getItem("nextext_status_layout") || "new");
+  const [statusPreviewSize, setStatusPreviewSize] = useState(() => localStorage.getItem("nextext_status_preview_size") || "compact");
+  useEffect(() => {
+    if (!myUid) return;
+    const unsub = onSnapshot(doc(db, "users", myUid), (snap) => {
+      const d = snap.data();
+      setBlockStatus(!!d?.restrictions?.blockStatus);
+      setIsAdmin(d?.role === "admin");
+      if (d?.statusLayout) { setStatusLayout(d.statusLayout); try { localStorage.setItem("nextext_status_layout", d.statusLayout); } catch {} }
+      if (d?.statusPreviewSize) { setStatusPreviewSize(d.statusPreviewSize); try { localStorage.setItem("nextext_status_preview_size", d.statusPreviewSize); } catch {} }
+    });
+    return unsub;
+  }, [myUid]);
+  const changeStatusLayout = (l) => {
+    setStatusLayout(l);
+    try { localStorage.setItem("nextext_status_layout", l); } catch {}
+    if (myUid) updateDoc(doc(db, "users", myUid), { statusLayout: l }).catch(() => {});
+  };
+  const changeStatusPreviewSize = (s) => {
+    setStatusPreviewSize(s);
+    try { localStorage.setItem("nextext_status_preview_size", s); } catch {}
+    if (myUid) updateDoc(doc(db, "users", myUid), { statusPreviewSize: s }).catch(() => {});
+  };
   const [showPost, setShowPost] = useState(false);
   const [postText, setPostText] = useState("");
   const [postMedia, setPostMedia] = useState(null);
@@ -833,14 +857,23 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
         <div onClick={() => setShowGlobalCamera(true)} title="Camera" style={{ marginLeft: "auto", width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <Camera size={20} color={t.primary} />
         </div>
-        {isAdmin && (
+        <div style={{ display: "flex", background: t.primaryLight, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
+          {["new", "old"].map((l) => (
+            <span
+              key={l}
+              onClick={() => changeStatusLayout(l)}
+              style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, textTransform: "capitalize", color: statusLayout === l ? "#fff" : t.text, background: statusLayout === l ? t.primary : "transparent", cursor: "pointer" }}
+            >{l}</span>
+          ))}
+        </div>
+        {statusLayout === "new" && (
           <div style={{ display: "flex", background: t.primaryLight, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
-            {["new", "old"].map((l) => (
+            {["compact", "cozy"].map((s) => (
               <span
-                key={l}
-                onClick={() => setStatusLayout(l)}
-                style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, textTransform: "capitalize", color: statusLayout === l ? "#fff" : t.text, background: statusLayout === l ? t.primary : "transparent", cursor: "pointer" }}
-              >{l}</span>
+                key={s}
+                onClick={() => changeStatusPreviewSize(s)}
+                style={{ padding: "6px 10px", fontSize: 12, fontWeight: 700, textTransform: "capitalize", color: statusPreviewSize === s ? "#fff" : t.text, background: statusPreviewSize === s ? t.primary : "transparent", cursor: "pointer" }}
+              >{s}</span>
             ))}
           </div>
         )}
@@ -941,7 +974,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
             );
           })
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: "4px 14px 14px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: statusPreviewSize === "compact" ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, padding: "4px 14px 14px" }}>
             {Object.entries(grouped).map(([uid, items]) => {
               const contact = acceptedContacts.find((c) => c.uid === uid);
               const name = contact?.profile?.displayName || "Unknown";
@@ -968,6 +1001,11 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <Avatar photoURL={contact?.profile?.photoURL} name={name} uid={uid} size={22} hasActiveStatus statusViewed={viewed} blockStatus={blockStatus} />
                       <span style={{ color: "#fff", fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 2, marginTop: 4 }}>
+                      {Array.from({ length: items.length }).map((_, i) => (
+                        <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.9)" }} />
+                      ))}
                     </div>
                   </div>
                   <div style={{ position: "absolute", bottom: 8, right: 10, color: "#fff", fontSize: 10.5, textShadow: "0 1px 2px rgba(0,0,0,0.6)" }}>

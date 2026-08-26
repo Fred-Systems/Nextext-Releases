@@ -14,7 +14,7 @@ import {
   updatePassword,
   updateEmail,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, arrayUnion } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, arrayUnion, collection, query, where, getDocs, limit } from "firebase/firestore";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { SocialLogin as CapgoSocialLogin } from "@capgo/capacitor-social-login";
 import { auth, googleProvider, db } from "../firebase/config";
@@ -123,13 +123,55 @@ export function useAuth() {
 
   async function signUpWithEmail(email, password, username, displayName, phone) {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
-    // Force-refresh the ID token before the first Firestore write. On native /
-    // Capacitor builds the freshly minted token can lag behind the auth state,
-    // so the create would otherwise hit the rules with request.auth still null
-    // and surface as "Missing or insufficient permissions" (works on web where
-    // the token is available immediately). This mirrors the Google sign-up path.
+    // Creating the account signs the user in, so Firestore `isSignedIn()` is now
+    // true. Force-refresh the ID token anyway so the very first write can't race
+    // a lagging native token (mirrors the Google sign-up path).
     try { await cred.user.getIdToken(true); } catch { /* non-fatal */ }
-    await createUserProfile(cred.user, { email, username, displayName }, true);
+
+    // Username-uniqueness check. It MUST run AFTER sign-in: the `users` read rule
+    // requires isSignedIn(), so a pre-auth query throws permission-denied and
+    // would block signup entirely. Now that we're authenticated it succeeds.
+    const lower = String(username || "").trim().toLowerCase();
+    try {
+      const q = query(
+        collection(db, "users"),
+        where("usernameLower", ">=", lower),
+        where("usernameLower", "<=", lower + "￰"),
+        limit(1)
+      );
+      const snap = await getDocs(q);
+      if (snap.docs.some((d) => d.data().usernameLower === lower)) {
+        // Roll back the freshly minted auth account and report a friendly error.
+        try { await cred.user.delete(); } catch { /* best effort */ }
+        const e = new Error("That username is already taken. Please choose another.");
+        e.code = "username-taken";
+        throw e;
+      }
+    } catch (e) {
+      if (e?.code === "username-taken") throw e;
+      // Any other read failure is non-fatal here — creation still proceeds and
+      // createUserProfile's retry loop is the real guard.
+    }
+
+    // Create the profile doc. Retry a few times on permission-denied because the
+    // freshly issued token can still lag on native/Capacitor builds. Use merge:true
+    // so a partial/leftover doc can't collide.
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    let lastErr = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        try { await cred.user.getIdToken(true); } catch { /* non-fatal */ }
+        await createUserProfile(cred.user, { email, username, displayName }, true);
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (e?.code === "permission-denied" && attempt < 3) { await sleep(350 * (attempt + 1)); continue; }
+        throw e;
+      }
+    }
+    if (lastErr) throw lastErr;
+
     if (phone && phone.trim()) {
       const digits = String(phone).replace(/[^\d+]/g, "");
       await updateDoc(doc(db, "users", cred.user.uid), {
@@ -341,7 +383,7 @@ export function useAuth() {
       restrictions: null,
       dataUsage: { bytesUsedToday: 0, bytesUsedDate: "", bytesUsedAllTime: 0 },
       dataLimit: { dailyLimitBytes: null },
-    });
+    }, { merge: true });
   }
 
   async function logOut() {

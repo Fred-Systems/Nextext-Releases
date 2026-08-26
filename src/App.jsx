@@ -1098,11 +1098,15 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
                   <div
                     key={s}
-                    onClick={() => setSplashDuration(s)}
-                    style={{ padding: "6px 12px", borderRadius: 10, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: splashDuration === s ? t.primary : t.bg, color: splashDuration === s ? t.bubbleMeText : t.text, border: `1px solid ${splashDuration === s ? t.primary : t.border}` }}
+                    onClick={() => setPendingSplashDuration(s)}
+                    style={{ padding: "6px 12px", borderRadius: 10, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: pendingSplashDuration === s ? t.primary : t.bg, color: pendingSplashDuration === s ? t.bubbleMeText : t.text, border: `1px solid ${pendingSplashDuration === s ? t.primary : t.border}` }}
                   >{s}s</div>
                 ))}
               </div>
+              <button
+                onClick={() => { applySplashDuration(pendingSplashDuration); window.location.reload(); }}
+                style={{ marginTop: 10, width: "100%", padding: "10px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+              >Save &amp; preview (restarts app to show launch screen)</button>
             </div>
 
             {/* More rounded UI */}
@@ -2190,6 +2194,7 @@ function AppShell({ appLocked, setAppLocked }) {
   const [storyViewerOpen, setStoryViewerOpen] = useState(false);
   const [showSplash, setShowSplash] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
   const [splashDuration, setSplashDuration] = useState(() => Number(localStorage.getItem("nextext_splash_duration")) || 4);
+  const [pendingSplashDuration, setPendingSplashDuration] = useState(splashDuration);
   useEffect(() => { try { localStorage.setItem("nextext_splash_duration", String(splashDuration)); } catch {} }, [splashDuration]);
   const [moreRounded, setMoreRounded] = useState(() => localStorage.getItem("nextext_more_rounded") === "on");
   useEffect(() => { try { localStorage.setItem("nextext_more_rounded", moreRounded ? "on" : "off"); } catch {} }, [moreRounded]);
@@ -2356,6 +2361,21 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid, auth.userDoc?.splashDuration]);
+
+  // While any in-app camera is open we hide the bottom navigation bar so its
+  // shutter/capture controls are never covered by the nav. Camera components
+  // signal open/close via these window events (GlobalCamera, ChatListScreen).
+  const [cameraOpen, setCameraOpen] = useState(false);
+  useEffect(() => {
+    const onOpen = () => setCameraOpen(true);
+    const onClose = () => setCameraOpen(false);
+    window.addEventListener("nx-camera-open", onOpen);
+    window.addEventListener("nx-camera-close", onClose);
+    return () => {
+      window.removeEventListener("nx-camera-open", onOpen);
+      window.removeEventListener("nx-camera-close", onClose);
+    };
+  }, []);
   // Ref mirror of myUid so mount-only effects (notification tap/mark-read
   // handlers) can read the CURRENT uid without a stale closure.
   const myUidRef = useRef(myUid);
@@ -3915,7 +3935,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
 
 
-      {!hideNav && !storyViewerOpen && (screen === "list" || screen === "status" || screen === "settings") && (() => {
+      {!hideNav && !cameraOpen && !storyViewerOpen && (screen === "list" || screen === "status" || screen === "settings") && (() => {
         const ALL_TABS = {
           chats: { icon: MessageSquare, label: "Chats" },
           status: { icon: CircleDot, label: "Status" },

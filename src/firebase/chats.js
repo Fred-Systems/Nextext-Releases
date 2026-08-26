@@ -426,7 +426,7 @@ export async function sendForwardedMessage(targetChatId, senderUid, sourceMsg, o
     editedAt: null,
     editHistory: [],
     editWindowExpiresAt: null,
-    disappearing: disappearing || null,
+    disappearing: disappearingData,
     screenshotDetected: false,
     replyTo,
     reactions: {},
@@ -557,6 +557,12 @@ export async function reactToMessage(chatId, messageId, myUid, emoji) {
 // src/supabase/media.js); this just records the message doc pointing at it.
 export async function sendMediaMessage(chatId, senderUid, type, uploadResult, otherParticipants, options = {}) {
   const { replyTo = null, durationSeconds = null, statusRef = null, text = null, disappearing = null } = options;
+  // Disappearing media: sender picks how many times the recipient may open it.
+  // Stored as { viewsAllowed, views: { [uid]: count } }; the recipient increments
+  // their own counter on each view and the media locks once it's exhausted.
+  const disappearingData = disappearing
+    ? { viewsAllowed: Math.max(1, Number(disappearing.viewsAllowed) || (disappearing.viewOnce ? 1 : 1)), views: {} }
+    : null;
   const sender = await snapshotSenderName(senderUid);
   await addDoc(collection(db, "chats", chatId, "messages"), {
     senderId: senderUid,
