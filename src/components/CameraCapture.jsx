@@ -96,7 +96,8 @@ export default function CameraCapture({
       streamRef.current.getTracks().forEach((tr) => tr.stop());
       streamRef.current = null;
     }
-    setTimeout(openCamera, 50);
+    // Immediately re-open without delay to avoid permission issues
+    openCamera();
   };
   const cycleFilter = () => setFilterIdx((i) => (i + 1) % GLOBAL_CAMERA_FILTERS.length);
   const zoomBy = (d) => setZoom((z) => Math.min(4, Math.max(1, Math.round((z + d) * 10) / 10)));

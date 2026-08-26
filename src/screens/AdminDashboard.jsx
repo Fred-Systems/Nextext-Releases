@@ -1205,6 +1205,25 @@ export default function AdminDashboard({ myUid, onBack }) {
                 </div>
               </div>
             </div>
+
+            {/* Hide status top bar options (camera, layout, size) */}
+            <div onClick={() => {
+              const newVal = !settings?.hideStatusTopBar;
+              updateGlobalSettings({ hideStatusTopBar: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginTop: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideStatusTopBar ? "#FF3B30" : t.primary, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideStatusTopBar ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+                  {settings?.hideStatusTopBar ? "Status top bar: HIDDEN" : "Status top bar: visible"}
+                </div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>
+                  When hidden, the camera, layout, and size buttons are hidden from the Status page top bar for all users.
+                </div>
+              </div>
+            </div>
+
             <div onClick={() => {
               const newVal = !settings?.hideUserStats;
               updateGlobalSettings({ hideUserStats: newVal }, myUid);

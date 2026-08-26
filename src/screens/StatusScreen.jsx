@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic, MessageCircle } from "lucide-react";
+import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic, MessageCircle, Download } from "lucide-react";
 import { useTheme, FONTS } from "../theme/ThemeContext";
 import { postStatus, useStatuses, viewStatus, useStatusViewers, deleteStatus } from "../firebase/status";
 import { useContacts } from "../firebase/contacts";
@@ -1388,6 +1388,26 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
                   placeholder="Add text overlay on media…"
                   style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, background: t.bg, color: t.text, boxSizing: "border-box", fontFamily: "inherit" }}
                 />
+              </div>
+            )}
+
+            {/* Allow download toggle for media statuses */}
+            {(postMode === "media" && (postMedia || postImages.length > 0 || voiceBlob)) && (
+              <div style={{ marginBottom: 12, padding: "12px 14px", borderRadius: 12, background: t.bg, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <Download size={18} color={t.primary} />
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>Allow download</div>
+                    <div style={{ fontSize: 11.5, color: t.textMuted }}>Let viewers save this status to their device</div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setAllowDownload((v) => !v)}
+                  aria-label={allowDownload ? "Disable download" : "Enable download"}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: allowDownload ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.15s ease" }}
+                >
+                  <span style={{ position: "absolute", top: 3, left: allowDownload ? 23 : 3, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.15s ease", boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }} />
+                </button>
               </div>
             )}
 

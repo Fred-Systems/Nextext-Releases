@@ -20,6 +20,7 @@ export async function postStatus(ownerId, {
   bgAudioVolume = null,
   videoVolume = null,
   waitForVideo = false,
+  allowDownload = false,
 }) {
   await addDoc(collection(db, "status"), {
     ownerId,
@@ -34,6 +35,7 @@ export async function postStatus(ownerId, {
     bgAudioVolume,
     videoVolume,
     waitForVideo,
+    allowDownload,
     createdAt: serverTimestamp(),
     expiresAt: new Date(Date.now() + STATUS_TTL_MS),
   });

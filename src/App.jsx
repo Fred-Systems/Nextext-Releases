@@ -1312,6 +1312,45 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: hideVersion ? 23 : 3, transition: "left 0.15s" }} />
               </div>
             </div>
+
+            {/* Lock + button position */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Lock + button position</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Prevent the + button from being moved by accident.</div>
+              </div>
+              <div
+                onClick={() => { const next = localStorage.getItem("nextext_fab_locked") === "on"; localStorage.setItem("nextext_fab_locked", next ? "off" : "on"); forceSettingsRerender(); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_fab_locked") === "on" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_fab_locked") === "on" ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Lock AI widget position */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Lock AI widget position</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Prevent the AI widget from being moved by accident.</div>
+              </div>
+              <div
+                onClick={() => { const next = localStorage.getItem("nextext_ai_locked") === "on"; localStorage.setItem("nextext_ai_locked", next ? "off" : "on"); forceSettingsRerender(); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_ai_locked") === "on" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_ai_locked") === "on" ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Reset FAB & AI positions */}
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <button
+                onClick={() => { localStorage.removeItem("nextext_fab_pos"); localStorage.removeItem("nextext_ai_pos"); forceSettingsRerender(); }}
+                style={{ width: "100%", padding: "10px 0", borderRadius: 10, border: "none", background: t.bg, color: t.text, fontWeight: 600, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: `1px solid ${t.border}` }}
+              >
+                <RefreshCw size={16} />
+                <span>Reset + button & AI widget to default positions</span>
+              </button>
+            </div>
           </>))}
 
           {renderSub("Message Actions", (<>
