@@ -123,6 +123,12 @@ export function useAuth() {
 
   async function signUpWithEmail(email, password, username, displayName, phone) {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
+    // Force-refresh the ID token before the first Firestore write. On native /
+    // Capacitor builds the freshly minted token can lag behind the auth state,
+    // so the create would otherwise hit the rules with request.auth still null
+    // and surface as "Missing or insufficient permissions" (works on web where
+    // the token is available immediately). This mirrors the Google sign-up path.
+    try { await cred.user.getIdToken(true); } catch { /* non-fatal */ }
     await createUserProfile(cred.user, { email, username, displayName }, true);
     if (phone && phone.trim()) {
       const digits = String(phone).replace(/[^\d+]/g, "");

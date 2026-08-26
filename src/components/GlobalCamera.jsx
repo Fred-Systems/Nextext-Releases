@@ -30,6 +30,7 @@ export default function GlobalCamera({ t, myUid, chats, contacts, hideNav, onClo
   const [captured, setCaptured] = useState(null); // { type, blob, url, ext, mime }
   const [caption, setCaption] = useState("");
   const [selected, setSelected] = useState([]);
+  const [disappearing, setDisappearing] = useState(false);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -206,7 +207,7 @@ export default function GlobalCamera({ t, myUid, chats, contacts, hideNav, onClo
     try {
       const result = await uploadChatFile(chatId, myUid, file, { compress: media.type !== "video" });
       const participants = target.participants || [];
-      await sendMediaMessage(chatId, myUid, media.type, result, participants);
+      await sendMediaMessage(chatId, myUid, media.type, result, participants, { disappearing: disappearing ? { viewOnce: true } : null });
       if (target.id && onOpenChat) onOpenChat(target);
     } catch { /* keep going */ }
   };
@@ -227,7 +228,7 @@ export default function GlobalCamera({ t, myUid, chats, contacts, hideNav, onClo
       const file = new File([media.blob], `camera-${Date.now()}.${media.ext}`, { type: media.mime });
       try {
         const result = await uploadChatFile(chatId, myUid, file, { compress: media.type !== "video" });
-        await sendMediaMessage(chatId, myUid, media.type, result, target.participants || []);
+        await sendMediaMessage(chatId, myUid, media.type, result, target.participants || [], { disappearing: disappearing ? { viewOnce: true } : null });
       } catch { /* keep going */ }
     }
     onClose();
@@ -277,7 +278,7 @@ export default function GlobalCamera({ t, myUid, chats, contacts, hideNav, onClo
 
   if (step === "camera") {
     return (
-      <div style={{ position: "absolute", inset: 0, background: "#000", zIndex: 60, display: "flex", flexDirection: "column" }}>
+      <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147481000, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
           <span onClick={close} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Cancel</span>
           <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Camera</span>
@@ -296,6 +297,7 @@ export default function GlobalCamera({ t, myUid, chats, contacts, hideNav, onClo
           <span onClick={cycleFilter} style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.12)", borderRadius: 16, cursor: "pointer" }}>
             {GLOBAL_CAMERA_FILTERS[filter]?.label || "None"}
           </span>
+          <span onClick={() => setDisappearing((d) => !d)} title="Disappearing (view once)" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: disappearing ? "#FF3B30" : "rgba(255,255,255,0.12)", cursor: "pointer", fontSize: 16, fontWeight: 700, color: "#fff" }}>1×</span>
           <span onClick={switchFacing} title="Flip camera" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(255,255,255,0.12)", cursor: "pointer" }}>
             <Camera size={18} color="#fff" />
           </span>
@@ -327,7 +329,7 @@ export default function GlobalCamera({ t, myUid, chats, contacts, hideNav, onClo
 
   if (step === "preview") {
     return (
-      <div style={{ position: "absolute", inset: 0, background: "#000", zIndex: 60, display: "flex", flexDirection: "column" }}>
+      <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147481000, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
           <span onClick={discard} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Discard</span>
           <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Preview</span>
@@ -363,7 +365,7 @@ export default function GlobalCamera({ t, myUid, chats, contacts, hideNav, onClo
 
   // step === "send"
   return (
-    <div style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 60, display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "fixed", inset: 0, background: t.bg, zIndex: 2147481000, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", background: t.surface, flexShrink: 0, borderBottom: `1px solid ${t.border}` }}>
         <span onClick={discard} style={{ color: t.text, fontSize: 15, cursor: "pointer" }}>Cancel</span>
         <span style={{ color: t.text, fontWeight: 700, fontSize: 16 }}>Send to…</span>

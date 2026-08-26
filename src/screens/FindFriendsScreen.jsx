@@ -6,6 +6,7 @@ import { db } from "../firebase/config";
 import { sendContactRequest } from "../firebase/contacts";
 import { getLatestApkUrl } from "../updater/updateChecker";
 import { Capacitor } from "@capacitor/core";
+import { Share } from "@capacitor/share";
 import NextextNative from "../native/nextextNative";
 
 
@@ -118,17 +119,17 @@ export default function FindFriendsScreen({ myUid, onBack }) {
       if (apk) apkLine = `\nDownload the latest Android app here: ${apk}`;
     }
     const text = `Hey${name ? " " + name : ""}! Let's chat on NexText — a fast, private messaging app. Sign up here: ${link}${apkLine}`;
-    // Prefer the native share sheet (navigator.share) on every platform — on
-    // Android it surfaces WhatsApp / Messages / email etc. so the user can pick
-    // how to send the invite. Only fall back to clipboard copy when the sheet
-    // is unavailable or the user cancels/rejects it.
-    if (navigator.share) {
+    // Prefer the native share sheet (Capacitor Share plugin) on every platform —
+    // on Android it surfaces WhatsApp / Messages / email etc. so the user can pick
+    // how to send the invite, and the chosen app opens with this text pre-filled.
+    // Only fall back to clipboard copy when the sheet is unavailable or rejected.
+    if (Capacitor.isNativePlatform() || typeof navigator !== "undefined" && navigator.share) {
       try {
-        await navigator.share({ text });
+        await Share.share({ title: "Invite to NexText", text, dialogTitle: "Invite to NexText" });
         setInvited((s) => [...s, phone]);
         return;
       } catch (e) {
-        if (e?.name === "AbortError" || e?.name === "ShareCanceledError") return; // user cancelled
+        if (e?.message?.includes("cancel") || e?.name === "AbortError" || e?.name === "ShareCanceledError") return; // user cancelled
         // fall through to clipboard below
       }
     }

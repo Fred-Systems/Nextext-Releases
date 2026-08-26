@@ -237,15 +237,16 @@ function btnStyle(t, filled) {
     : { width: "100%", padding: "12px", borderRadius: 12, border: `1px solid ${t.border}`, background: t.surface, color: t.text, fontWeight: 600, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 };
 }
 function friendlyError(err) {
-  const code = err?.code ?? err;
-  const map = {
-    "auth/email-already-in-use": "That email already has an account — try signing in instead.",
-    "auth/invalid-email": "That doesn't look like a valid email.",
-    "auth/weak-password": "Password should be at least 6 characters.",
-    "auth/wrong-password": "Incorrect password.",
-    "auth/user-not-found": "No account found with that email.",
-    "auth/invalid-credential": "Incorrect email or password.",
-    "auth/argument-error": "Google sign-in failed. This is usually a configuration issue — make sure the app's SHA-1/SHA-256 fingerprint and OAuth web client ID are registered in the Firebase Console.",
+    const code = err?.code ?? err;
+    const map = {
+      "auth/email-already-in-use": "That email already has an account — try signing in instead.",
+      "auth/invalid-email": "That doesn't look like a valid email.",
+      "auth/weak-password": "Password should be at least 6 characters.",
+      "auth/wrong-password": "Incorrect password.",
+      "auth/user-not-found": "No account found with that email.",
+      "auth/invalid-credential": "Incorrect email or password.",
+      "permission-denied": "We couldn't save your account profile. Please check your connection and try again.",
+      "auth/argument-error": "Google sign-in failed. This is usually a configuration issue — make sure the app's SHA-1/SHA-256 fingerprint and OAuth web client ID are registered in the Firebase Console.",
     "auth/popup-closed-by-user": "Google sign-in was cancelled. Please try again.",
     "auth/popup-blocked": "Pop-up was blocked by your browser. Please allow pop-ups for this site.",
     "auth/unauthorized-domain": "Google sign-in is not allowed on this device. Try signing in with email instead.",

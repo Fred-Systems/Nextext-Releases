@@ -1,7 +1,7 @@
 {
   "name": "nextext",
   "private": true,
-  "version": "1.7.25",
+  "version": "1.7.26",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,6 +17,7 @@
     "@capacitor/cli": "^8.4.2",
     "@capacitor/core": "^8.4.2",
     "@capacitor/push-notifications": "^8.1.2",
+    "@capacitor/share": "^8.0.1",
     "@capgo/capacitor-social-login": "^8.3.39",
     "@supabase/supabase-js": "^2.110.7",
     "@tanstack/react-virtual": "^3.14.10",

@@ -846,7 +846,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
         )}
       </div>
 
-      {showGlobalCamera && (
+      {showGlobalCamera && createPortal(
         <GlobalCamera
           t={t}
           myUid={myUid}
@@ -855,7 +855,8 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           hideNav={false}
           onClose={() => setShowGlobalCamera(false)}
           onOpenChat={() => setShowGlobalCamera(false)}
-        />
+        />,
+        document.body
       )}
 
       <div className="nx-scroll" style={{ flex: 1, paddingBottom: 70, minHeight: 0 }}>

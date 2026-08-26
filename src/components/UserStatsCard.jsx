@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { X, Copy, Users, ChevronDown, ChevronUp } from "lucide-react";
 import { BarChart2, RefreshCw, Share, MessagesSquare, Image, Film, Mic, MapPin, Paperclip, Contact, Clock, Timer, ArrowDownUp } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
+import { Capacitor } from "@capacitor/core";
+import { Share as CapShare } from "@capacitor/share";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { getUserMessageStats, formatMembershipDuration, formatActiveTime, formatDuration, formatBytes } from "../firebase/stats";
 
@@ -149,6 +151,16 @@ export default function UserStatsCard({ myUid, createdAt, activeTimeMs = 0, cont
 
   const copyShareText = async () => {
     try {
+      if (Capacitor.isNativePlatform() || (typeof navigator !== "undefined" && navigator.share)) {
+        try {
+          await CapShare.share({ title: "My NexText stats", text: shareText, dialogTitle: "Share my NexText stats" });
+          setCopiedShare(true);
+          setTimeout(() => setCopiedShare(false), 2000);
+          return;
+        } catch (e) {
+          if (e?.message?.includes("cancel") || e?.name === "AbortError" || e?.name === "ShareCanceledError") return;
+        }
+      }
       await copyText(shareText);
       setCopiedShare(true);
       setTimeout(() => setCopiedShare(false), 2000);
