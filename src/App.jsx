@@ -2191,26 +2191,6 @@ function AppShell({ appLocked, setAppLocked }) {
   const [showSplash, setShowSplash] = useState(() => localStorage.getItem("nextext_splash_enabled") !== "off");
   const [splashDuration, setSplashDuration] = useState(() => Number(localStorage.getItem("nextext_splash_duration")) || 4);
   useEffect(() => { try { localStorage.setItem("nextext_splash_duration", String(splashDuration)); } catch {} }, [splashDuration]);
-  // Persist the chosen splash duration to the user's profile so it's consistent
-  // across devices (localStorage is per-origin and doesn't carry from a desktop
-  // browser to the mobile app's WebView). Also migrate an existing localStorage
-  // value into the profile on first sign-in.
-  const applySplashDuration = (s) => {
-    setSplashDuration(s);
-    try { localStorage.setItem("nextext_splash_duration", String(s)); } catch {}
-    if (myUid) { try { updateDoc(doc(db, "users", myUid), { splashDuration: s }); } catch {} }
-  };
-  useEffect(() => {
-    if (!myUid) return;
-    const prof = userDoc?.splashDuration;
-    if (typeof prof === "number" && prof > 0) {
-      if (prof !== splashDuration) { setSplashDuration(prof); try { localStorage.setItem("nextext_splash_duration", String(prof)); } catch {} }
-    } else {
-      const local = Number(localStorage.getItem("nextext_splash_duration"));
-      if (local > 0) { try { updateDoc(doc(db, "users", myUid), { splashDuration: local }); } catch {} }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myUid, userDoc?.splashDuration]);
   const [moreRounded, setMoreRounded] = useState(() => localStorage.getItem("nextext_more_rounded") === "on");
   useEffect(() => { try { localStorage.setItem("nextext_more_rounded", moreRounded ? "on" : "off"); } catch {} }, [moreRounded]);
   const [hangBanner, setHangBanner] = useState(false);
@@ -2355,6 +2335,27 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // its dependency array, and deps are evaluated during render (a const
   // declared later in the same scope would be in the temporal dead zone).
   const myUid = auth.user?.uid;
+
+  // Persist the chosen splash duration to the user's profile so it's consistent
+  // across devices (localStorage is per-origin and doesn't carry from a desktop
+  // browser to the mobile app's WebView). Also migrate an existing localStorage
+  // value into the profile on first sign-in.
+  const applySplashDuration = (s) => {
+    setSplashDuration(s);
+    try { localStorage.setItem("nextext_splash_duration", String(s)); } catch {}
+    if (myUid) { try { updateDoc(doc(db, "users", myUid), { splashDuration: s }); } catch {} }
+  };
+  useEffect(() => {
+    if (!myUid) return;
+    const prof = auth.userDoc?.splashDuration;
+    if (typeof prof === "number" && prof > 0) {
+      if (prof !== splashDuration) { setSplashDuration(prof); try { localStorage.setItem("nextext_splash_duration", String(prof)); } catch {} }
+    } else {
+      const local = Number(localStorage.getItem("nextext_splash_duration"));
+      if (local > 0) { try { updateDoc(doc(db, "users", myUid), { splashDuration: local }); } catch {} }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myUid, auth.userDoc?.splashDuration]);
   // Ref mirror of myUid so mount-only effects (notification tap/mark-read
   // handlers) can read the CURRENT uid without a stale closure.
   const myUidRef = useRef(myUid);
