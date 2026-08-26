@@ -42,7 +42,6 @@ import FeedbackScreen from "./screens/FeedbackScreen";
 import ContactProfileScreen from "./screens/ContactProfileScreen";
 import AdminDashboard from "./screens/AdminDashboard";
 import AIChatScreen from "./screens/AIChatScreen";
-import AISidebarWidget from "./components/AISidebarWidget";
 import { useSystemConfigHook, requestAIAccess, setAIPersonality, PERSONALITIES } from "./firebase/ai";
 import AppLockScreen from "./screens/AppLockScreen";
 import StatusScreen from "./screens/StatusScreen";
@@ -3717,7 +3716,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           if (key === "chats") return (
             <div key="chats" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Chats">
-                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "chats"} />
+                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "chats"} onOpenAI={() => setScreen("aiChat")} showAIWidget={true} />
               </PageErrorBoundary>
             </div>
           );
@@ -3888,9 +3887,6 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
         <AIChatScreen myUid={myUid} onBack={() => setScreen("list")} />
       )}
 
-      {aiSidebarOn && !storyViewerOpen && screen === "list" && (
-        <AISidebarWidget myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenAI={() => setScreen("aiChat")} right={20} bottom={hideNav ? 84 : 148} />
-      )}
 
         {showThemeSheet && (
           <ThemeSheet current={themeKey} onSelect={(k) => { setThemeKey(k); setShowThemeSheet(false); }} onClose={() => setShowThemeSheet(false)} />

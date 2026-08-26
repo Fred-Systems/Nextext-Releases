@@ -1346,8 +1346,8 @@ public class NextextNativePlugin extends Plugin {
             { "icon13",   "Notes",           "ic_icon13" },
              { "icon14",   "NexText",         "ic_icon14" },
              { "icon15",   "NexText",         "ic_icon15" },
-             { "icon16",   "Mizrachi mode",   "ic_launcher" },
-             { "icon17",   "Mizrachi mode",   "ic_launcher" }
+             { "icon16",   "Mizrachi mode",   "ic_icon16" },
+             { "icon17",   "Mizrachi mode",   "ic_icon17" }
          };
         try {
             for (String[] p : profiles) {

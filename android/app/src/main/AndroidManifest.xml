@@ -252,8 +252,8 @@
             android:name=".MainActivityAlias16"
             android:targetActivity=".MainActivity"
             android:label="NexText"
-            android:icon="@mipmap/ic_launcher"
-            android:roundIcon="@mipmap/ic_launcher"
+            android:icon="@mipmap/ic_icon16"
+            android:roundIcon="@mipmap/ic_icon16"
             android:exported="true"
             android:enabled="false">
             <intent-filter>
@@ -265,8 +265,8 @@
             android:name=".MainActivityAlias17"
             android:targetActivity=".MainActivity"
             android:label="NexText"
-            android:icon="@mipmap/ic_launcher"
-            android:roundIcon="@mipmap/ic_launcher"
+            android:icon="@mipmap/ic_icon17"
+            android:roundIcon="@mipmap/ic_icon17"
             android:exported="true"
             android:enabled="false">
             <intent-filter>

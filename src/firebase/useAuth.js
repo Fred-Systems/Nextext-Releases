@@ -142,22 +142,35 @@ export function useAuth() {
     // Creates the Firestore profile for a brand-new Google account and marks it
     // complete when this was the sign-up flow (which already collected names).
     const ensureProfile = async (user, extra) => {
+      // Always resolve the real signed-in uid. Some native Google plugins hand
+      // back a raw object WITHOUT a `.user` wrapper, so `user.uid` can be
+      // undefined — writing to `users/undefined` then fails the `isSelf` create
+      // rule and surfaces as "Missing or insufficient permissions". Fall back to
+      // the actually authenticated user so the path is always correct.
+      const uid = user?.uid || auth.currentUser?.uid;
+      if (!uid) throw new Error("Sign-in did not return an authenticated user.");
+      const profileUser = {
+        uid,
+        email: user?.email ?? auth.currentUser?.email ?? null,
+        displayName: user?.displayName ?? auth.currentUser?.displayName ?? null,
+        photoURL: user?.photoURL ?? auth.currentUser?.photoURL ?? null,
+      };
       // Force-refresh the ID token so Firestore's auth context is current
       // before we write the user doc — otherwise the first write right after
       // sign-in can hit "Missing or insufficient permissions" on native.
-      try { await user.getIdToken(true); } catch { /* non-fatal */ }
-      const ref = doc(db, "users", user.uid);
+      try { if (user?.getIdToken) await user.getIdToken(true); else if (auth.currentUser?.getIdToken) await auth.currentUser.getIdToken(true); } catch { /* non-fatal */ }
+      const ref = doc(db, "users", uid);
       const snap = await getDoc(ref);
       if (!snap.exists()) {
-        await createUserProfile(user, {
-          email: user.email,
-          username: user.email ? user.email.split("@")[0] : `user-${user.uid.slice(0, 6)}`,
-          displayName: user.displayName || extra?.displayName || "New User",
-          photoURL: user.photoURL || extra?.photoUrl || extra?.photoURL || null,
+        await createUserProfile(profileUser, {
+          email: profileUser.email,
+          username: profileUser.email ? profileUser.email.split("@")[0] : `user-${uid.slice(0, 6)}`,
+          displayName: profileUser.displayName || extra?.displayName || "New User",
+          photoURL: profileUser.photoURL || extra?.photoUrl || extra?.photoURL || null,
         });
         if (markProfileComplete) await updateDoc(ref, { profileComplete: true });
       }
-      return user;
+      return profileUser;
     };
 
     // Native (Capacitor) builds use the real Google Sign-In plugin — no popup

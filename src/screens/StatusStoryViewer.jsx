@@ -62,7 +62,7 @@ function ViewersPanel({ contacts, extraProfiles, viewers, ownerName }) {
   );
 }
 
-export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, ownerUid, contacts, onClose, onViewStory, onExit }) {
+export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, ownerUid, contacts, onClose, onViewStory, onNext, onExit }) {
   const { t, appFont } = useTheme();
   const initializedRef = useRef(false);
   const completedRef = useRef(false);
@@ -207,8 +207,12 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
         next.add(idx);
         return next;
       });
-      if (onViewStory) onViewStory();
-      onClose();
+      if (onNext) {
+        onNext();
+      } else {
+        if (onViewStory) onViewStory();
+        onClose();
+      }
     }
   };
 

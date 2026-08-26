@@ -3225,6 +3225,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             {isSelfChat ? "Message Yourself" : isGroup ? (myGroupNickname || contact?.groupName || chatMeta?.groupName || "Group") : (getContactDisplayName(contact) || "…")}
             {isLocked && <Lock size={13} color="rgba(255,255,255,0.8)" />}
             {isMuted && <BellOff size={13} color="rgba(255,255,255,0.7)" />}
+            {!isGroup && !isSelfChat && contact?.profile?.verified && !contact?.profile?.hideVerified && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#1DA1F2", background: "rgba(29,161,242,0.18)", padding: "1px 6px", borderRadius: 8, marginLeft: 2 }}>Verified</span>
+            )}
           </div>
           <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 12, minHeight: 16, display: "flex", alignItems: "center", gap: 5 }}>
             {theyRecordingVoice ? (
@@ -3581,7 +3584,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               </div>
             </div>
             {sttEnabled && !globalSettings?.hideStt && composerButtonOrder === "stt-voice" && (
-              <div style={{ display: "flex", alignItems: "center", marginRight: voiceSpacing ? 10 : 0 }}>
+              <div style={{ display: "flex", alignItems: "center", marginRight: voiceSpacing ? 12 : 8 }}>
                 <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) send(text.trim()); }} autoSend={sttAutoSend} composerHeight={composerHeight} size={42} useRealtime />
               </div>
             )}
@@ -4113,8 +4116,19 @@ const MessageList = React.memo(function MessageList({ ctx }) {
   const virtualizer = useVirtualizer({
     count: virtualize ? displayMessages.length : 0,
     getScrollElement: () => scrollRef?.current,
-    estimateSize: () => 64,
-    overscan: 5,
+    estimateSize: (index) => {
+      const m = displayMessages[index];
+      if (!m) return 64;
+      if (m.type === "image" || m.type === "video") return m.text ? 268 : 232;
+      if (m.type === "audio" || m.type === "voice" || m.mediaURL) return 96;
+      if (m.text) {
+        const len = (m.text || "").length;
+        if (len > 140) return len > 280 ? 140 : 110;
+        if (len > 70) return 92;
+      }
+      return 64;
+    },
+    overscan: 8,
     getItemKey: (index) => displayMessages[index]?.id || index,
   });
 

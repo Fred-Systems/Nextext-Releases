@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow, Pin } from "lucide-react";
+import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, Check, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow, Pin } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { useChats, toggleArchive, toggleFavorite, toggleLocked, togglePinned, deleteChatCompletely } from "../firebase/chats";
 import { useContacts, searchUsersByUsername, sendContactRequest, acceptContactRequest, getContactDisplayName } from "../firebase/contacts";
@@ -17,6 +17,7 @@ function getStoredViewed() {
 }
 import { uploadChatFile } from "../supabase/media";
 import Avatar from "../components/Avatar";
+import AISidebarWidget from "../components/AISidebarWidget";
 import NewGroupScreen from "./NewGroupScreen";
 import FindFriendsScreen from "./FindFriendsScreen";
 import { doc, onSnapshot, updateDoc, collection, getCountFromServer } from "firebase/firestore";
@@ -92,7 +93,7 @@ function ChatRowMeta({ myUid, otherUid, chatId, t, compact, isGroup }) {
   return <div style={{ fontSize: compact ? 11 : 12, color: t.textMuted, marginTop: compact ? 0 : 1 }}>{statusText}</div>;
 }
 
-export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroupInfo, onOpenSettings, hideNav, navTab, compactList, searchMode = "visible", topBarVisible = true, searchBarScale = 1, isActiveTab = true }) {
+export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroupInfo, onOpenSettings, onOpenAI, showAIWidget = false, hideNav, navTab, compactList, searchMode = "visible", topBarVisible = true, searchBarScale = 1, isActiveTab = true }) {
   const { t } = useTheme();
   const globalSettings = useGlobalSettings();
   const { chats } = useChats(myUid);
@@ -146,6 +147,9 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [capturedMedia, setCapturedMedia] = useState(null); // { type:"image"|"video", blob, url, ext, mime }
   const [recording, setRecording] = useState(false);
   const [postingStatus, setPostingStatus] = useState(false);
+  const [globalCameraZoom, setGlobalCameraZoom] = useState(1);
+  const [selectedRecipients, setSelectedRecipients] = useState([]);
+  const pinchStartRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const [cameraPreviewStep, setCameraPreviewStep] = useState(false);
@@ -465,6 +469,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
 
   const openGlobalCamera = async () => {
     setGlobalCameraError("");
+    setGlobalCameraZoom(1);
     try {
       const wantsVideo = globalCameraMode === "video";
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -496,6 +501,25 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     setTimeout(() => openGlobalCamera(), 50);
   };
 
+  const onCamTouchStart = (e) => {
+    if (e.touches && e.touches.length === 2) {
+      const [a, b] = e.touches;
+      pinchStartRef.current = {
+        dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
+        zoom: globalCameraZoom,
+      };
+    }
+  };
+  const onCamTouchMove = (e) => {
+    if (e.touches && e.touches.length === 2 && pinchStartRef.current) {
+      const [a, b] = e.touches;
+      const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      const ratio = d / pinchStartRef.current.dist;
+      setGlobalCameraZoom(Math.min(4, Math.max(1, pinchStartRef.current.zoom * ratio)));
+      if (e.cancelable) e.preventDefault();
+    }
+  };
+
   const cycleGlobalFilter = () => {
     setGlobalCameraFilter((i) => (i + 1) % GLOBAL_CAMERA_FILTERS.length);
   };
@@ -507,14 +531,18 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
+    const cw = canvas.width, ch = canvas.height;
     const filter = GLOBAL_CAMERA_FILTERS[globalCameraFilter]?.css;
     if (filter) ctx.filter = filter;
+    ctx.save();
+    ctx.translate(cw / 2, ch / 2);
     // Mirror the preview for selfie shots so the captured image matches what the user saw.
-    if (globalCameraFacing === "user") {
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
-    }
+    if (globalCameraFacing === "user") ctx.scale(-1, 1);
+    // Bake the pinch/button zoom into the capture (zoom-in crops toward centre).
+    ctx.scale(globalCameraZoom, globalCameraZoom);
+    ctx.translate(-cw / 2, -ch / 2);
     ctx.drawImage(video, 0, 0);
+    ctx.restore();
     ctx.filter = "none";
     canvas.toBlob((blob) => {
       if (!blob) return;
@@ -575,6 +603,38 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     setCameraCaption("");
     setCameraPreviewStep(false);
     setPostingStatus(false);
+    setSelectedRecipients([]);
+    setGlobalCameraZoom(1);
+  };
+
+  const toggleRecipient = (chat) => {
+    setSelectedRecipients((prev) => {
+      const key = chat.id || chat.type;
+      if (prev.some((p) => (p.id || p.type) === key)) return prev.filter((p) => (p.id || p.type) !== key);
+      return [...prev, chat];
+    });
+  };
+
+  const sendToSelectedRecipients = async () => {
+    const targets = selectedRecipients;
+    if (!targets.length || !capturedMedia) return;
+    setSelectedRecipients([]);
+    const media = capturedMedia;
+    discardCapturedMedia();
+    for (const target of targets) {
+      let chatId = target.id;
+      if (target.type !== "group") {
+        const otherUid = target.participants?.find((p) => p !== myUid);
+        chatId = await getOrCreateDirectChat(myUid, otherUid);
+      }
+      const file = new File([media.blob], `camera-${Date.now()}.${media.ext}`, { type: media.mime });
+      try {
+        const result = await uploadChatFile(chatId, myUid, file, { compress: media.type !== "video" });
+        const participants = target.participants || [];
+        await sendMediaMessage(chatId, myUid, media.type, result, participants);
+      } catch { /* keep going */ }
+    }
+    if (targets[0]) openChatRow(targets[0]);
   };
 
   const sendCapturedMediaTo = async (targetChat) => {
@@ -1024,6 +1084,10 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         <Plus size={26} color="#fff" style={{ transform: showFab ? "rotate(45deg)" : "none", transition: "transform 0.2s" }} />
       </button>
 
+      {showAIWidget && !showGlobalCamera && !capturedMedia && !cameraPreviewStep && !showFab && (
+        <AISidebarWidget myUid={myUid} userDoc={userDoc} onOpenAI={onOpenAI} right={20} bottom={hideNav ? 148 : 212} />
+      )}
+
       {showAddContact && <AddContactSheet myUid={myUid} onClose={() => setShowAddContact(false)} />}
       {showFindFriends && <FindFriendsScreen myUid={myUid} onBack={() => setShowFindFriends(false)} />}
       {showNewGroup && (
@@ -1058,12 +1122,18 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             <span onClick={switchGlobalCameraFacing} title="Flip camera" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(255,255,255,0.12)", cursor: "pointer" }}>
               <Camera size={18} color="#fff" />
             </span>
+            <span onClick={() => setGlobalCameraZoom((z) => Math.max(1, Math.round((z - 0.2) * 10) / 10))} title="Zoom out" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(255,255,255,0.12)", cursor: "pointer", fontSize: 20, fontWeight: 700, color: "#fff" }}>−</span>
+            <span onClick={() => setGlobalCameraZoom((z) => Math.min(4, Math.round((z + 0.2) * 10) / 10))} title="Zoom in" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(255,255,255,0.12)", cursor: "pointer", fontSize: 18, fontWeight: 700, color: "#fff" }}>+</span>
           </div>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", minHeight: 0 }}>
-            <video ref={globalCameraVideoRef} autoPlay playsInline muted={globalCameraMode !== "video"} style={{ width: "100%", height: "100%", maxHeight: "70vh", objectFit: "contain", transform: globalCameraFacing === "user" ? "scaleX(-1)" : "none", filter: GLOBAL_CAMERA_FILTERS[globalCameraFilter]?.css }} />
+          <div
+            onTouchStart={onCamTouchStart}
+            onTouchMove={onCamTouchMove}
+            style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", minHeight: 0 }}
+          >
+            <video ref={globalCameraVideoRef} autoPlay playsInline muted={globalCameraMode !== "video"} style={{ width: "100%", height: "100%", maxHeight: "70vh", objectFit: "contain", transform: `${globalCameraFacing === "user" ? "scaleX(-1) " : ""}scale(${globalCameraZoom})`, transformOrigin: "center center", filter: GLOBAL_CAMERA_FILTERS[globalCameraFilter]?.css }} />
           </div>
           {globalCameraError && <div style={{ color: "#FF3B30", fontSize: 13, textAlign: "center", padding: 8, flexShrink: 0 }}>{globalCameraError}</div>}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 16px 24px", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 16px calc(env(safe-area-inset-bottom, 0px) + 28px)", flexShrink: 0 }}>
             {globalCameraMode === "photo" ? (
               <div onClick={captureGlobalPhoto} style={{ width: 64, height: 64, borderRadius: "50%", border: "4px solid #fff", background: "rgba(255,255,255,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#fff" }} />
@@ -1099,20 +1169,36 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             {acceptedContacts.map((c) => {
               const otherUid = c.uid;
               const chatForContact = chats.find((ch) => ch.type !== "group" && ch.participants?.includes(myUid) && ch.participants?.includes(otherUid));
+              const sel = selectedRecipients.some((p) => (p.id || p.type) === (chatForContact?.id || `direct:${otherUid}`));
               return (
-                <div key={c.uid} onClick={() => sendCapturedMediaTo(chatForContact || { id: null, type: "direct", participants: [myUid, otherUid] })} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
+                <div key={c.uid} onClick={() => toggleRecipient(chatForContact || { id: `direct:${otherUid}`, type: "direct", participants: [myUid, otherUid] })} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: sel ? t.primaryLight : "transparent" }}>
                   <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={42} />
-                  <span style={{ fontSize: 15, fontWeight: 600, color: t.text }}>{c.profile?.displayName}</span>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: t.text, flex: 1 }}>{c.profile?.displayName}</span>
+                  {sel && <Check size={18} color={t.primary} />}
                 </div>
               );
             })}
-            {chats.filter((c) => c.type === "group").map((c) => (
-              <div key={c.id} onClick={() => sendCapturedMediaTo(c)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
-                <div style={{ width: 42, height: 42, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center" }}><Users size={20} color={t.primary} /></div>
-                <span style={{ fontSize: 15, fontWeight: 600, color: t.text }}>{c.groupName}</span>
-              </div>
-            ))}
+            {chats.filter((c) => c.type === "group").map((c) => {
+              const sel = selectedRecipients.some((p) => (p.id || p.type) === c.id);
+              return (
+                <div key={c.id} onClick={() => toggleRecipient(c)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: sel ? t.primaryLight : "transparent" }}>
+                  <div style={{ width: 42, height: 42, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center" }}><Users size={20} color={t.primary} /></div>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: t.text, flex: 1 }}>{c.groupName}</span>
+                  {sel && <Check size={18} color={t.primary} />}
+                </div>
+              );
+            })}
           </div>
+          {selectedRecipients.length > 0 && (
+            <div style={{ display: "flex", gap: 10, padding: "12px 16px calc(env(safe-area-inset-bottom, 0px) + 12px)", borderTop: `1px solid ${t.border}`, background: t.surface, flexShrink: 0 }}>
+              <div onClick={() => setSelectedRecipients([])} style={{ padding: "12px 14px", borderRadius: 12, border: `1px solid ${t.border}`, color: t.text, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
+                Clear
+              </div>
+              <div onClick={sendToSelectedRecipients} style={{ flex: 1, padding: "12px 14px", borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
+                Send to {selectedRecipients.length}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

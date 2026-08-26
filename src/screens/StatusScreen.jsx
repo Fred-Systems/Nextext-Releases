@@ -4,7 +4,8 @@ import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, 
 import { useTheme, FONTS } from "../theme/ThemeContext";
 import { postStatus, useStatuses, viewStatus, useStatusViewers, deleteStatus } from "../firebase/status";
 import { useContacts } from "../firebase/contacts";
-import { getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
+import { useChats, getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
+import GlobalCamera from "../components/GlobalCamera";
 import { uploadChatFile } from "../supabase/media";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -171,13 +172,16 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   const hideStatusCamera = globalSettings?.hideStatusCamera === true;
   const hideStatusVoiceNote = globalSettings?.hideStatusVoiceNote === true;
   const [blockStatus, setBlockStatus] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     if (!myUid) return;
     const unsub = onSnapshot(doc(db, "users", myUid), (snap) => {
       setBlockStatus(!!snap.data()?.restrictions?.blockStatus);
+      setIsAdmin(snap.data()?.role === "admin");
     });
     return unsub;
   }, [myUid]);
+  const [statusLayout, setStatusLayout] = useState("new");
   const [showPost, setShowPost] = useState(false);
   const [postText, setPostText] = useState("");
   const [postMedia, setPostMedia] = useState(null);
@@ -189,6 +193,8 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   const [viewStoryOwner, setViewStoryOwner] = useState(null);
   const [viewedMap, setViewedMap] = useState(() => getStoredViewed());
   const [showCamera, setShowCamera] = useState(false);
+  const [showGlobalCamera, setShowGlobalCamera] = useState(false);
+  const { chats } = useChats(myUid);
   const [cameraError, setCameraError] = useState("");
   const [postError, setPostError] = useState("");
   const [durationSeconds, setDurationSeconds] = useState(5);
@@ -772,6 +778,18 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
     }
   };
 
+  const advanceToNextOwner = (currentUid) => {
+    const owners = Object.keys(grouped);
+    const ci = owners.indexOf(currentUid);
+    if (ci === -1 || ci >= owners.length - 1) {
+      setViewStoryOwner(null);
+      onStoryViewerChange?.(false);
+      return;
+    }
+    const nextUid = owners[ci + 1];
+    openStory(grouped[nextUid], nextUid);
+  };
+
   const handleStoryViewed = () => {
     if (viewStoryOwner?.ownerUid) {
       markViewed(viewStoryOwner.ownerUid);
@@ -812,22 +830,51 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       <div style={{ display: "flex", alignItems: "center", padding: "calc(16px + var(--safe-top)) 16px 16px", gap: 12, background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
         <ChevronLeft size={22} color={t.text} onClick={onBack} style={{ cursor: "pointer" }} />
         <span style={{ color: t.text, fontWeight: 700, fontSize: 18 }}>Status</span>
+        <div onClick={() => setShowGlobalCamera(true)} title="Camera" style={{ marginLeft: "auto", width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <Camera size={20} color={t.primary} />
+        </div>
+        {isAdmin && (
+          <div style={{ display: "flex", background: t.primaryLight, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
+            {["new", "old"].map((l) => (
+              <span
+                key={l}
+                onClick={() => setStatusLayout(l)}
+                style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, textTransform: "capitalize", color: statusLayout === l ? "#fff" : t.text, background: statusLayout === l ? t.primary : "transparent", cursor: "pointer" }}
+              >{l}</span>
+            ))}
+          </div>
+        )}
       </div>
+
+      {showGlobalCamera && (
+        <GlobalCamera
+          t={t}
+          myUid={myUid}
+          chats={chats}
+          contacts={acceptedContacts}
+          hideNav={false}
+          onClose={() => setShowGlobalCamera(false)}
+          onOpenChat={() => setShowGlobalCamera(false)}
+        />
+      )}
 
       <div className="nx-scroll" style={{ flex: 1, paddingBottom: 70, minHeight: 0 }}>
         <SectionHeader label="My Status" />
         <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", borderBottom: `1px solid ${t.border}` }}>
-          <div style={{ position: "relative" }}>
+          <div style={{ position: "relative", cursor: "pointer" }} onClick={() => openPostSheet("text")}>
             <Avatar name={myName} uid={myUid} size={50} />
             <div onClick={(e) => { e.stopPropagation(); openPostSheet("text"); }} style={{ position: "absolute", bottom: -2, right: -2, width: 22, height: 22, borderRadius: "50%", background: t.accent, border: `2px solid ${t.bg}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
               <Plus size={13} color="#fff" />
             </div>
           </div>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 15, color: t.text }}>My Status</div>
             <div style={{ fontSize: 12.5, color: t.textMuted }}>
-              {myStatuses.length > 0 ? `${myStatuses.length} update${myStatuses.length > 1 ? "s" : ""}` : "Tap + to add status update"}
+              {myStatuses.length > 0 ? `${myStatuses.length} update${myStatuses.length > 1 ? "s" : ""}` : "Tap to add status update"}
             </div>
+          </div>
+          <div onClick={() => openPostSheet("text")} style={{ padding: "10px 18px", borderRadius: 24, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+            Post
           </div>
         </div>
 
@@ -852,45 +899,84 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
         ))}
 
         {Object.keys(grouped).length > 0 && <SectionHeader label="Recent Updates" />}
-        {Object.entries(grouped).map(([uid, items]) => {
-          const contact = acceptedContacts.find((c) => c.uid === uid);
-          const name = contact?.profile?.displayName || "Unknown";
-          const latest = items[items.length - 1];
-          return (
-            <div
-              key={uid}
-              onClick={() => openStory(items, uid)}
-              style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}
-            >
-              <div style={{ position: "relative", width: 50, height: 50, flexShrink: 0 }}>
-                <SegmentedRing count={items.length} allViewed={isViewed(uid)} size={50} />
-                <div style={{ position: "absolute", top: 3, left: 3 }}>
-                  <Avatar photoURL={contact?.profile?.photoURL} name={name} uid={uid} size={44} hasActiveStatus statusViewed={isViewed(uid)} blockStatus={blockStatus} onStatusView={() => openStory(items, uid)} />
+        {statusLayout === "old" ? (
+          Object.entries(grouped).map(([uid, items]) => {
+            const contact = acceptedContacts.find((c) => c.uid === uid);
+            const name = contact?.profile?.displayName || "Unknown";
+            const latest = items[items.length - 1];
+            return (
+              <div
+                key={uid}
+                onClick={() => openStory(items, uid)}
+                style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}
+              >
+                <div style={{ position: "relative", width: 50, height: 50, flexShrink: 0 }}>
+                  <SegmentedRing count={items.length} allViewed={isViewed(uid)} size={50} />
+                  <div style={{ position: "absolute", top: 3, left: 3 }}>
+                    <Avatar photoURL={contact?.profile?.photoURL} name={name} uid={uid} size={44} hasActiveStatus statusViewed={isViewed(uid)} blockStatus={blockStatus} onStatusView={() => openStory(items, uid)} />
+                  </div>
                 </div>
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 15, color: t.text }}>{name}</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted }}>
-                  {items.length} update{items.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: t.text }}>{name}</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted }}>
+                    {items.length} update{items.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}
+                  </div>
                 </div>
+                {latest.mediaURL && (
+                  <div style={{ width: 38, height: 38, borderRadius: 6, overflow: "hidden", flexShrink: 0, border: `1px solid ${t.border}` }}>
+                    {latest.mediaType === "video" ? (
+                      <video src={latest.mediaURL} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    )}
+                  </div>
+                )}
+                {!latest.mediaURL && latest.backgroundColor && (
+                  <div style={{ width: 38, height: 38, borderRadius: 6, flexShrink: 0, background: latest.backgroundColor, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Type size={14} color="#fff" />
+                  </div>
+                )}
               </div>
-              {latest.mediaURL && (
-                <div style={{ width: 38, height: 38, borderRadius: 6, overflow: "hidden", flexShrink: 0, border: `1px solid ${t.border}` }}>
-                  {latest.mediaType === "video" ? (
-                    <video src={latest.mediaURL} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            );
+          })
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: "4px 14px 14px" }}>
+            {Object.entries(grouped).map(([uid, items]) => {
+              const contact = acceptedContacts.find((c) => c.uid === uid);
+              const name = contact?.profile?.displayName || "Unknown";
+              const latest = items[items.length - 1];
+              const viewed = isViewed(uid);
+              return (
+                <div
+                  key={uid}
+                  onClick={() => openStory(items, uid)}
+                  style={{ position: "relative", borderRadius: 14, overflow: "hidden", border: `2px solid ${viewed ? t.border : t.primary}`, cursor: "pointer", aspectRatio: "3 / 4", background: "#000", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}
+                >
+                  {latest.mediaURL ? (
+                    latest.mediaType === "video" ? (
+                      <video src={latest.mediaURL} muted playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <img src={latest.mediaURL} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                    )
                   ) : (
-                    <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <div style={{ position: "absolute", inset: 0, background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+                      <span style={{ color: latest.backgroundColor ? "#fff" : t.text, fontSize: 13, fontWeight: 700, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical" }}>{latest.text || "Status"}</span>
+                    </div>
                   )}
+                  <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "8px 10px", background: "linear-gradient(180deg, rgba(0,0,0,0.55), rgba(0,0,0,0))" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <Avatar photoURL={contact?.profile?.photoURL} name={name} uid={uid} size={22} hasActiveStatus statusViewed={viewed} blockStatus={blockStatus} />
+                      <span style={{ color: "#fff", fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                    </div>
+                  </div>
+                  <div style={{ position: "absolute", bottom: 8, right: 10, color: "#fff", fontSize: 10.5, textShadow: "0 1px 2px rgba(0,0,0,0.6)" }}>
+                    {items.length} · {timeAgo(latest.createdAt)}
+                  </div>
                 </div>
-              )}
-              {!latest.mediaURL && latest.backgroundColor && (
-                <div style={{ width: 38, height: 38, borderRadius: 6, flexShrink: 0, background: latest.backgroundColor, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Type size={14} color="#fff" />
-                </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        )}
 
         {Object.keys(grouped).length === 0 && myStatuses.length === 0 && (
           <div style={{ padding: 40, textAlign: "center", color: t.textMuted, fontSize: 13.5, lineHeight: 1.6 }}>
@@ -909,6 +995,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           onClose={() => { setViewStoryOwner(null); onStoryViewerChange?.(false); }}
           onExit={() => { setViewStoryOwner(null); onStoryViewerChange?.(false); if (statusOrigin !== "status") onBack?.(); }}
           onViewStory={handleStoryViewed}
+          onNext={() => advanceToNextOwner(viewStoryOwner.ownerUid)}
         />
       )}
 

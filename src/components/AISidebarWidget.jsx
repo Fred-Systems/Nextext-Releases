@@ -31,7 +31,10 @@ export default function AISidebarWidget({ userDoc, onOpenAI, right = 16, bottom 
         justifyContent: "center",
         boxShadow: "0 4px 16px rgba(124,92,255,0.20)",
         cursor: "pointer",
-        zIndex: 30,
+        // Below the ChatList FAB menu backdrop (zIndex 9/10) so the AI widget
+        // never overlaps or intercepts taps on the open + menu, but still above
+        // normal chat content so it stays tappable when the menu is closed.
+        zIndex: 8,
         transition: "transform 0.2s, background 0.2s",
       }}
     >
