@@ -150,6 +150,14 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [globalCameraZoom, setGlobalCameraZoom] = useState(1);
   const [selectedRecipients, setSelectedRecipients] = useState([]);
   const [globalCameraDisappearing, setGlobalCameraDisappearing] = useState(false);
+  // Draggable + FAB position (bottom-right above nav)
+  const [fabPos, setFabPos] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem("nextext_fab_pos")); return (v?.bottom && v?.right) ? { bottom: v.bottom, right: v.right } : null; } catch { return null; }
+  });
+  // Draggable AI widget position (middle-right)
+  const [aiPos, setAiPos] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem("nextext_ai_pos")); return (v?.top && v?.right) ? { top: v.top, right: v.right } : null; } catch { return null; }
+  });
   // Hide the bottom nav whenever the in-app camera (or its preview/send step)
   // is on screen, and bring it back only once the whole flow is finished.
   const pinchStartRef = useRef(null);
@@ -512,6 +520,62 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     }
     // Re-open with the new facing direction. Keep the current mode.
     setTimeout(() => openGlobalCamera(), 50);
+  };
+
+  const handleFabDragStart = (e) => {
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const start = { x: clientX, y: clientY };
+    const startPos = { bottom: fabPos?.bottom || (hideNav ? 20 : 84), right: fabPos?.right || 20 };
+    const onMove = (me) => {
+      const cx = me.touches ? me.touches[0].clientX : me.clientX;
+      const cy = me.touches ? me.touches[0].clientY : me.clientY;
+      const dx = cx - start.x;
+      const dy = cy - start.y;
+      const newBottom = Math.max(16, startPos.bottom - dy);
+      const newRight = Math.max(16, startPos.right - dx);
+      setFabPos({ bottom: newBottom, right: newRight });
+    };
+    const onEnd = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onEnd);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+      if (fabPos) localStorage.setItem("nextext_fab_pos", JSON.stringify(fabPos));
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onEnd);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onEnd);
+    if (e.cancelable) e.preventDefault();
+  };
+
+  const handleAiDragStart = (e) => {
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const start = { x: clientX, y: clientY };
+    const startPos = { top: aiPos?.top || (window.innerHeight / 2 - 25), right: aiPos?.right || 20 };
+    const onMove = (me) => {
+      const cx = me.touches ? me.touches[0].clientX : me.clientX;
+      const cy = me.touches ? me.touches[0].clientY : me.clientY;
+      const dx = cx - start.x;
+      const dy = cy - start.y;
+      const newTop = Math.max(16, startPos.top + dy);
+      const newRight = Math.max(16, startPos.right - dx);
+      setAiPos({ top: newTop, right: newRight });
+    };
+    const onEnd = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onEnd);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+      if (aiPos) localStorage.setItem("nextext_ai_pos", JSON.stringify(aiPos));
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onEnd);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onEnd);
+    if (e.cancelable) e.preventDefault();
   };
 
   const onCamTouchStart = (e) => {
@@ -1093,12 +1157,39 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           </div>
         </>
       )}
-      <button onClick={() => setShowFab(!showFab)} style={{ position: "absolute", bottom: hideNav ? 20 : 84, right: 20, width: 54, height: 54, borderRadius: "50%", background: t.accent, border: "none", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(0,0,0,0.25)", cursor: "pointer", zIndex: 10 }}>
+      <button
+        onClick={() => setShowFab(!showFab)}
+        onTouchStart={handleFabDragStart}
+        onMouseDown={handleFabDragStart}
+        style={{
+          position: "absolute",
+          bottom: fabPos?.bottom ?? (hideNav ? 20 : 84),
+          right: fabPos?.right ?? 20,
+          width: 54,
+          height: 54,
+          borderRadius: "50%",
+          background: t.accent,
+          border: "none",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+          cursor: "grab",
+          zIndex: 10
+        }}
+      >
         <Plus size={26} color="#fff" style={{ transform: showFab ? "rotate(45deg)" : "none", transition: "transform 0.2s" }} />
       </button>
 
       {showAIWidget && !showGlobalCamera && !capturedMedia && !cameraPreviewStep && (
-        <AISidebarWidget myUid={myUid} userDoc={userDoc} onOpenAI={onOpenAI} right={20} />
+        <AISidebarWidget
+          myUid={myUid}
+          userDoc={userDoc}
+          onOpenAI={onOpenAI}
+          right={aiPos?.right ?? 20}
+          top={aiPos?.top ?? "50%"}
+          onDragStart={handleAiDragStart}
+        />
       )}
 
       {showAddContact && <AddContactSheet myUid={myUid} onClose={() => setShowAddContact(false)} />}

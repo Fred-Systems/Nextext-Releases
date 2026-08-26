@@ -6,6 +6,7 @@ import { postStatus, useStatuses, viewStatus, useStatusViewers, deleteStatus } f
 import { useContacts } from "../firebase/contacts";
 import { useChats, getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
 import { uploadChatFile } from "../supabase/media";
+import CameraCapture from "../components/CameraCapture";
 import { doc, onSnapshot, updateDoc, setDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import Avatar from "../components/Avatar";
@@ -216,6 +217,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   const [viewStoryOwner, setViewStoryOwner] = useState(null);
   const [viewedMap, setViewedMap] = useState(() => getStoredViewed());
   const [showCamera, setShowCamera] = useState(false);
+  const [cameraCapture, setCameraCapture] = useState(null); // { target: "chat" | "builder" }
   const { chats } = useChats(myUid);
   const [cameraError, setCameraError] = useState("");
   const [postError, setPostError] = useState("");
@@ -235,6 +237,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
   const [previewAudioURL, setPreviewAudioURL] = useState(null);
   const [previewVideoURL, setPreviewVideoURL] = useState(null);
   const [postImages, setPostImages] = useState([]);
+  const [allowDownload, setAllowDownload] = useState(false);
   const previewVideoRef = useRef(null);
   const previewAudioRef = useRef(null);
   const [viewerModalStatusId, setViewerModalStatusId] = useState(null);
@@ -366,6 +369,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
     setBgAudioVolume(70);
     setVideoVolume(100);
     setMuteOriginal(false);
+    setAllowDownload(false);
     setPreviewZoom(1);
     setShowZoomHint(false);
     setPostError("");
@@ -396,6 +400,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           fontFamily: null,
           durationMs: voiceDurationMs || durationSeconds * 1000,
           textOverlay: textOverlay.trim() || null,
+          allowDownload,
         });
       }
       // Handle multiple images - send as separate status updates
@@ -853,7 +858,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
       <div style={{ display: "flex", alignItems: "center", padding: "calc(16px + var(--safe-top)) 16px 16px", gap: 12, background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
         <ChevronLeft size={22} color={t.text} onClick={onBack} style={{ cursor: "pointer" }} />
         <span style={{ color: t.text, fontWeight: 700, fontSize: 18 }}>Status</span>
-        <div onClick={() => startCamera()} title="Camera" style={{ marginLeft: "auto", width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+        <div onClick={() => setCameraCapture({ target: "chat" })} title="Camera" style={{ marginLeft: "auto", width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <Camera size={20} color={t.primary} />
         </div>
         <div style={{ display: "flex", background: t.primaryLight, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
@@ -1026,6 +1031,25 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
 
       {viewerModalStatusId && (
         <StatusViewerModal statusId={viewerModalStatusId} contacts={acceptedContacts} onClose={() => setViewerModalStatusId(null)} t={t} />
+      )}
+
+      {/* Shared in-app camera (identical to the chats top-bar camera) */}
+      {cameraCapture && (
+        <CameraCapture
+          t={t}
+          myUid={myUid}
+          acceptedContacts={acceptedContacts}
+          chats={chats}
+          target={cameraCapture.target}
+          onClose={() => setCameraCapture(null)}
+          onCaptured={({ blob, type, caption }) => {
+            setPostMedia(blob);
+            setPostMediaType(type);
+            setPostMode("media");
+            setWaitForVideo(type === "video");
+            if (caption) setPostText((prev) => (prev ? prev + " " + caption : caption));
+          }}
+        />
       )}
 
       {/* Camera overlay — portaled to document.body so it escapes the scaled
@@ -1262,7 +1286,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
                     <span style={{ fontSize: 13, fontWeight: 600, color: t.primary }}>Video</span>
                   </div>
                   {!hideStatusCamera && (
-                    <div onClick={() => startCamera("photo")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
+                    <div onClick={() => setCameraCapture({ target: "builder" })} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
                       <Camera size={16} color={t.primary} />
                       <span style={{ fontSize: 13, fontWeight: 600, color: t.primary }}>Camera</span>
                     </div>

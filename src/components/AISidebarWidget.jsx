@@ -2,7 +2,7 @@ import React from "react";
 import { useSystemConfigHook } from "../firebase/ai";
 import { useAIIconStyle, aiAvatarInner } from "../services/aiIcon";
 
-export default function AISidebarWidget({ userDoc, onOpenAI, right = 16, bottom }) {
+export default function AISidebarWidget({ userDoc, onOpenAI, right = 16, bottom, top, onDragStart }) {
   const sysConfig = useSystemConfigHook();
   const aiStyle = useAIIconStyle();
 
@@ -11,13 +11,20 @@ export default function AISidebarWidget({ userDoc, onOpenAI, right = 16, bottom 
 
   const inner = aiAvatarInner(aiStyle, 30, 13);
 
-  const posStyle = bottom != null
-    ? { bottom, right, transform: "none" }
-    : { top: "50%", right, transform: "translateY(-50%)" };
+  let posStyle;
+  if (bottom != null) {
+    posStyle = { bottom, right, transform: "none" };
+  } else if (top != null) {
+    posStyle = { top, right, transform: "translateY(-50%)" };
+  } else {
+    posStyle = { top: "50%", right, transform: "translateY(-50%)" };
+  }
 
   return (
     <div
       onClick={() => onOpenAI()}
+      onTouchStart={onDragStart}
+      onMouseDown={onDragStart}
       style={{
         position: "absolute",
         ...posStyle,
@@ -30,10 +37,7 @@ export default function AISidebarWidget({ userDoc, onOpenAI, right = 16, bottom 
         alignItems: "center",
         justifyContent: "center",
         boxShadow: "0 4px 16px rgba(124,92,255,0.20)",
-        cursor: "pointer",
-        // Below the ChatList FAB menu backdrop (zIndex 9/10) so the AI widget
-        // never overlaps or intercepts taps on the open + menu, but still above
-        // normal chat content so it stays tappable when the menu is closed.
+        cursor: "grab",
         zIndex: 8,
         transition: "transform 0.2s, background 0.2s",
       }}
