@@ -1706,13 +1706,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     catch (e) { setSendError("Couldn't vote: " + e.message); }
   };
 
-  const handlePhotoOrVideoPick = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow picking the same file again later
+  const processPickedFile = (file) => {
     if (!file || !chatId) { setGalleryActive(false); return; }
     setGalleryActive(false);
     closeAttach();
-    const isImage = file.type.startsWith("image/");
+    const isImage = (file.type || "").startsWith("image/");
     const blocked = parentalBlockedType(isImage ? "image" : "video");
     if (blocked) { setSendError(blocked); return; }
     // Open a caption preview instead of sending instantly — the user can add
@@ -1722,6 +1720,34 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     try { previewUrl = URL.createObjectURL(file); } catch { /* preview optional */ }
     setCaptionText("");
     setPendingMedia({ file, isImage, previewUrl });
+  };
+
+  const handlePhotoOrVideoPick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow picking the same file again later
+    processPickedFile(file);
+  };
+
+  // Native gallery via Capacitor Camera (Android Photo Picker). Falls back to
+  // the web file input if the plugin is unavailable or the pick fails.
+  const openNativeGallery = async () => {
+    try {
+      const { Camera } = await import("@capacitor/camera");
+      const res = await Camera.pickImages({ quality: 90, limit: 1, readData: false });
+      const photo = res?.photos?.[0];
+      if (!photo) { setGalleryActive(false); return; }
+      const src = photo.webPath || photo.path;
+      const resp = await fetch(src);
+      const blob = await resp.blob();
+      const isPng = (photo.path || "").toLowerCase().endsWith(".png");
+      const mime = blob.type || (isPng ? "image/png" : "image/jpeg");
+      const name = (photo.path ? photo.path.split("/").pop() : null) || (isPng ? "gallery.png" : "gallery.jpg");
+      const file = new File([blob], name, { type: mime });
+      processPickedFile(file);
+    } catch (err) {
+      console.warn("native gallery failed, falling back to file input", err);
+      photoInputRef.current?.click();
+    }
   };
 
   const cancelPendingMedia = () => {
@@ -1773,11 +1799,16 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const closeDisappearingViewer = async () => {
     const m = viewingDisappearing;
     if (!m) { setViewingDisappearing(null); return; }
-    // Mark as viewed so it never re-shows, then delete for everyone + purge file.
+    // Mark as viewed so it never re-shows, then delete for everyone + purge file
+    // — but only when the view budget is exhausted (view-once, or the last of N views).
     setViewingDisappearing(null);
     setViewedDisappearing((prev) => { const n = new Set(prev); n.add(m.id); return n; });
-    try { await deleteMessageForEveryone(chatId, m.id); } catch {}
-    try { if (m.mediaPath) await deleteChatFile(m.mediaPath); } catch {}
+    const allowed = m.disappearing?.viewsAllowed || 1;
+    const myViews = (m.disappearing?.views && m.disappearing.views[myUid]) || 0;
+    if (allowed <= 1 || myViews + 1 >= allowed) {
+      try { await deleteMessageForEveryone(chatId, m.id); } catch {}
+      try { if (m.mediaPath) await deleteChatFile(m.mediaPath); } catch {}
+    }
   };
 
   const getMicrophoneStream = async (constraints) => {
@@ -3584,7 +3615,16 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               </div>
               {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
                 <div
-                  onClick={() => { setGalleryActive(true); setShowEmojiPicker(false); photoInputRef.current?.click(); }}
+                  onClick={() => {
+                    setShowEmojiPicker(false);
+                    if (sysConfig?.nativeGallery) {
+                      setGalleryActive(true);
+                      openNativeGallery();
+                    } else {
+                      setGalleryActive(true);
+                      photoInputRef.current?.click();
+                    }
+                  }}
                   style={{ width: Math.max(30, Math.round(32 * composerHeight)), height: Math.max(30, Math.round(32 * composerHeight)), borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: galleryActive ? t.primaryLight : "transparent" }}
                 >
                   <ImageIcon size={Math.max(22, Math.round(25 * composerHeight))} color={galleryActive ? t.primary : t.textMuted} />

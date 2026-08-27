@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  collection, query, where, onSnapshot, addDoc,
-  deleteDoc, doc, serverTimestamp, getDocs, setDoc,
+  collection, query, where, onSnapshot, addDoc, getDoc,
+  deleteDoc, doc, serverTimestamp, getDocs, setDoc, orderBy, increment,
 } from "firebase/firestore";
 import { db } from "./config";
 import { deleteChatFile } from "../supabase/media";
@@ -36,6 +36,8 @@ export async function postStatus(ownerId, {
     videoVolume,
     waitForVideo,
     allowDownload,
+    commentCount: 0,
+    commentsHidden: false,
     createdAt: serverTimestamp(),
     expiresAt: new Date(Date.now() + STATUS_TTL_MS),
   });
@@ -253,4 +255,58 @@ export function useStatusViewers(statusId) {
   }, [statusId]);
 
   return viewers;
+}
+
+// ── Status comments ──
+// Comments live in status/{statusId}/comments. Each comment: { uid, text, createdAt, up:[], down:[] }.
+export async function addStatusComment(statusId, uid, text) {
+  const trimmed = (text || "").trim();
+  if (!statusId || !uid || !trimmed) return null;
+  const ref = await addDoc(collection(db, "status", statusId, "comments"), {
+    uid,
+    text: trimmed,
+    createdAt: serverTimestamp(),
+    up: [],
+    down: [],
+  });
+  await setDoc(doc(db, "status", statusId), { commentCount: increment(1) }, { merge: true });
+  return ref.id;
+}
+
+export async function deleteStatusComment(statusId, commentId, uid) {
+  if (!statusId || !commentId) return;
+  await deleteDoc(doc(db, "status", statusId, "comments", commentId));
+  await setDoc(doc(db, "status", statusId), { commentCount: increment(-1) }, { merge: true });
+}
+
+// dir: "up" | "down". Toggles the voter's id in the matching array and removes
+// it from the opposite one (one vote per user, never on your own comment).
+export async function voteStatusComment(statusId, commentId, uid, dir) {
+  if (!statusId || !commentId || !uid) return;
+  const ref = doc(db, "status", statusId, "comments", commentId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const data = snap.data();
+  if (data.uid === uid) return; // can't vote on your own
+  const up = new Set(data.up || []);
+  const down = new Set(data.down || []);
+  if (dir === "up") {
+    if (up.has(uid)) up.delete(uid); else { up.add(uid); down.delete(uid); }
+  } else {
+    if (down.has(uid)) down.delete(uid); else { down.add(uid); up.delete(uid); }
+  }
+  await setDoc(ref, { up: Array.from(up), down: Array.from(down) }, { merge: true });
+}
+
+export function subscribeStatusComments(statusId, cb) {
+  if (!statusId) { cb([]); return () => {}; }
+  const q = query(collection(db, "status", statusId, "comments"), orderBy("createdAt", "asc"));
+  return onSnapshot(q, (snap) => {
+    cb(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+  }, (err) => console.warn("[subscribeStatusComments] error:", err.message));
+}
+
+export async function setStatusCommentsHidden(statusId, hidden) {
+  if (!statusId) return;
+  await setDoc(doc(db, "status", statusId), { commentsHidden: !!hidden }, { merge: true });
 }

@@ -285,7 +285,7 @@ export default function CameraCapture({
   // BUILDER target: capture hands media straight back to caller.
   if (target === "builder" && captured && previewStep) {
     return (
-      <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
+      <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "#000", zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
           <span onClick={discard} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Discard</span>
           <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Preview</span>
@@ -315,7 +315,7 @@ export default function CameraCapture({
   // LIVE CAMERA
   if (showCamera && !captured) {
     return (
-      <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
+      <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "#000", zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
           <span onClick={closeAll} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Cancel</span>
           <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Camera</span>
@@ -354,7 +354,7 @@ export default function CameraCapture({
   // PREVIEW (caption + Retake / Status / Send) — chat & status targets
   if (captured && previewStep) {
     return (
-      <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
+      <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "#000", zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
           <span onClick={discard} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Discard</span>
           <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Preview</span>
@@ -380,7 +380,7 @@ export default function CameraCapture({
   // SEND TO… (chat list + Post on Status) — chat & status targets
   if (captured && !previewStep) {
     return (
-      <div style={{ position: "fixed", inset: 0, background: t.bg, zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
+      <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: t.bg, zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", background: t.surface, flexShrink: 0, borderBottom: `1px solid ${t.border}` }}>
           <span onClick={discard} style={{ color: t.text, fontSize: 15, cursor: "pointer" }}>Cancel</span>
           <span style={{ color: t.text, fontWeight: 700, fontSize: 16 }}>Send to…</span>

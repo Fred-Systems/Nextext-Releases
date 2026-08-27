@@ -526,7 +526,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const handleFabDragStart = (e) => {
-    if (localStorage.getItem("nextext_fab_locked") === "1") return;
+    if (localStorage.getItem("nextext_fab_locked") === "on") return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     const start = { x: clientX, y: clientY };
@@ -558,7 +558,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const handleAiDragStart = (e) => {
-    if (localStorage.getItem("nextext_ai_locked") === "1") return;
+    if (localStorage.getItem("nextext_ai_locked") === "on") return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     const start = { x: clientX, y: clientY };
@@ -935,7 +935,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
-        <div style={{ display: "flex", gap: 8, flex: 1, overflowX: "auto" }}>
+        <div style={{ display: "flex", gap: 8, flex: 1, overflowX: "auto", WebkitOverflowScrolling: "touch", onTouchMove: (e) => e.stopPropagation() }}>
           {[["all", "All"], ["unread", "Unread"], ["favorites", "Favorites"], ["groups", "Groups"], ["broadcast", "Broadcast"], ...customLists.map((l) => [`custom_${l.id}`, l.name])].map(([key, label]) => (
             <div key={key} onClick={() => setActiveTab(key)} style={{ padding: "6px 14px", borderRadius: 16, background: activeTab === key ? t.primary : t.primaryLight, color: activeTab === key ? t.bubbleMeText : t.primary, fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
               {label}

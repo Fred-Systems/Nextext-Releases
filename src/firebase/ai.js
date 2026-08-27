@@ -157,13 +157,13 @@ const SYSTEM_CONFIG_REF = doc(db, "config", "system");
 export async function ensureSystemConfig() {
   const snap = await getDoc(SYSTEM_CONFIG_REF);
   if (!snap.exists()) {
-    await setDoc(SYSTEM_CONFIG_REF, { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true, aiMode: "old", aiLiveModel: "groq/compound" });
+    await setDoc(SYSTEM_CONFIG_REF, { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true, aiMode: "old", aiLiveModel: "groq/compound", nativeGallery: false });
   }
 }
 
 export async function getSystemConfig() {
   const snap = await getDoc(SYSTEM_CONFIG_REF);
-  return snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true, aiMode: "old", aiLiveModel: "groq/compound" };
+  return snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true, aiMode: "old", aiLiveModel: "groq/compound", nativeGallery: false };
 }
 
 export async function setSystemConfig(patch, adminUid) {
@@ -182,7 +182,7 @@ export function useSystemConfigHook() {
         return;
       }
       unsub = onSnapshot(SYSTEM_CONFIG_REF, (snap) => {
-        setConfig(snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, tourDisabled: false, groqApiKey: "", aiMode: "old", aiLiveModel: "groq/compound" });
+        setConfig(snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, tourDisabled: false, groqApiKey: "", aiMode: "old", aiLiveModel: "groq/compound", nativeGallery: false });
       }, () => {});
     };
     start();

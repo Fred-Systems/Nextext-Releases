@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, ChevronRight, Eye, Send, Download, Volume2, VolumeX } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Eye, Send, Download, Volume2, VolumeX, MessageCircle } from "lucide-react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useTheme } from "../theme/ThemeContext";
-import { useStatusViewers } from "../firebase/status";
+import { useStatusViewers, subscribeStatusComments, addStatusComment, voteStatusComment, deleteStatusComment, setStatusCommentsHidden } from "../firebase/status";
 import { getOrCreateDirectChat, sendTextMessage } from "../firebase/chats";
 import Avatar from "../components/Avatar";
 import ZoomableMedia from "../components/ZoomableMedia";
@@ -77,6 +77,10 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const [muted, setMuted] = useState(false);
   const [speed, setSpeed] = useState(1);
   const SPEED_PRESETS = [1, 1.5, 2, 3];
+  const [showComments, setShowComments] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [commentText, setCommentText] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
   const touchStartRef = useRef({ x: 0, y: 0 });
   const pressTimerRef = useRef(null);
   const holdFiredRef = useRef(false);
@@ -106,6 +110,22 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
   const isOwner = myUid && ownerUid && myUid === ownerUid;
   const current = statuses[idx];
+
+  // Live comments for the current status.
+  useEffect(() => {
+    if (!current?.id) { setComments([]); return; }
+    const unsub = subscribeStatusComments(current.id, setComments);
+    return unsub;
+  }, [current?.id]);
+
+  const submitComment = async () => {
+    const text = commentText.trim();
+    if (!text || postingComment || !current?.id) return;
+    setPostingComment(true);
+    try { await addStatusComment(current.id, myUid, text); setCommentText(""); }
+    catch (e) { console.warn("comment failed", e); }
+    finally { setPostingComment(false); }
+  };
   // Once the video's real length is known from its metadata, the auto-timer
   // tracks THAT instead of the stored durationMs (which can be an estimate or
   // a 10s fallback when metadata wasn't readable at post time).
@@ -490,6 +510,17 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
           <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11.5 }}>{timeAgo(current.createdAt)}</div>
         </div>
         <X size={22} color="#fff" onClick={(e) => { e.stopPropagation(); e.preventDefault(); fullUnmount(); }} style={{ cursor: "pointer" }} />
+        {!(current.commentsHidden && !isOwner) && (
+          <div
+            onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowComments((v) => !v); }}
+            style={{ position: "relative", cursor: "pointer", flexShrink: 0 }}
+          >
+            <MessageCircle size={21} color="#fff" />
+            {current.commentCount > 0 && (
+              <span style={{ position: "absolute", top: -6, right: -8, background: "#00A884", color: "#fff", fontSize: 10, fontWeight: 700, minWidth: 15, height: 15, borderRadius: 8, padding: "0 3px", display: "flex", alignItems: "center", justifyContent: "center" }}>{current.commentCount}</span>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 20px 40px", boxSizing: "border-box", overflow: "hidden" }}>
@@ -553,7 +584,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
             )}
           </div>
         ) : (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "80px 24px 90px", boxSizing: "border-box" }}>
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "80px 24px 90px", boxSizing: "border-box" }}>
             <div style={{ color: "#fff", fontWeight: 700, textAlign: "center", lineHeight: 1.3, fontFamily: current.fontFamily || appFont, width: "100%", boxSizing: "border-box", wordBreak: "break-word", overflowY: "auto", maxHeight: "100%", fontSize: Math.max(30, Math.min(64, Math.round(200 / Math.max(1, (current.text || "No text").length / 3)))) }}>
               {current.text || "No text"}
             </div>
@@ -646,6 +677,77 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                 )}
               </div>
             </div>
+          )}
+        </div>
+      )}
+
+      {showComments && (
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, maxHeight: "72%", display: "flex", flexDirection: "column", background: "rgba(18,18,18,0.98)", borderRadius: "16px 16px 0 0", zIndex: 30 }} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
+          <div onClick={() => setShowComments(false)} style={{ display: "flex", justifyContent: "center", padding: "10px 0 6px", cursor: "pointer" }}>
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.3)" }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 16px 10px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+            <span style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>Comments ({comments.length})</span>
+            {isOwner && !current.commentsHidden && (
+              <div onClick={() => setStatusCommentsHidden(current.id, true)} style={{ fontSize: 12, color: "#FF3B30", cursor: "pointer", fontWeight: 600 }}>Turn off</div>
+            )}
+          </div>
+          {current.commentsHidden ? (
+            <div style={{ padding: "28px 16px", textAlign: "center" }}>
+              <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 13.5, marginBottom: 12 }}>Comments are turned off for this post.</div>
+              {isOwner && (
+                <div onClick={() => setStatusCommentsHidden(current.id, false)} style={{ display: "inline-block", padding: "8px 16px", borderRadius: 10, background: "#00A884", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Turn on comments</div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "6px 0" }}>
+                {comments.length === 0 ? (
+                  <div style={{ textAlign: "center", color: "rgba(255,255,255,0.5)", fontSize: 13, padding: "24px 16px" }}>No comments yet. Be the first!</div>
+                ) : (
+                  comments.map((c) => {
+                    const up = c.up || [];
+                    const down = c.down || [];
+                    const votedUp = up.includes(myUid);
+                    const votedDown = down.includes(myUid);
+                    const u = contacts?.find((x) => x.uid === c.uid)?.profile || extraProfiles?.[c.uid] || null;
+                    const name = u?.displayName || (c.uid === myUid ? "You" : "User");
+                    const photo = u?.photoURL || null;
+                    return (
+                      <div key={c.id} style={{ display: "flex", gap: 10, padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                        <Avatar photoURL={photo} name={name} uid={c.uid} size={34} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ color: "#fff", fontSize: 13.5, fontWeight: 600 }}>{name}</div>
+                          <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 13.5, marginTop: 1, wordBreak: "break-word" }}>{c.text}</div>
+                          <div style={{ display: "flex", gap: 14, marginTop: 6, alignItems: "center" }}>
+                            <div onClick={() => voteStatusComment(current.id, c.id, myUid, "up")} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", color: votedUp ? "#00A884" : "rgba(255,255,255,0.6)" }}>
+                              <span style={{ fontSize: 13 }}>▲</span><span style={{ fontSize: 12 }}>{up.length}</span>
+                            </div>
+                            <div onClick={() => voteStatusComment(current.id, c.id, myUid, "down")} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", color: votedDown ? "#FF3B30" : "rgba(255,255,255,0.6)" }}>
+                              <span style={{ fontSize: 13 }}>▼</span><span style={{ fontSize: 12 }}>{down.length}</span>
+                            </div>
+                            {c.uid === myUid && (
+                              <div onClick={() => deleteStatusComment(current.id, c.id, myUid)} style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", cursor: "pointer", marginLeft: "auto" }}>Delete</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px 16px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+                <input
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && commentText.trim()) submitComment(); }}
+                  placeholder="Add a comment…"
+                  disabled={postingComment}
+                  style={{ flex: 1, border: "none", outline: "none", background: "rgba(255,255,255,0.12)", borderRadius: 20, padding: "9px 14px", fontSize: 13.5, color: "#fff" }}
+                />
+                <Send size={18} color={commentText.trim() ? "#00A884" : "rgba(255,255,255,0.4)"} onClick={() => submitComment()} style={{ cursor: commentText.trim() ? "pointer" : "default" }} />
+              </div>
+            </>
           )}
         </div>
       )}

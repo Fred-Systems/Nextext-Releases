@@ -42,7 +42,7 @@ import FeedbackScreen from "./screens/FeedbackScreen";
 import ContactProfileScreen from "./screens/ContactProfileScreen";
 import AdminDashboard from "./screens/AdminDashboard";
 import AIChatScreen from "./screens/AIChatScreen";
-import { useSystemConfigHook, requestAIAccess, setAIPersonality, PERSONALITIES } from "./firebase/ai";
+import { useSystemConfigHook, requestAIAccess, setAIPersonality, setSystemConfig, PERSONALITIES } from "./firebase/ai";
 import AppLockScreen from "./screens/AppLockScreen";
 import StatusScreen from "./screens/StatusScreen";
 import GroupInfoScreen from "./screens/GroupInfoScreen";
@@ -1352,6 +1352,24 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               </button>
             </div>
           </>))}
+
+          {isAdmin && (() => {
+            const nativeGalleryOn = sysConfig?.nativeGallery === true;
+            return (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Native photo picker (Gallery)</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Open Android's built-in gallery instead of the Files app when picking media.</div>
+                </div>
+                <div
+                  onClick={() => { setSystemConfig({ nativeGallery: !nativeGalleryOn }, myUid); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: nativeGalleryOn ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: nativeGalleryOn ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            );
+          })()}
 
           {renderSub("Message Actions", (<>
             {/* Forward arrow placement */}

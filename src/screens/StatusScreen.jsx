@@ -135,7 +135,7 @@ function StatusViewerModal({ statusId, contacts, onClose, t }) {
   };
 
   return (
-    <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div onClick={onClose} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: t.surface, borderRadius: 16, width: "100%", maxWidth: 320, maxHeight: "70%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: `1px solid ${t.border}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -173,6 +173,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const hideStatusVoiceNote = globalSettings?.hideStatusVoiceNote === true;
   const [blockStatus, setBlockStatus] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [myDisplayName, setMyDisplayName] = useState(myName);
   useEffect(() => {
     if (!myUid) return;
     const unsub = onSnapshot(doc(db, "users", myUid), (snap) => {
@@ -193,6 +194,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       setIsAdmin(d?.role === "admin");
       if (d?.statusLayout) { setStatusLayout(d.statusLayout); try { localStorage.setItem("nextext_status_layout", d.statusLayout); } catch {} }
       if (d?.statusPreviewSize) { setStatusPreviewSize(d.statusPreviewSize); try { localStorage.setItem("nextext_status_preview_size", d.statusPreviewSize); } catch {} }
+      if (d?.displayName || d?.username) setMyDisplayName(d.displayName || d.username || myUid);
     });
     return unsub;
   }, [myUid]);
@@ -802,9 +804,11 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const openStory = (items, ownerUid) => {
     setViewStoryOwner({ statuses: items, initialIndex: 0, ownerUid });
     onStoryViewerChange?.(true);
-    // Record view for each status in this story (fire-and-forget)
+    // Record view for each status in this story (fire-and-forget) and mark the
+    // owner as viewed locally so the ring turns from green (unviewed) to grey.
     if (ownerUid !== myUid) {
       items.forEach((s) => viewStatus(s.id, myUid));
+      markViewed(ownerUid);
     }
   };
 
@@ -856,7 +860,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   );
 
   return (
-    <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 40, display: "flex", flexDirection: "column" }}>
+    <div className="nx-screen" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: t.bg, zIndex: 40, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", padding: "calc(16px + var(--safe-top)) 16px 16px", gap: 12, background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
         <ChevronLeft size={22} color={t.text} onClick={onBack} style={{ cursor: "pointer" }} />
         <span style={{ color: t.text, fontWeight: 700, fontSize: 18 }}>Status</span>
@@ -889,7 +893,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
         <SectionHeader label="My Status" />
         <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", borderBottom: `1px solid ${t.border}` }}>
           <div style={{ position: "relative", cursor: "pointer" }} onClick={() => openPostSheet("text")}>
-            <Avatar name={myName} uid={myUid} size={50} />
+            <Avatar name={myName || myDisplayName} uid={myUid} size={50} />
             <div onClick={(e) => { e.stopPropagation(); openPostSheet("text"); }} style={{ position: "absolute", bottom: -2, right: -2, width: 22, height: 22, borderRadius: "50%", background: t.accent, border: `2px solid ${t.bg}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
               <Plus size={13} color="#fff" />
             </div>
@@ -932,45 +936,41 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
 
         {Object.keys(grouped).length > 0 && <SectionHeader label="Recent Updates" />}
         {statusLayout === "list" ? (
-          Object.entries(grouped).map(([uid, items]) => {
-            const contact = acceptedContacts.find((c) => c.uid === uid);
-            const name = contact?.profile?.displayName || "Unknown";
-            const latest = items[items.length - 1];
-            return (
-              <div
-                key={uid}
-                onClick={() => openStory(items, uid)}
-                style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}
-              >
-                <div style={{ position: "relative", width: 50, height: 50, flexShrink: 0 }}>
-                  <SegmentedRing count={items.length} allViewed={isViewed(uid)} size={50} />
-                  <div style={{ position: "absolute", top: 3, left: 3 }}>
-                    <Avatar photoURL={contact?.profile?.photoURL} name={name} uid={uid} size={44} hasActiveStatus statusViewed={isViewed(uid)} blockStatus={blockStatus} onStatusView={() => openStory(items, uid)} />
-                  </div>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: t.text }}>{name}</div>
-                  <div style={{ fontSize: 12.5, color: t.textMuted }}>
-                    {items.length} update{items.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}
-                  </div>
-                </div>
-                {latest.mediaURL && (
-                  <div style={{ width: 38, height: 38, borderRadius: 6, overflow: "hidden", flexShrink: 0, border: `1px solid ${t.border}` }}>
-                    {latest.mediaType === "video" ? (
-                       <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <div style={{ display: "flex", overflowX: "auto", overflowY: "hidden", padding: "10px 16px 14px", WebkitOverflowScrolling: "touch", onTouchMove: (e) => e.stopPropagation() }}>
+            {Object.entries(grouped).map(([uid, items]) => {
+              const contact = acceptedContacts.find((c) => c.uid === uid);
+              const name = contact?.profile?.displayName || "Unknown";
+              const latest = items[items.length - 1];
+              return (
+                <div
+                  key={uid}
+                  onClick={() => openStory(items, uid)}
+                  style={{ flexShrink: 0, width: 158, marginRight: 10, borderRadius: 14, border: `2px solid ${isViewed(uid) ? t.border : t.primary}`, overflow: "hidden", background: t.surface, cursor: "pointer", boxSizing: "border-box" }}
+                >
+                  <div style={{ position: "relative", paddingBottom: "120%", background: "#000" }}>
+                    {latest.mediaURL ? (
+                      latest.mediaType === "video" ? (
+                        <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : (
+                        <img src={latest.mediaURL} alt="" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                      )
                     ) : (
-                      <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 10 }}>
+                        <span style={{ color: latest.backgroundColor ? "#fff" : t.text, fontSize: 12.5, fontWeight: 700, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical" }}>{latest.text || "Status"}</span>
+                      </div>
                     )}
+                    <div style={{ position: "absolute", top: 6, left: 6 }}>
+                      <Avatar photoURL={contact?.profile?.photoURL} name={name} uid={uid} size={28} hasActiveStatus statusViewed={isViewed(uid)} blockStatus={blockStatus} onStatusView={() => openStory(items, uid)} />
+                    </div>
                   </div>
-                )}
-                {!latest.mediaURL && latest.backgroundColor && (
-                  <div style={{ width: 38, height: 38, borderRadius: 6, flexShrink: 0, background: latest.backgroundColor, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <Type size={14} color="#fff" />
+                  <div style={{ padding: "7px 9px" }}>
+                    <div style={{ fontWeight: 700, fontSize: 13.5, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+                    <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 1 }}>{items.length} update{items.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}</div>
                   </div>
-                )}
-              </div>
-            );
-          })
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: statusPreviewSize === "compact" ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, padding: "4px 14px 14px" }}>
             {/* First card is always the user's own status (or a "Post status" prompt) */}
@@ -986,18 +986,18 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                   >
                     {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
-                         <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                         <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : (
-                        <img src={latest.mediaURL} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        <img src={latest.mediaURL} alt="" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       )
                     ) : (
-                      <div style={{ position: "absolute", inset: 0, background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+                      <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
                         <span style={{ color: latest.backgroundColor ? "#fff" : t.text, fontSize: 13, fontWeight: 700, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical" }}>{latest.text || "My status"}</span>
                       </div>
                     )}
                     <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "8px 10px", background: "linear-gradient(180deg, rgba(0,0,0,0.55), rgba(0,0,0,0))" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <Avatar photoURL={myPhoto} name={myName} uid={myUid} size={22} hasActiveStatus statusViewed={viewed} blockStatus={blockStatus} />
+                        <Avatar photoURL={myPhoto} name={myName || myDisplayName} uid={myUid} size={22} hasActiveStatus statusViewed={viewed} blockStatus={blockStatus} />
                         <span style={{ color: "#fff", fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{myName || "My status"}</span>
                       </div>
                     </div>
@@ -1013,7 +1013,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                 onClick={() => openPostSheet("text")}
                 style={{ position: "relative", borderRadius: 14, overflow: "hidden", border: `2px dashed ${t.primary}`, cursor: "pointer", boxSizing: "border-box", paddingBottom: "133.33%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center" }}
               >
-                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: 8 }}>
+                <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: 8 }}>
                   <Plus size={26} color={t.primary} />
                   <span style={{ color: t.primary, fontSize: 12.5, fontWeight: 700, textAlign: "center" }}>Post status</span>
                 </div>
@@ -1032,13 +1032,13 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                 >
                   {latest.mediaURL ? (
                     latest.mediaType === "video" ? (
-                       <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                       <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
 
                     ) : (
-                      <img src={latest.mediaURL} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                      <img src={latest.mediaURL} alt="" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                     )
                   ) : (
-                    <div style={{ position: "absolute", inset: 0, background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+                    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
                       <span style={{ color: latest.backgroundColor ? "#fff" : t.text, fontSize: 13, fontWeight: 700, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical" }}>{latest.text || "Status"}</span>
                     </div>
                   )}
@@ -1111,7 +1111,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           relative to that ancestor, which made the old camera render tiny in a
           corner). Now it's truly full-screen. */}
         {showCamera && createPortal(
-          <div style={{ position: "fixed", inset: 0, width: "100%", height: "100vh", background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
+          <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100vh", background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "calc(12px + var(--safe-top)) 16px 12px", minHeight: 44, flexShrink: 0, position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
               <X size={22} color="#fff" onClick={() => { setShowCamera(false); stopCameraStream(); }} style={{ cursor: "pointer" }} />
               <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: 6 }}>
@@ -1146,7 +1146,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
               onTouchStart={onCamTouchStart}
               onTouchMove={onCamTouchMove}
               onLoadedData={(e) => { try { e.target.play(); } catch {} }}
-              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", background: "#000", zIndex: 1, filter: cameraFilter || "none", transform: `${cameraFacing === "user" ? "scaleX(-1) " : ""}scale(${cameraZoom})`, transformOrigin: "center center" }}
+              style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover", background: "#000", zIndex: 1, filter: cameraFilter || "none", transform: `${cameraFacing === "user" ? "scaleX(-1) " : ""}scale(${cameraZoom})`, transformOrigin: "center center" }}
             />
             {cameraError && <div style={{ position: "absolute", bottom: "calc(190px + var(--safe-bottom))", left: 0, right: 0, textAlign: "center", color: "#FF3B30", fontSize: 13, fontWeight: 600, zIndex: 11 }}>{cameraError}</div>}
             <div style={{ position: "absolute", left: 0, right: 0, bottom: "calc(118px + var(--safe-bottom))", display: "flex", gap: 8, overflowX: "auto", padding: "0 16px", zIndex: 10 }}>
@@ -1182,7 +1182,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
 
       {/* Capture actions: send to chat or post to status */}
       {showCaptureActions && createPortal(
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147483000, display: "flex", alignItems: "flex-end" }} onClick={() => { setShowCaptureActions(false); setPostMedia(null); setPostMediaType(null); setPostMode("text"); }}>
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147483000, display: "flex", alignItems: "flex-end" }} onClick={() => { setShowCaptureActions(false); setPostMedia(null); setPostMediaType(null); setPostMode("text"); }}>
           <div style={{ background: t.surface, width: "100%", borderRadius: "20px 20px 0 0", padding: "24px 20px 30px", display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 -4px 24px rgba(0,0,0,0.3)" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <span style={{ fontWeight: 700, fontSize: 17, color: t.text }}>{postMediaType === "video" ? "Video captured" : "Photo captured"}</span>
@@ -1205,7 +1205,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
 
       {/* Chat picker for sending the capture */}
       {chatSendTarget === "pick" && createPortal(
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147483010, display: "flex", flexDirection: "column" }} onClick={() => setChatSendTarget(null)}>
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147483010, display: "flex", flexDirection: "column" }} onClick={() => setChatSendTarget(null)}>
           <div style={{ background: t.surface, width: "100%", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 -4px 24px rgba(0,0,0,0.3)" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
               <span style={{ fontWeight: 700, fontSize: 17, color: t.text }}>Send to Chat</span>
