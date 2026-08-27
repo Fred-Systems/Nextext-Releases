@@ -1087,8 +1087,11 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
         <StatusViewerModal statusId={viewerModalStatusId} contacts={acceptedContacts} onClose={() => setViewerModalStatusId(null)} t={t} />
       )}
 
-      {/* Shared in-app camera (identical to the chats top-bar camera) */}
-      {cameraCapture && (
+      {/* Shared in-app camera (identical to the chats top-bar camera).
+          Portaled to document.body so it always renders on top of every screen
+          in the stack (previously it was nested inside the status screen, which
+          left it hidden behind other mounted screens). */}
+      {cameraCapture && createPortal(
         <CameraCapture
           t={t}
           myUid={myUid}
@@ -1103,7 +1106,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             setWaitForVideo(type === "video");
             if (caption) setPostText((prev) => (prev ? prev + " " + caption : caption));
           }}
-        />
+        />,
+        document.body
       )}
 
       {/* Camera overlay — portaled to document.body so it escapes the scaled

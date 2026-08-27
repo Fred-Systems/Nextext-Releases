@@ -3616,6 +3616,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
                 <div
                   onClick={() => {
+                    if (galleryActive) return;
                     setShowEmojiPicker(false);
                     if (sysConfig?.nativeGallery) {
                       setGalleryActive(true);
@@ -3628,6 +3629,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   style={{ width: Math.max(30, Math.round(32 * composerHeight)), height: Math.max(30, Math.round(32 * composerHeight)), borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: galleryActive ? t.primaryLight : "transparent" }}
                 >
                   <ImageIcon size={Math.max(22, Math.round(25 * composerHeight))} color={galleryActive ? t.primary : t.textMuted} />
+                </div>
+              )}
+              {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
+                <div
+                  onClick={() => { setShowEmojiPicker(false); closeAttach(); openCamera(); }}
+                  style={{ width: Math.max(30, Math.round(32 * composerHeight)), height: Math.max(30, Math.round(32 * composerHeight)), borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: showCamera ? t.primaryLight : "transparent" }}
+                >
+                  <Camera size={Math.max(22, Math.round(25 * composerHeight))} color={showCamera ? t.primary : t.textMuted} />
                 </div>
               )}
                <textarea

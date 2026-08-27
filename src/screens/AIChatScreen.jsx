@@ -5,6 +5,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
+import { deleteChatCompletely } from "../firebase/chats";
 import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, useSystemConfigHook, describeAIError } from "../firebase/ai";
 import { useAIIconStyle, getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
 import Avatar from "../components/Avatar";
@@ -645,6 +646,10 @@ export default function AIChatScreen({ myUid, onBack }) {
               <Trash2 size={16} color="#FF3B30" />
               <span style={{ fontSize: 14, color: "#FF3B30" }}>Clear chat</span>
             </div>
+            <div onClick={() => { setShowSettings(false); if (window.confirm("Delete this NexText AI chat permanently? This cannot be undone.")) { deleteChatCompletely(chatId).catch(() => {}); onBack(); } }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+              <Trash2 size={16} color="#FF3B30" />
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#FF3B30" }}>Delete chat</span>
+            </div>
           </div>
         )}
       </div>
@@ -898,13 +903,13 @@ export default function AIChatScreen({ myUid, onBack }) {
                 <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={34} useRealtime />
               </div>
             )}
-            <div onClick={handleSend} style={{ width: 38, height: 38, borderRadius: "50%", background: input.trim() && !sending ? t.primary : t.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "default" }}>
+            <div onClick={handleSend} style={{ width: 38, height: 38, flexShrink: 0, marginLeft: 2, borderRadius: "50%", background: input.trim() && !sending ? t.primary : t.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "default" }}>
               <Send size={17} color={input.trim() && !sending ? "#fff" : t.textMuted} />
             </div>
           </>
         ) : (
           <>
-            <div onClick={handleSend} style={{ width: 38, height: 38, borderRadius: "50%", background: input.trim() && !sending ? t.primary : t.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "default" }}>
+            <div onClick={handleSend} style={{ width: 38, height: 38, flexShrink: 0, marginLeft: 2, borderRadius: "50%", background: input.trim() && !sending ? t.primary : t.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "default" }}>
               <Send size={17} color={input.trim() && !sending ? "#fff" : t.textMuted} />
             </div>
             {sttEnabled && !globalSettings?.hideStt && (
