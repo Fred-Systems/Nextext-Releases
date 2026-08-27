@@ -881,12 +881,12 @@ export default function AIChatScreen({ myUid, onBack }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderTop: `1px solid ${t.border}`, background: t.surface }}>
         <input ref={imageInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageAnalysis} />
         {!visionDisabled && (
-          <div onClick={() => imageInputRef.current?.click()} style={{ width: 34, height: 34, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-            <ImageIcon size={16} color={t.primary} />
+          <div onClick={() => imageInputRef.current?.click()} style={{ width: 30, height: 30, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+            <ImageIcon size={15} color={t.primary} />
           </div>
         )}
-        <div onClick={() => setShowEmojiPicker(!showEmojiPicker)} style={{ width: 34, height: 34, borderRadius: "50%", background: showEmojiPicker ? t.primaryLight : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-          <Smile size={16} color={showEmojiPicker ? t.primary : t.textMuted} />
+        <div onClick={() => setShowEmojiPicker(!showEmojiPicker)} style={{ width: 30, height: 30, borderRadius: "50%", background: showEmojiPicker ? t.primaryLight : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+          <Smile size={15} color={showEmojiPicker ? t.primary : t.textMuted} />
         </div>
         <input
           value={input}
@@ -894,7 +894,7 @@ export default function AIChatScreen({ myUid, onBack }) {
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
           placeholder="Ask NexText AI…"
           disabled={sending}
-          style={{ flex: 1, padding: "10px 14px", borderRadius: 20, border: `1px solid ${t.border}`, fontSize: 14, background: t.bg, color: t.text, outline: "none" }}
+          style={{ flex: 1, minWidth: 0, padding: "10px 14px", borderRadius: 20, border: `1px solid ${t.border}`, fontSize: 14, background: t.bg, color: t.text, outline: "none" }}
         />
         {composerButtonOrder === "voice-stt" ? (
           <>

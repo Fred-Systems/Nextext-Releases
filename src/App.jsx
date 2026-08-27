@@ -2847,6 +2847,40 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const allStatusUids = [myUid, ...contactUids];
   const allStatuses = useStatuses(myUid ? allStatusUids : []);
 
+  // Device "Share to NexText" receiver. When another app shares text/media to
+  // NexText, the native layer stores it (and fires `nextextShare`); we surface a
+  // chooser to post it to Status or send it to a contact.
+  const [sharePayload, setSharePayload] = useState(null);
+  const [shareText, setShareText] = useState("");
+  useEffect(() => {
+    const consume = (detail) => {
+      try {
+        const data = typeof detail === "string" ? JSON.parse(detail) : detail;
+        if (!data) return;
+        const text = [data.subject, data.text].filter(Boolean).join("\n\n");
+        setShareText(text);
+        setSharePayload(data);
+      } catch { /* ignore malformed payload */ }
+    };
+    try {
+      const pending = window.NexTextNativeBridge?.getPendingShare?.();
+      if (pending) { consume(pending); window.NexTextNativeBridge.clearPendingShare(); }
+    } catch { /* no native bridge */ }
+    const onEvt = (e) => consume(e.detail);
+    window.addEventListener("nextextShare", onEvt);
+    return () => window.removeEventListener("nextextShare", onEvt);
+  }, []);
+  const sendShareToContact = (uid, contact) => {
+    try { window.__nextextComposePrefill = shareText; } catch { /* best-effort */ }
+    setSharePayload(null);
+    openChat(null, uid, contact);
+  };
+  const shareToStatus = () => {
+    try { window.__nextextStatusPrefill = { text: shareText, uris: (sharePayload?.uris) || [] }; } catch { /* best-effort */ }
+    setSharePayload(null);
+    setScreen("status");
+  };
+
   const VIEWED_KEY = "nextext_status_viewed";
   let unreadStatusCount = 0;
   if (myUid) {
@@ -4141,6 +4175,32 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
         />
       )}
       {/* DIAG log feature removed */}
+
+      {sharePayload && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setSharePayload(null)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 360, maxHeight: "85vh", background: t.surface, borderRadius: 16, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ padding: "14px 16px", fontWeight: 700, fontSize: 16, color: t.text, borderBottom: `1px solid ${t.border}` }}>Share to NexText</div>
+            <div style={{ padding: 14 }}>
+              <textarea value={shareText} onChange={(e) => setShareText(e.target.value)} placeholder="Message…" style={{ width: "100%", minHeight: 80, resize: "none", borderRadius: 10, border: `1px solid ${t.border}`, padding: 10, fontSize: 14, color: t.text, boxSizing: "border-box", background: t.bg }} />
+              {sharePayload.uris?.length > 0 && (
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 8 }}>{sharePayload.uris.length} attachment{sharePayload.uris.length > 1 ? "s" : ""} included</div>
+              )}
+            </div>
+            <div style={{ padding: "0 14px 10px" }}>
+              <button onClick={shareToStatus} style={{ width: "100%", padding: "11px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 10 }}>Post to Status</button>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.textMuted, marginBottom: 6 }}>Send to chat</div>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 14px 14px" }}>
+              {(contacts || []).filter((c) => c.status === "accepted").map((c) => (
+                <div key={c.uid} onClick={() => sendShareToContact(c.uid, c)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
+                  <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={36} />
+                  <span style={{ fontSize: 14, color: t.text, fontWeight: 600 }}>{c.profile?.displayName}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
     </>

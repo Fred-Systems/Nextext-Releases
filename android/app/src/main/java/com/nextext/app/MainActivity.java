@@ -51,11 +51,72 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    // Device "Share to NexText" (ACTION_SEND / ACTION_SEND_MULTIPLE). Captures
+    // the shared text + any media URIs, persists them so the web app can read
+    // them on first paint, and fires a window event when the WebView is ready.
+    private void handleIncomingShare(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        if (Intent.ACTION_SEND.equals(action) || Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            try {
+                String text = intent.getStringExtra(Intent.EXTRA_TEXT);
+                String subject = intent.getStringExtra(Intent.EXTRA_SUBJECT);
+                ArrayList<String> uris = new ArrayList<>();
+                if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+                    ArrayList<android.os.Parcelable> list = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+                    if (list != null) {
+                        for (android.os.Parcelable p : list) {
+                            if (p instanceof android.net.Uri) uris.add(((android.net.Uri) p).toString());
+                        }
+                    }
+                } else {
+                    android.os.Parcelable p = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                    if (p instanceof android.net.Uri) uris.add(((android.net.Uri) p).toString());
+                }
+                if ((text == null || text.isEmpty()) && (subject == null || subject.isEmpty()) && uris.isEmpty()) {
+                    intent.removeExtra(Intent.EXTRA_TEXT);
+                    intent.removeExtra(Intent.EXTRA_STREAM);
+                    return;
+                }
+                StringBuilder sb = new StringBuilder();
+                sb.append("{\"text\":").append(esc(text)).append(",\"subject\":").append(esc(subject)).append(",\"uris\":[");
+                for (int i = 0; i < uris.size(); i++) {
+                    if (i > 0) sb.append(",");
+                    sb.append(esc(uris.get(i)));
+                }
+                sb.append("]}");
+                String json = sb.toString();
+                android.content.SharedPreferences prefs = getSharedPreferences("NexTextPrefs", MODE_PRIVATE);
+                prefs.edit().putString("nextext_pending_share", json).apply();
+                if (bridge != null && bridge.getWebView() != null) {
+                    String js = "window.dispatchEvent(new CustomEvent('nextextShare', {detail: " + json + "}));";
+                    bridge.getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception ignored) { /* ignore malformed share intents */ }
+        }
+    }
+
+    private static String esc(String s) {
+        if (s == null) return "null";
+        StringBuilder b = new StringBuilder("\"");
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '"' || c == '\\') { b.append('\\'); b.append(c); }
+            else if (c == '\n') b.append("\\n");
+            else if (c == '\r') b.append("\\r");
+            else if (c == '\t') b.append("\\t");
+            else b.append(c);
+        }
+        b.append("\"");
+        return b.toString();
+    }
+
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
         handleNotificationTap(intent);
+        handleIncomingShare(intent);
     }
 
     @Override
@@ -106,6 +167,7 @@ public class MainActivity extends BridgeActivity {
 
         // Cold start from a tapped notification → route into that chat.
         handleNotificationTap(getIntent());
+        handleIncomingShare(getIntent());
 
         // Apply saved app-icon profile on cold start. On a fresh install the
         // MainActivity is the only enabled launcher entry, so this is a no-op.
@@ -305,6 +367,22 @@ public class MainActivity extends BridgeActivity {
                 android.content.SharedPreferences prefs = getSharedPreferences("NexTextPrefs", MODE_PRIVATE);
                 return prefs.getString("nextext_notes_keyword", "");
             } catch (Exception ignored) { return ""; }
+        }
+
+        @JavascriptInterface
+        public String getPendingShare() {
+            try {
+                android.content.SharedPreferences prefs = getSharedPreferences("NexTextPrefs", MODE_PRIVATE);
+                return prefs.getString("nextext_pending_share", "");
+            } catch (Exception ignored) { return ""; }
+        }
+
+        @JavascriptInterface
+        public void clearPendingShare() {
+            try {
+                android.content.SharedPreferences prefs = getSharedPreferences("NexTextPrefs", MODE_PRIVATE);
+                prefs.edit().remove("nextext_pending_share").apply();
+            } catch (Exception ignored) { /* best-effort */ }
         }
     }
 }

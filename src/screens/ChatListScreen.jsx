@@ -1203,7 +1203,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         />
       )}
 
-      {showAddContact && <AddContactSheet myUid={myUid} onClose={() => setShowAddContact(false)} />}
+      {showAddContact && <AddContactSheet myUid={myUid} acceptedContacts={acceptedContacts} onOpenChat={onOpenChat} onClose={() => setShowAddContact(false)} />}
       {showFindFriends && <FindFriendsScreen myUid={myUid} onBack={() => setShowFindFriends(false)} />}
       {showNewGroup && (
         <NewGroupScreen
@@ -1597,7 +1597,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   );
 }
 
-function AddContactSheet({ myUid, onClose }) {
+function AddContactSheet({ myUid, onClose, acceptedContacts = [], onOpenChat }) {
   const { t } = useTheme();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -1641,9 +1641,18 @@ function AddContactSheet({ myUid, onClose }) {
               <div style={{ fontWeight: 600, color: t.text, fontSize: 14.5 }}>{u.displayName}</div>
               <div style={{ fontSize: 12, color: t.textMuted }}>@{u.username}</div>
             </div>
-            <button disabled={sentTo.includes(u.uid)} onClick={() => handleAdd(u.uid)} style={{ padding: "7px 14px", borderRadius: 16, border: "none", background: sentTo.includes(u.uid) ? t.border : t.primary, color: sentTo.includes(u.uid) ? t.textMuted : t.bubbleMeText, fontSize: 12.5, fontWeight: 700, cursor: sentTo.includes(u.uid) ? "default" : "pointer" }}>
-              {sentTo.includes(u.uid) ? "Sent" : "Add"}
-            </button>
+            {acceptedContacts.some((c) => c.uid === u.uid) ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted }}>Added</span>
+                <div onClick={() => onOpenChat(null, u.uid, { uid: u.uid, profile: { displayName: u.displayName, photoURL: u.photoURL, username: u.username } })} style={{ width: 34, height: 34, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }} title="Chat">
+                  <MessageCircle size={16} color={t.primary} />
+                </div>
+              </div>
+            ) : (
+              <button disabled={sentTo.includes(u.uid)} onClick={() => handleAdd(u.uid)} style={{ padding: "7px 14px", borderRadius: 16, border: "none", background: sentTo.includes(u.uid) ? t.border : t.primary, color: sentTo.includes(u.uid) ? t.textMuted : t.bubbleMeText, fontSize: 12.5, fontWeight: 700, cursor: sentTo.includes(u.uid) ? "default" : "pointer" }}>
+                {sentTo.includes(u.uid) ? "Sent" : "Add"}
+              </button>
+            )}
           </div>
         ))}
         {query.trim().length >= 2 && results.length === 0 && <div style={{ fontSize: 13, color: t.textMuted, padding: "8px 4px" }}>No users found.</div>}

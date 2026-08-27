@@ -1212,6 +1212,19 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     autoResizeComposer();
   }, [composerHeight]);
 
+  // When a chat is opened from a device "Share to NexText", prefill the
+  // composer with the shared text, then clear the global.
+  useEffect(() => {
+    try {
+      const prefill = window.__nextextComposePrefill;
+      if (prefill) {
+        setInput(prefill);
+        autoResizeComposer();
+        window.__nextextComposePrefill = "";
+      }
+    } catch { /* no prefill */ }
+  }, [chatId]);
+
   const handleInputChange = (val) => {
     setInput(val);
     autoResizeComposer();
@@ -3648,6 +3661,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                       <span style={{ fontWeight: 700, fontSize: 13.5, color: t.primary }}>Photos</span>
                     </div>
                   </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                    <span style={{ color: t.textMuted, fontSize: 12 }}>Disappears after</span>
+                    {[1, 3, 5, 10].map((n) => (
+                      <div key={n} onClick={() => setDisappearingViews(n)} style={{ padding: "4px 9px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", color: disappearingViews === n ? "#fff" : t.text, background: disappearingViews === n ? "#FF3B30" : t.bg }}>{n}×</div>
+                    ))}
+                    <div onClick={() => setDisappearingViews(0)} style={{ padding: "4px 9px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", color: disappearingViews === 0 ? "#fff" : t.text, background: disappearingViews === 0 ? "#FF3B30" : t.bg }}>Off</div>
+                  </div>
                   <button
                     disabled={galleryPicks.length === 0}
                     onClick={async () => {
@@ -3655,6 +3675,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                       setComposerGalleryOpen(false);
                       setGalleryPicks([]);
                       for (const p of picks) { try { await sendFileDirectly(p.file); } catch (err) { console.warn("gallery send failed", err); } }
+                      setDisappearingViews(0);
                     }}
                     style={{ width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: galleryPicks.length ? t.primary : t.border, color: galleryPicks.length ? t.bubbleMeText : t.textMuted, fontWeight: 700, fontSize: 14, cursor: galleryPicks.length ? "pointer" : "default" }}
                   >
@@ -4119,8 +4140,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               </div>
             )}
           </div>
-          <div style={{ flexShrink: 0, padding: "10px 12px calc(16px + var(--safe-bottom))" }}>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 8, background: t.surface, borderRadius: 24, padding: "6px 6px 6px 16px", border: `1px solid ${t.border}` }}>
+           <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 12px 0", flexWrap: "wrap" }}>
+             <span style={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }}>Disappears after</span>
+             {[1, 3, 5, 10].map((n) => (
+               <div key={n} onClick={() => setDisappearingViews(n)} style={{ padding: "4px 9px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", color: disappearingViews === n ? "#fff" : "rgba(255,255,255,0.8)", background: disappearingViews === n ? "#FF3B30" : "rgba(255,255,255,0.15)" }}>{n}×</div>
+             ))}
+             <div onClick={() => setDisappearingViews(0)} style={{ padding: "4px 9px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", color: disappearingViews === 0 ? "#fff" : "rgba(255,255,255,0.8)", background: disappearingViews === 0 ? "#FF3B30" : "rgba(255,255,255,0.15)" }}>Off</div>
+           </div>
+           <div style={{ flexShrink: 0, padding: "10px 12px calc(16px + var(--safe-bottom))" }}>
+             <div style={{ display: "flex", alignItems: "flex-end", gap: 8, background: t.surface, borderRadius: 24, padding: "6px 6px 6px 16px", border: `1px solid ${t.border}` }}>
               <textarea
                 value={captionText}
                 onChange={(e) => setCaptionText(e.target.value)}

@@ -215,6 +215,19 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const [bgColorIdx, setBgColorIdx] = useState(0);
   const [fontIdx, setFontIdx] = useState(0);
   const [postMode, setPostMode] = useState("text");
+  // Device "Share to NexText" → open the status composer prefilled with the
+  // shared text when the Status tab mounts.
+  useEffect(() => {
+    try {
+      const p = window.__nextextStatusPrefill;
+      if (p && p.text) {
+        setPostMode("text");
+        setPostText(p.text);
+        setShowPost(true);
+        window.__nextextStatusPrefill = "";
+      }
+    } catch { /* no prefill */ }
+  }, []);
   const [posting, setPosting] = useState(false);
   const [viewStoryOwner, setViewStoryOwner] = useState(null);
   const [viewedMap, setViewedMap] = useState(() => getStoredViewed());
