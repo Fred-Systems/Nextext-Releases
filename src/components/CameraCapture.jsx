@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from "react";
-import { createPortal } from "react-dom";
 import { FlipHorizontal2, Check, Users } from "lucide-react";
 import Avatar from "./Avatar";
 import { uploadChatFile } from "../supabase/media";
@@ -52,10 +51,11 @@ export default function CameraCapture({
   const chunksRef = useRef([]);
   const pinchRef = useRef(null);
 
-  const openCamera = async () => {
+  const openCamera = async (forceFacing) => {
     setError("");
     setShowCamera(true);
     setZoom(1);
+    const useFacing = forceFacing || facing;
     try {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((tr) => tr.stop());
@@ -63,7 +63,7 @@ export default function CameraCapture({
       }
       const wantsVideo = mode === "video";
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facing },
+        video: { facingMode: useFacing },
         audio: wantsVideo,
       });
       streamRef.current = stream;
@@ -90,14 +90,17 @@ export default function CameraCapture({
     // eslint-disable-next-line
   }, []);
 
-  const switchFacing = () => {
-    setFacing((f) => (f === "environment" ? "user" : "environment"));
+  const switchFacing = async () => {
+    const next = facing === "environment" ? "user" : "environment";
+    setFacing(next);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((tr) => tr.stop());
       streamRef.current = null;
     }
-    // Immediately re-open without delay to avoid permission issues
-    openCamera();
+    // Release the camera fully before reopening to avoid "access denied" on
+    // older WebViews that hold the device handle briefly after stop().
+    await new Promise((r) => setTimeout(r, 150));
+    openCamera(next);
   };
   const cycleFilter = () => setFilterIdx((i) => (i + 1) % GLOBAL_CAMERA_FILTERS.length);
   const zoomBy = (d) => setZoom((z) => Math.min(4, Math.max(1, Math.round((z + d) * 10) / 10)));
@@ -281,7 +284,7 @@ export default function CameraCapture({
 
   // BUILDER target: capture hands media straight back to caller.
   if (target === "builder" && captured && previewStep) {
-    return createPortal(
+    return (
       <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
           <span onClick={discard} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Discard</span>
@@ -305,14 +308,13 @@ export default function CameraCapture({
           <div onClick={discard} style={{ flex: 1, padding: 13, borderRadius: 12, border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>Retake</div>
           <div onClick={() => { onCaptured && onCaptured({ blob: captured.blob, type: captured.type, ext: captured.ext, mime: captured.mime, caption: caption.trim() }); closeAll(); }} style={{ flex: 1, padding: 13, borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>Add to post</div>
         </div>
-      </div>,
-      document.body
-    );
+      </div>
+     );
   }
 
   // LIVE CAMERA
   if (showCamera && !captured) {
-    return createPortal(
+    return (
       <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
           <span onClick={closeAll} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Cancel</span>
@@ -345,14 +347,13 @@ export default function CameraCapture({
             </div>
           )}
         </div>
-      </div>,
-      document.body
-    );
+      </div>
+     );
   }
 
   // PREVIEW (caption + Retake / Status / Send) — chat & status targets
   if (captured && previewStep) {
-    return createPortal(
+    return (
       <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
           <span onClick={discard} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Discard</span>
@@ -372,14 +373,13 @@ export default function CameraCapture({
           <div onClick={doPostStatus} style={{ flex: 1, padding: 13, borderRadius: 12, border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer", opacity: posting ? 0.6 : 1 }}>{posting ? "Posting…" : "Status"}</div>
           <div onClick={() => setPreviewStep(false)} style={{ flex: 1, padding: 13, borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>Send</div>
         </div>
-      </div>,
-      document.body
-    );
+      </div>
+     );
   }
 
   // SEND TO… (chat list + Post on Status) — chat & status targets
   if (captured && !previewStep) {
-    return createPortal(
+    return (
       <div style={{ position: "fixed", inset: 0, background: t.bg, zIndex: 2147483000, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", background: t.surface, flexShrink: 0, borderBottom: `1px solid ${t.border}` }}>
           <span onClick={discard} style={{ color: t.text, fontSize: 15, cursor: "pointer" }}>Cancel</span>
@@ -425,9 +425,8 @@ export default function CameraCapture({
             <div onClick={sendToSelected} style={{ flex: 1, padding: "12px 14px", borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>Send to {selected.length}</div>
           </div>
         )}
-      </div>,
-      document.body
-    );
+      </div>
+     );
   }
 
   return null;

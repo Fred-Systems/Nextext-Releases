@@ -165,7 +165,7 @@ function StatusViewerModal({ statusId, contacts, onClose, t }) {
   );
 }
 
-export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChange, initialViewStatuses, statusOrigin, onConsumeInitialView }) {
+export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryViewerChange, initialViewStatuses, statusOrigin, onConsumeInitialView }) {
   const { t } = useTheme();
   const { contacts } = useContacts(myUid);
   const globalSettings = useGlobalSettings();
@@ -415,9 +415,10 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
             mediaType: "image",
             backgroundColor: null,
             fontFamily: null,
-            durationMs: durationSeconds * 1000,
-            textOverlay: textOverlay.trim() || null,
-          });
+           durationMs: durationSeconds * 1000,
+           textOverlay: textOverlay.trim() || null,
+           allowDownload,
+         });
         }
         setPostImages([]);
       }
@@ -455,6 +456,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           bgAudioVolume: bgAudioVol,
           videoVolume: vidVol,
           waitForVideo: isVideo && waitForVideo,
+          allowDownload,
         });
       }
 
@@ -901,6 +903,11 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           <div onClick={() => openPostSheet("text")} style={{ padding: "10px 18px", borderRadius: 24, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
             Post
           </div>
+          {!hideStatusCamera && (
+            <div onClick={() => setCameraCapture({ target: "builder" })} title="Camera" style={{ width: 40, height: 40, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+              <Camera size={20} color={t.primary} />
+            </div>
+          )}
         </div>
 
         {myStatuses.length > 0 && myStatuses.map((s, idx) => (
@@ -950,7 +957,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
                 {latest.mediaURL && (
                   <div style={{ width: 38, height: 38, borderRadius: 6, overflow: "hidden", flexShrink: 0, border: `1px solid ${t.border}` }}>
                     {latest.mediaType === "video" ? (
-                      <video src={latest.mediaURL} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                       <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     )}
@@ -966,6 +973,52 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           })
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: statusPreviewSize === "compact" ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, padding: "4px 14px 14px" }}>
+            {/* First card is always the user's own status (or a "Post status" prompt) */}
+            {myStatuses.length > 0 ? (
+              (() => {
+                const latest = myStatuses[myStatuses.length - 1];
+                const viewed = true;
+                return (
+                  <div
+                    key="__own"
+                    onClick={() => openStory(myStatuses, myUid)}
+                    style={{ position: "relative", borderRadius: 14, overflow: "hidden", border: `2px solid ${t.primary}`, cursor: "pointer", boxSizing: "border-box", paddingBottom: "133.33%", background: "#000", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}
+                  >
+                    {latest.mediaURL ? (
+                      latest.mediaType === "video" ? (
+                         <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : (
+                        <img src={latest.mediaURL} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                      )
+                    ) : (
+                      <div style={{ position: "absolute", inset: 0, background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+                        <span style={{ color: latest.backgroundColor ? "#fff" : t.text, fontSize: 13, fontWeight: 700, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical" }}>{latest.text || "My status"}</span>
+                      </div>
+                    )}
+                    <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "8px 10px", background: "linear-gradient(180deg, rgba(0,0,0,0.55), rgba(0,0,0,0))" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <Avatar photoURL={myPhoto} name={myName} uid={myUid} size={22} hasActiveStatus statusViewed={viewed} blockStatus={blockStatus} />
+                        <span style={{ color: "#fff", fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{myName || "My status"}</span>
+                      </div>
+                    </div>
+                    <div style={{ position: "absolute", bottom: 8, right: 10, color: "#fff", fontSize: 10.5, textShadow: "0 1px 2px rgba(0,0,0,0.6)" }}>
+                      {myStatuses.length} · {timeAgo(latest.createdAt)}
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
+              <div
+                key="__own_empty"
+                onClick={() => openPostSheet("text")}
+                style={{ position: "relative", borderRadius: 14, overflow: "hidden", border: `2px dashed ${t.primary}`, cursor: "pointer", boxSizing: "border-box", paddingBottom: "133.33%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: 8 }}>
+                  <Plus size={26} color={t.primary} />
+                  <span style={{ color: t.primary, fontSize: 12.5, fontWeight: 700, textAlign: "center" }}>Post status</span>
+                </div>
+              </div>
+            )}
             {Object.entries(grouped).map(([uid, items]) => {
               const contact = acceptedContacts.find((c) => c.uid === uid);
               const name = contact?.profile?.displayName || "Unknown";
@@ -975,11 +1028,12 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
                 <div
                   key={uid}
                   onClick={() => openStory(items, uid)}
-                  style={{ position: "relative", borderRadius: 14, overflow: "hidden", border: `2px solid ${viewed ? t.border : t.primary}`, cursor: "pointer", aspectRatio: "3 / 4", background: "#000", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}
+                  style={{ position: "relative", borderRadius: 14, overflow: "hidden", border: `2px solid ${viewed ? t.border : t.primary}`, cursor: "pointer", boxSizing: "border-box", paddingBottom: "133.33%", background: "#000", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}
                 >
                   {latest.mediaURL ? (
                     latest.mediaType === "video" ? (
-                      <video src={latest.mediaURL} muted playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                       <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+
                     ) : (
                       <img src={latest.mediaURL} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                     )
@@ -1057,7 +1111,7 @@ export default function StatusScreen({ myUid, myName, onBack, onStoryViewerChang
           relative to that ancestor, which made the old camera render tiny in a
           corner). Now it's truly full-screen. */}
         {showCamera && createPortal(
-          <div style={{ position: "fixed", inset: 0, width: "100vw", height: "100dvh", background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
+          <div style={{ position: "fixed", inset: 0, width: "100%", height: "100vh", background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "calc(12px + var(--safe-top)) 16px 12px", minHeight: 44, flexShrink: 0, position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
               <X size={22} color="#fff" onClick={() => { setShowCamera(false); stopCameraStream(); }} style={{ cursor: "pointer" }} />
               <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: 6 }}>

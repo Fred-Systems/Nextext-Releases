@@ -406,6 +406,9 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const notArchived = chats.filter((c) => !(c.archivedBy || []).includes(myUid));
+  // Hide any stray duplicate AI chat: the assistant must only ever appear as
+  // the single "ai_" chat opened by the AI widget.
+  const visibleChats = notArchived.filter((c) => !(c.participants || []).includes(AI_CONTACT_UID) || c.id?.startsWith("ai_"));
   const archived = chats.filter((c) => (c.archivedBy || []).includes(myUid));
 
   const chatDisplayName = (chat) => {
@@ -421,7 +424,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const aiApproved = userDoc?.aiApproved && !sysConfig?.aiGloballyDisabled && !sysConfig?.hideAiEverywhere && userDoc?.restrictions?.blockAI !== true;
 
   const tabFiltered = (() => {
-    let base = notArchived.filter((c) => !c.lockedBy?.[myUid] || lockedChatsUnlocked);
+    let base = visibleChats.filter((c) => !c.lockedBy?.[myUid] || lockedChatsUnlocked);
     if (effectiveTab === "unread") base = base.filter((c) => c.unreadCount?.[myUid] > 0);
     if (effectiveTab === "favorites") base = base.filter((c) => (c.favoritedBy || []).includes(myUid));
     if (effectiveTab === "groups") base = base.filter((c) => c.type === "group");
@@ -523,11 +526,13 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const handleFabDragStart = (e) => {
+    if (localStorage.getItem("nextext_fab_locked") === "1") return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     const start = { x: clientX, y: clientY };
     const startPos = { bottom: fabPos?.bottom || (hideNav ? 20 : 84), right: fabPos?.right || 20 };
     const onMove = (me) => {
+      if (me.cancelable) me.preventDefault();
       const cx = me.touches ? me.touches[0].clientX : me.clientX;
       const cy = me.touches ? me.touches[0].clientY : me.clientY;
       const dx = cx - start.x;
@@ -541,8 +546,10 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       window.removeEventListener("mouseup", onEnd);
       window.removeEventListener("touchmove", onMove);
       window.removeEventListener("touchend", onEnd);
+      document.body.style.overflow = "";
       if (fabPos) localStorage.setItem("nextext_fab_pos", JSON.stringify(fabPos));
     };
+    document.body.style.overflow = "hidden";
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onEnd);
     window.addEventListener("touchmove", onMove, { passive: false });
@@ -551,11 +558,13 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const handleAiDragStart = (e) => {
+    if (localStorage.getItem("nextext_ai_locked") === "1") return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     const start = { x: clientX, y: clientY };
     const startPos = { top: aiPos?.top || (window.innerHeight / 2 - 25), right: aiPos?.right || 20 };
     const onMove = (me) => {
+      if (me.cancelable) me.preventDefault();
       const cx = me.touches ? me.touches[0].clientX : me.clientX;
       const cy = me.touches ? me.touches[0].clientY : me.clientY;
       const dx = cx - start.x;
@@ -569,8 +578,10 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       window.removeEventListener("mouseup", onEnd);
       window.removeEventListener("touchmove", onMove);
       window.removeEventListener("touchend", onEnd);
+      document.body.style.overflow = "";
       if (aiPos) localStorage.setItem("nextext_ai_pos", JSON.stringify(aiPos));
     };
+    document.body.style.overflow = "hidden";
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onEnd);
     window.addEventListener("touchmove", onMove, { passive: false });

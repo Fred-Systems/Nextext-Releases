@@ -3812,7 +3812,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           if (key === "status") return (
             <div key="status" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Status">
-                <StatusScreen myUid={myUid} myName={auth.userDoc?.displayName || auth.userDoc?.username} onBack={() => { setScreen("list"); setActiveNavTab("chats"); setStoryViewerOpen(false); }} onStoryViewerChange={setStoryViewerOpen} initialViewStatuses={initialViewStatuses} statusOrigin={statusOrigin} onConsumeInitialView={() => setInitialViewStatuses(null)} />
+                <StatusScreen myUid={myUid} myName={auth.userDoc?.displayName || auth.userDoc?.username} myPhoto={auth.userDoc?.photoURL} onBack={() => { setScreen("list"); setActiveNavTab("chats"); setStoryViewerOpen(false); }} onStoryViewerChange={setStoryViewerOpen} initialViewStatuses={initialViewStatuses} statusOrigin={statusOrigin} onConsumeInitialView={() => setInitialViewStatuses(null)} />
               </PageErrorBoundary>
             </div>
           );

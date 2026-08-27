@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, ChevronRight, Eye, Send } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Eye, Send, Download, Volume2, VolumeX } from "lucide-react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useTheme } from "../theme/ThemeContext";
@@ -74,7 +74,13 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const [replySent, setReplySent] = useState(false);
   const [extraProfiles, setExtraProfiles] = useState({});
   const [completedIndices, setCompletedIndices] = useState(new Set());
+  const [muted, setMuted] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const SPEED_PRESETS = [1, 1.5, 2, 3];
   const touchStartRef = useRef({ x: 0, y: 0 });
+  const pressTimerRef = useRef(null);
+  const holdFiredRef = useRef(false);
+  const pressStartRef = useRef(0);
 
   const fullUnmount = useCallback(() => {
     completedRef.current = true;
@@ -106,6 +112,53 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const [liveVideoDuration, setLiveVideoDuration] = useState(null);
   useEffect(() => { setLiveVideoDuration(null); }, [idx]);
   const duration = (current?.mediaType === "video" || current?.mediaType === "voice") && liveVideoDuration ? liveVideoDuration : getSlideDuration(current);
+
+  // Mark this slide as "viewed" (green circle) after the user has seen even a
+  // second of it — matching WhatsApp behaviour, where a partially-watched story
+  // segment is no longer shown as unread.
+  useEffect(() => {
+    if (!current) return;
+    const tmo = setTimeout(() => {
+      setCompletedIndices((prev) => {
+        if (prev.has(idx)) return prev;
+        const n = new Set(prev);
+        n.add(idx);
+        return n;
+      });
+    }, 1000);
+    return () => clearTimeout(tmo);
+  }, [idx, current?.id]);
+
+  // Tap = advance to next; press-and-hold = pause (release resumes). A horizontal
+  // swipe still goes back/forward and a downward swipe closes.
+  const startPress = (clientX, clientY, multiTouch) => {
+    if (multiTouch) {
+      if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
+      holdFiredRef.current = false;
+      return;
+    }
+    touchStartRef.current = { x: clientX, y: clientY };
+    pressStartRef.current = Date.now();
+    holdFiredRef.current = false;
+    if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
+    pressTimerRef.current = setTimeout(() => { holdFiredRef.current = true; setPaused(true); }, 200);
+  };
+  const endPress = (clientX, clientY) => {
+    if (pressTimerRef.current) { clearTimeout(pressTimerRef.current); pressTimerRef.current = null; }
+    const dx = clientX - touchStartRef.current.x;
+    const dy = clientY - touchStartRef.current.y;
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
+      if (dx < 0 && idx < statuses.length - 1) advanceRef.current?.();
+      else if (dx > 0 && idx > 0) goBack();
+      return;
+    }
+    if (Math.abs(dy) > 80 && dy > 0) { onClose(); return; }
+    if (holdFiredRef.current) {
+      setPaused(false); // resume after hold-to-pause
+    } else {
+      advanceRef.current?.(); // quick tap -> next status
+    }
+  };
 
   // Loop breaker + clean mount reset: reset the active index timer state to
   // zero on mount, clearing any stray timers so the first slide's filling line
@@ -326,6 +379,8 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     if (current?.mediaType !== "video" || !videoRef.current) return;
     const v = videoRef.current;
     v.volume = (current.videoVolume ?? 100) / 100;
+    v.muted = muted;
+    v.playbackRate = speed;
     if (paused) {
       v.pause();
       if (bgAudioRef.current) bgAudioRef.current.pause();
@@ -333,7 +388,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       v.play().catch(() => {});
       if (bgAudioRef.current) bgAudioRef.current.play().catch(() => {});
     }
-  }, [paused, current?.mediaType, current?.videoVolume]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [paused, current?.mediaType, current?.videoVolume, muted, speed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (current?.mediaType !== "voice" || !voiceRef.current) return;
@@ -380,6 +435,22 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
   if (!statuses[idx]) return null;
 
+  const handleDownload = async () => {
+    if (!current?.mediaURL) return;
+    try {
+      const resp = await fetch(current.mediaURL);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `nextext-status-${current.id}.${current.mediaType === "video" ? "mp4" : current.mediaType === "voice" ? "webm" : "jpg"}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch { /* best effort */ }
+  };
+
   const timeAgo = (ts) => {
     if (!ts?.toDate) return "";
     const mins = Math.floor((Date.now() - ts.toDate().getTime()) / 60000);
@@ -395,20 +466,8 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   return createPortal(
     <div
       style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: bg, zIndex: 300, display: "flex", flexDirection: "column", userSelect: "none" }}
-      onTouchStart={(e) => { touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
-      onTouchEnd={(e) => {
-        const dx = e.changedTouches[0].clientX - touchStartRef.current.x;
-        const dy = e.changedTouches[0].clientY - touchStartRef.current.y;
-        if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
-          if (dx < 0 && idx < statuses.length - 1) {
-            advanceRef.current?.();
-          } else if (dx > 0 && idx > 0) {
-            goBack();
-          }
-        } else if (Math.abs(dy) > 80 && dy > 0) {
-          onClose();
-        }
-      }}
+      onTouchStart={(e) => { startPress(e.touches[0].clientX, e.touches[0].clientY, e.touches.length > 1); }}
+      onTouchEnd={(e) => { endPress(e.changedTouches[0].clientX, e.changedTouches[0].clientY); }}
     >
       <div style={{ display: "flex", gap: 3, padding: "10px 12px 0", position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, overflow: "hidden" }}>
         {statuses.map((s, i) => (
@@ -424,7 +483,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
         ))}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 14px 8px", position: "absolute", top: 6, left: 0, right: 0, zIndex: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 14px 8px", position: "absolute", top: 6, left: 0, right: 0, zIndex: 10 }} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
         <Avatar photoURL={ownerPhoto} name={ownerName} uid={ownerUid} size={36} hideLocalOverride />
         <div style={{ flex: 1 }}>
           <div style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>{ownerName}</div>
@@ -441,7 +500,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
               src={current.mediaURL}
               type="video"
               mediaRef={videoRef}
-              onTap={() => setPaused((p) => !p)}
+              onTap={() => {}}
               videoProps={{
                 loop: false,
                 onLoadedMetadata: (e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); },
@@ -467,7 +526,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
           </div>
         ) : current.mediaType === "image" && current.mediaURL ? (
           <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-            <ZoomableMedia src={current.mediaURL} type="image" onTap={() => setPaused((p) => !p)} />
+            <ZoomableMedia src={current.mediaURL} type="image" onTap={() => {}} />
             {(current.textOverlay || current.text) && (
               <div style={{ position: "absolute", bottom: 16, left: 12, right: 12, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
                 {current.textOverlay || current.text}
@@ -503,19 +562,22 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       </div>
 
       {!showViewers && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", zIndex: 5 }}>
-          <div onClick={goBack} style={{ flex: 1, cursor: "pointer" }} />
-          {(current.mediaType !== "image" && current.mediaType !== "video") && (
-            <div
-              onMouseDown={() => setPaused(true)}
-              onMouseUp={() => setPaused(false)}
-              onMouseLeave={() => { if (paused) setPaused(false); }}
-              onTouchStart={() => setPaused(true)}
-              onTouchEnd={() => setPaused(false)}
-              style={{ flex: 1, cursor: "pointer" }}
-            />
+        <div style={{ position: "absolute", top: 52, right: 8, display: "flex", gap: 8, zIndex: 16 }} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
+          {current?.mediaType === "video" && (
+            <div onClick={(e) => { e.stopPropagation(); setSpeed((s) => { const i = SPEED_PRESETS.indexOf(s); return SPEED_PRESETS[(i + 1) % SPEED_PRESETS.length]; }); }} title="Playback speed" style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <span style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>{speed}x</span>
+            </div>
           )}
-          <div onClick={() => advanceRef.current?.()} style={{ flex: 1, cursor: "pointer" }} />
+          {current?.mediaType === "video" && (
+            <div onClick={(e) => { e.stopPropagation(); setMuted((m) => !m); }} title={muted ? "Unmute" : "Mute"} style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              {muted ? <VolumeX size={18} color="#fff" /> : <Volume2 size={18} color="#fff" />}
+            </div>
+          )}
+          {current?.allowDownload && current?.mediaURL && (
+            <div onClick={(e) => { e.stopPropagation(); handleDownload(); }} title="Download" style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <Download size={18} color="#fff" />
+            </div>
+          )}
         </div>
       )}
 
@@ -547,7 +609,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       )}
 
       {isOwner && showViewers && (
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.85)", borderRadius: "16px 16px 0 0", zIndex: 25, paddingBottom: 20 }}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.85)", borderRadius: "16px 16px 0 0", zIndex: 25, paddingBottom: 20 }} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
           <div onClick={() => { setShowViewers(false); setPaused(false); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "10px 0 6px", cursor: "pointer" }}>
             <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.3)" }} />
           </div>
@@ -560,7 +622,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       )}
 
       {!isOwner && !showViewers && (
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 12px 16px", background: "linear-gradient(transparent, rgba(0,0,0,0.6))", zIndex: 20 }}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 12px 16px", background: "linear-gradient(transparent, rgba(0,0,0,0.6))", zIndex: 20 }} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
           {replySent ? (
             <div style={{ textAlign: "center", color: "#00A884", fontSize: 13, fontWeight: 600, padding: "10px 0" }}>Reply sent!</div>
           ) : (

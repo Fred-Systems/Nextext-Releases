@@ -3491,7 +3491,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     <Camera size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Camera</span>
                   </div>
                 )}
-                <div onClick={() => { setDisappearingMode(true); closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                <div onClick={() => { setDisappearingViews(1); closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <EyeOff size={17} color="#FF3B30" /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Disappearing media (view once)</span>
                 </div>
               </div>

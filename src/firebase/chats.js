@@ -4,6 +4,7 @@ import {
   serverTimestamp, updateDoc, arrayUnion, arrayRemove, getDoc, getDocs, writeBatch, deleteField, deleteDoc, increment,
 } from "firebase/firestore";
 import { db } from "./config";
+import { AI_CONTACT_UID, getAIChatId } from "./ai";
 import { deleteChatFile } from "../supabase/media";
 
 // ── Offline outbox ──────────────────────────────────────────────────────────
@@ -145,6 +146,27 @@ function directChatId(uidA, uidB) {
 }
 
 export async function getOrCreateDirectChat(myUid, theirUid) {
+  // The official AI assistant always lives in exactly ONE deterministic chat
+  // (the "ai_" chat opened by the AI widget). Routing any direct-chat request
+  // for the AI contact to that single id prevents a duplicate "bot" chat from
+  // being created when the AI is opened from contacts / profiles / shares.
+  if (theirUid === AI_CONTACT_UID) {
+    const aiChatId = getAIChatId(myUid);
+    try {
+      const ref = doc(db, "chats", aiChatId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        await setDoc(ref, {
+          participants: [myUid, AI_CONTACT_UID],
+          type: "direct",
+          createdAt: serverTimestamp(),
+          lastMessage: null,
+          unreadCount: { [myUid]: 0, [AI_CONTACT_UID]: 0 },
+        });
+      }
+    } catch { /* non-fatal */ }
+    return aiChatId;
+  }
   const chatId = directChatId(myUid, theirUid);
   const ref = doc(db, "chats", chatId);
   const snap = await getDoc(ref);

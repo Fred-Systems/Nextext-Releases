@@ -174,10 +174,18 @@ export function useAuth() {
 
     if (phone && phone.trim()) {
       const digits = String(phone).replace(/[^\d+]/g, "");
-      await updateDoc(doc(db, "users", cred.user.uid), {
-        phoneNumber: phone.trim(),
-        phoneNumberNormalized: digits || null,
-      });
+      // Use setDoc merge so this can't throw "No document to update" if the
+      // profile doc write above is still settling on a slow/old WebView.
+      try {
+        await setDoc(doc(db, "users", cred.user.uid), {
+          phoneNumber: phone.trim(),
+          phoneNumberNormalized: digits || null,
+        }, { merge: true });
+      } catch (e) {
+        // Non-fatal: if it still fails, the profile doc exists and the phone
+        // number can be re-saved later from Settings without blocking signup.
+        console.warn("[useAuth] phone save skipped:", e?.message);
+      }
     }
     return cred.user;
   }
