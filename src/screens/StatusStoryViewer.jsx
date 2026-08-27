@@ -745,7 +745,9 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                   disabled={postingComment}
                   style={{ flex: 1, border: "none", outline: "none", background: "rgba(255,255,255,0.12)", borderRadius: 20, padding: "9px 14px", fontSize: 13.5, color: "#fff" }}
                 />
-                <Send size={18} color={commentText.trim() ? "#00A884" : "rgba(255,255,255,0.4)"} onClick={() => submitComment()} style={{ cursor: commentText.trim() ? "pointer" : "default" }} />
+                <div onClick={() => submitComment()} onTouchEnd={(e) => { e.stopPropagation(); submitComment(); }} style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: commentText.trim() ? "pointer" : "default" }}>
+                  <Send size={18} color={commentText.trim() ? "#00A884" : "rgba(255,255,255,0.4)"} />
+                </div>
               </div>
             </>
           )}

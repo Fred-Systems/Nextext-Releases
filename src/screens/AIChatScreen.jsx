@@ -900,7 +900,7 @@ export default function AIChatScreen({ myUid, onBack }) {
           <>
             {sttEnabled && !globalSettings?.hideStt && (
               <div style={{ display: "flex", alignItems: "center", marginLeft: voiceSpacing ? 10 : 0 }}>
-                <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={34} useRealtime />
+                <span style={{ display: "flex", flexShrink: 0 }}><VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={34} useRealtime /></span>
               </div>
             )}
             <div onClick={handleSend} style={{ width: 38, height: 38, flexShrink: 0, marginLeft: 2, borderRadius: "50%", background: input.trim() && !sending ? t.primary : t.border, display: "flex", alignItems: "center", justifyContent: "center", cursor: input.trim() && !sending ? "pointer" : "default" }}>
@@ -913,7 +913,7 @@ export default function AIChatScreen({ myUid, onBack }) {
               <Send size={17} color={input.trim() && !sending ? "#fff" : t.textMuted} />
             </div>
             {sttEnabled && !globalSettings?.hideStt && (
-              <VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={34} useRealtime />
+              <span style={{ display: "flex", flexShrink: 0 }}><VoiceToTextButton myUid={myUid} onResult={handleSttResult} onAutoSend={(text) => { if (text && text.trim()) handleSend(text.trim()); }} autoSend={sttAutoSend} size={34} useRealtime /></span>
             )}
           </>
         )}

@@ -207,7 +207,17 @@ service cloud.firestore {
                                      // stricter server-side enforcement is wanted later
       allow create: if isSignedIn() && notBanned() && statusAllowed() &&
         request.resource.data.ownerId == request.auth.uid;
-      allow update, delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.ownerId == request.auth.uid
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentCount'])
+      );
+      allow delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+        allow update, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      }
 
       match /views/{viewerUid} {
         // Any signed-in user can record that they viewed a status (idempotent).

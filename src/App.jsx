@@ -551,6 +551,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const [sttShowInterim, setSttShowInterim] = useState(() => localStorage.getItem("nextext_stt_show_interim") === "on");
   const [sttCancelButton, setSttCancelButton] = useState(() => localStorage.getItem("nextext_stt_cancel_button") !== "off");
   const [hideVersion, setHideVersion] = useState(() => localStorage.getItem("nextext_hide_version") !== "off");
+  const [hideComposerCamera, setHideComposerCamera] = useState(() => localStorage.getItem("nextext_hide_composer_camera") === "on");
   const [useCustomPrompt, setUseCustomPrompt] = useState(() => localStorage.getItem("nextext_ai_custom_instructions_enabled") !== "off");
   const [aiRequestStatus, setAiRequestStatus] = useState("");
   const CONTACT_SORT_OPTIONS = [
@@ -1207,6 +1208,16 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 </div>
               </div>
             )}
+            {/* Hide composer camera button */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Hide camera button in composer</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Remove the quick camera icon from the message box (you can still send photos via the gallery button).</div>
+              </div>
+              <div onClick={() => { const next = !hideComposerCamera; setHideComposerCamera(next); try { localStorage.setItem("nextext_hide_composer_camera", next ? "on" : "off"); } catch {} }} style={{ width: 50, height: 30, borderRadius: 15, background: hideComposerCamera ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.2s" }}>
+                <div style={{ position: "absolute", top: 3, left: hideComposerCamera ? 23 : 3, width: 24, height: 24, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+              </div>
+            </div>
             {/* Forward arrow placement */}
             {sttEnabled && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>

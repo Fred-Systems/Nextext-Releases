@@ -850,6 +850,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   // show it full-width with a caption input + Send/Cancel so the user can add
   // a message (or back out) before it goes.
   const [pendingMedia, setPendingMedia] = useState(null); // { file, isImage, previewUrl }
+  const [composerGalleryOpen, setComposerGalleryOpen] = useState(false);
+  const [galleryPicks, setGalleryPicks] = useState([]); // [{ file, url }]
+  const galleryCamRef = useRef(null);
+  const galleryPhotoRef = useRef(null);
   const [captionText, setCaptionText] = useState("");
   const [captionBusy, setCaptionBusy] = useState(false);
   const [fullscreenImage, setFullscreenImage] = useState(null);
@@ -1211,6 +1215,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const handleInputChange = (val) => {
     setInput(val);
     autoResizeComposer();
+    const el = composerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
     if (chatId) {
       if (typingHeartbeatTimer.current) clearTimeout(typingHeartbeatTimer.current);
       typingHeartbeatTimer.current = setTimeout(() => setTypingHeartbeat(chatId, myUid), 800);
@@ -1776,6 +1782,17 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     } finally {
       setCaptionBusy(false);
     }
+  };
+
+  // Upload + send a single media file with no caption preview (used by the
+  // in-app gallery sheet so several photos can be sent at once).
+  const sendFileDirectly = async (file) => {
+    if (!file || !chatId) return;
+    const isImage = (file.type || "").startsWith("image/");
+    const blocked = parentalBlockedType(isImage ? "image" : "video");
+    if (blocked) { setSendError(blocked); return; }
+    const result = await uploadChatFile(chatId, myUid, file, { compress: isImage });
+    await sendMediaMessage(chatId, myUid, isImage ? "image" : "video", result, otherParticipants, { replyTo: replyingTo, disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
   };
 
   const handleFilePick = async (e) => {    const file = e.target.files?.[0];
@@ -3593,6 +3610,59 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               document.body
             )}
             <input ref={photoInputRef} type="file" accept="image/*,video/*" style={{ display: "none" }} onChange={handlePhotoOrVideoPick} onCancel={() => setGalleryActive(false)} />
+
+            {/* In-app gallery sheet (enabled via the admin "Native Photo Picker" toggle).
+                Shows selected photos scrollable at the bottom with a quick camera. */}
+            <input ref={galleryCamRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) setGalleryPicks((p) => [...p, { file: f, url: (f.type || "").startsWith("image/") ? URL.createObjectURL(f) : null }]); e.target.value = ""; }} />
+            <input ref={galleryPhotoRef} type="file" accept="image/*,video/*" multiple style={{ display: "none" }} onChange={(e) => { const files = Array.from(e.target.files || []); if (files.length) setGalleryPicks((p) => [...p, ...files.map((f) => ({ file: f, url: (f.type || "").startsWith("image/") ? URL.createObjectURL(f) : null }))]); e.target.value = ""; }} />
+            {composerGalleryOpen && (
+              <div onClick={() => { setComposerGalleryOpen(false); setGalleryPicks((p) => { p.forEach((x) => x.url && URL.revokeObjectURL(x.url)); return []; }); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 99998, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 390, background: t.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 14, boxShadow: "0 -4px 20px rgba(0,0,0,0.3)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Gallery</span>
+                    <X size={20} color={t.textMuted} onClick={() => { setComposerGalleryOpen(false); setGalleryPicks((p) => { p.forEach((x) => x.url && URL.revokeObjectURL(x.url)); return []; }); }} style={{ cursor: "pointer" }} />
+                  </div>
+                  {galleryPicks.length > 0 && (
+                    <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, marginBottom: 10 }}>
+                      {galleryPicks.map((p, i) => (
+                        <div key={i} style={{ position: "relative", flexShrink: 0, width: 72, height: 72, borderRadius: 10, overflow: "hidden", background: t.bg }}>
+                          {p.url ? (
+                            <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          ) : (
+                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: t.textMuted, fontSize: 11 }}>{(p.file.name || "file").split(".").pop().toUpperCase()}</div>
+                          )}
+                          <div onClick={() => setGalleryPicks((prev) => { const np = prev.filter((_, j) => j !== i); if (p.url) try { URL.revokeObjectURL(p.url); } catch {} return np; })} style={{ position: "absolute", top: 3, right: 3, width: 20, height: 20, borderRadius: "50%", background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                            <X size={13} color="#fff" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+                    <div onClick={() => galleryCamRef.current?.click()} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
+                      <Camera size={18} color={t.primary} />
+                      <span style={{ fontWeight: 700, fontSize: 13.5, color: t.primary }}>Camera</span>
+                    </div>
+                    <div onClick={() => galleryPhotoRef.current?.click()} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
+                      <ImageIcon size={18} color={t.primary} />
+                      <span style={{ fontWeight: 700, fontSize: 13.5, color: t.primary }}>Photos</span>
+                    </div>
+                  </div>
+                  <button
+                    disabled={galleryPicks.length === 0}
+                    onClick={async () => {
+                      const picks = galleryPicks;
+                      setComposerGalleryOpen(false);
+                      setGalleryPicks([]);
+                      for (const p of picks) { try { await sendFileDirectly(p.file); } catch (err) { console.warn("gallery send failed", err); } }
+                    }}
+                    style={{ width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: galleryPicks.length ? t.primary : t.border, color: galleryPicks.length ? t.bubbleMeText : t.textMuted, fontWeight: 700, fontSize: 14, cursor: galleryPicks.length ? "pointer" : "default" }}
+                  >
+                    Send{galleryPicks.length ? ` (${galleryPicks.length})` : ""}
+                  </button>
+                </div>
+              </div>
+            )}
             <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={handleFilePick} />
             {disappearingViews > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 16px", padding: "8px 12px", borderRadius: 12, background: "rgba(255,59,48,0.12)", border: "1px solid rgba(255,59,48,0.4)", flexShrink: 0 }}>
@@ -3616,11 +3686,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
                 <div
                   onClick={() => {
-                    if (galleryActive) return;
+                    if (galleryActive || composerGalleryOpen) return;
                     setShowEmojiPicker(false);
                     if (sysConfig?.nativeGallery) {
-                      setGalleryActive(true);
-                      openNativeGallery();
+                      setComposerGalleryOpen(true);
                     } else {
                       setGalleryActive(true);
                       photoInputRef.current?.click();
@@ -3631,7 +3700,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <ImageIcon size={Math.max(22, Math.round(25 * composerHeight))} color={galleryActive ? t.primary : t.textMuted} />
                 </div>
               )}
-              {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
+              {!(parentalBlockedType("image") && parentalBlockedType("video")) && (typeof localStorage === "undefined" || localStorage.getItem("nextext_hide_composer_camera") !== "on") && (
                 <div
                   onClick={() => { setShowEmojiPicker(false); closeAttach(); openCamera(); }}
                   style={{ width: Math.max(30, Math.round(32 * composerHeight)), height: Math.max(30, Math.round(32 * composerHeight)), borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: showCamera ? t.primaryLight : "transparent" }}
@@ -3651,7 +3720,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 onTouchEnd={cancelBoldLongPress}
                 placeholder={editingMsg ? "Edit message…" : "Message"}
                 rows={1}
-                style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: Math.max(14, Math.round(16.5 * composerHeight * 10) / 10), color: t.text, resize: "none", maxHeight: Math.round((42 + composerHeight * 42) * composerHeight), lineHeight: 1.4, paddingTop: Math.round(7 * composerHeight), paddingBottom: Math.round(7 * composerHeight), fontFamily: "inherit", minWidth: 0 }}
+                 style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: Math.max(14, Math.round(16.5 * composerHeight * 10) / 10), color: t.text, resize: "none", overflowY: "auto", maxHeight: Math.round((42 + composerHeight * 42) * composerHeight), lineHeight: 1.4, paddingTop: Math.round(7 * composerHeight), paddingBottom: Math.round(7 * composerHeight), fontFamily: "inherit", minWidth: 0 }}
               />
               {boldMenu && (
                 <div style={{ position: "absolute", bottom: "100%", left: 12, marginBottom: 6, background: t.surface, borderRadius: 10, boxShadow: "0 4px 16px rgba(0,0,0,0.3)", padding: 6, display: "flex", gap: 6, zIndex: 60 }}>
