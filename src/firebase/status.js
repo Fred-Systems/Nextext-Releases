@@ -8,6 +8,14 @@ import { deleteChatFile } from "../supabase/media";
 
 const STATUS_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+export const STATUS_STATES = {
+  UPLOADING: "uploading",
+  QUEUED: "queued",
+  PROCESSING: "processing",
+  READY: "ready",
+  FAILED: "failed",
+};
+
 export async function postStatus(ownerId, {
   text = null,
   mediaURL = null,
@@ -21,11 +29,27 @@ export async function postStatus(ownerId, {
   videoVolume = null,
   waitForVideo = false,
   allowDownload = false,
+  commentsHidden = false,
+  // New pipeline fields (video only). When pipeline is enabled, mediaURL is NOT the original;
+  // instead we store private originalPath and derived HLS/fallback/poster paths. While
+  // state !== "ready", the client must not expose hlsMasterURL/fallbackURL.
+  state = STATUS_STATES.READY,
+  originalPath = null,
+  hlsMasterPath = null,
+  fallbackPath = null,
+  posterPath = null,
+  previewPath = null,
+  cardPreviewPath = null,
+  renditions = null,
+  errorCode = null,
+  errorMessage = null,
 }) {
+  const isVideo = mediaType === "video";
+  const usePipeline = isVideo && originalPath;
   await addDoc(collection(db, "status"), {
     ownerId,
     text,
-    mediaURL,
+    mediaURL: usePipeline ? null : mediaURL,
     mediaType,
     backgroundColor,
     fontFamily,
@@ -37,14 +61,56 @@ export async function postStatus(ownerId, {
     waitForVideo,
     allowDownload,
     commentCount: 0,
-    commentsHidden: false,
+    commentsHidden: !!commentsHidden,
     createdAt: serverTimestamp(),
     expiresAt: new Date(Date.now() + STATUS_TTL_MS),
+    state: usePipeline ? (state || STATUS_STATES.QUEUED) : STATUS_STATES.READY,
+    originalPath: originalPath || null,
+    hlsMasterPath: hlsMasterPath || null,
+    fallbackPath: fallbackPath || null,
+    posterPath: posterPath || null,
+    previewPath: previewPath || null,
+    cardPreviewPath: cardPreviewPath || null,
+    renditions: renditions || null,
+    errorCode: errorCode || null,
+    errorMessage: errorMessage || null,
   });
 }
 
+// Queued video status: private original, worker will transcode
+export async function createQueuedVideoStatus(ownerId, originalPath, opts = {}) {
+  return postStatus(ownerId, {
+    mediaType: "video",
+    originalPath,
+    state: STATUS_STATES.QUEUED,
+    allowDownload: opts.allowDownload ?? true,
+    commentsHidden: opts.commentsHidden ?? false,
+    durationMs: opts.durationMs ?? null,
+    text: opts.text ?? null,
+    textOverlay: opts.textOverlay ?? null,
+  });
+}
+
+export async function markStatusProcessing(statusId) {
+  await setDoc(doc(db, "status", statusId), { state: STATUS_STATES.PROCESSING }, { merge: true });
+}
+export async function markStatusReady(statusId, assets) {
+  await setDoc(doc(db, "status", statusId), { state: STATUS_STATES.READY, ...assets, errorCode: null, errorMessage: null }, { merge: true });
+}
+export async function markStatusFailed(statusId, errorCode, errorMessage) {
+  await setDoc(doc(db, "status", statusId), { state: STATUS_STATES.FAILED, errorCode, errorMessage }, { merge: true });
+}
+
 export async function deleteStatus(statusId) {
+  try {
+    const snap = await getDoc(doc(db, "status", statusId));
+    if (snap.exists()) await deleteStatusAssets(snap.data());
+  } catch {}
   await deleteDoc(doc(db, "status", statusId));
+}
+
+export async function deleteStatusWithAssets(statusId) {
+  return deleteStatus(statusId);
 }
 
 // Extract the Supabase storage path from a public media URL so we can
@@ -57,16 +123,54 @@ function extractStoragePath(url) {
   return url.substring(idx + marker.length);
 }
 
-// Delete a single expired status: wipe the Supabase media file (if any)
-// then remove the Firestore document.
+async function deleteStatusAssets(data) {
+  const paths = [];
+  if (data.originalPath) paths.push(data.originalPath);
+  if (data.hlsMasterPath) {
+    // Delete HLS directory prefix (master + all variant segments)
+    const prefix = data.hlsMasterPath.replace(/\/master\.m3u8$/, "");
+    // List and delete via Supabase: we don't have list API here, so delete known files
+    // Fallback: try to delete master + fallback segments pattern; worker stores segments under hls/{h}p/
+    for (const r of data.renditions || []) if (r.path) paths.push(r.path);
+    // Also try to delete segment files via prefix delete (handled server-side by deleteChatFile with prefix)
+    try {
+      // Supabase doesn't support prefix delete via deleteChatFile single path; attempt bulk via storage API if available
+      // For now delete known top-level derived assets; segment cleanup is best-effort via worker expiry job
+      paths.push(data.hlsMasterPath);
+    } catch {}
+  }
+  if (data.fallbackPath) paths.push(data.fallbackPath);
+  if (data.posterPath) paths.push(data.posterPath);
+  if (data.previewPath) paths.push(data.previewPath);
+  if (data.cardPreviewPath) paths.push(data.cardPreviewPath);
+  // Legacy single mediaURL cleanup
+  if (data.mediaURL) {
+    const p = extractStoragePath(data.mediaURL);
+    if (p) paths.push(p);
+  }
+  if (data.bgAudioURL) {
+    const p = extractStoragePath(data.bgAudioURL);
+    if (p) paths.push(p);
+  }
+  for (const p of paths) {
+    if (!p) continue;
+    try { await deleteChatFile(p); } catch {}
+    // Also try HLS segment prefix cleanup: list objects under prefix and delete
+    if (p.includes("/hls/")) {
+      try {
+        const prefix = p.split("/hls/")[0] + "/hls/";
+        // Best-effort: list via Supabase storage (requires service role; client may not have). Ignore errors.
+        const { data: list } = await import("../supabase/config.js").then((m) => m.supabase.storage.from("chat-media").list(prefix, { limit: 1000 }).catch(() => ({ data: null })));
+        if (list) for (const f of list) await deleteChatFile(`${prefix}${f.name}`).catch(() => {});
+      } catch {}
+    }
+  }
+}
+
+// Delete a single expired status: wipe all associated assets (original + HLS + fallback + poster/preview) then doc
 async function cleanupExpiredDoc(docSnap) {
   const data = docSnap.data();
-  if (data?.mediaURL) {
-    try {
-      const path = extractStoragePath(data.mediaURL);
-      if (path) await deleteChatFile(path);
-    } catch { /* storage already gone or RLS block — ignore */ }
-  }
+  try { await deleteStatusAssets(data); } catch {}
   await deleteDoc(docSnap.ref);
 }
 
@@ -309,4 +413,9 @@ export function subscribeStatusComments(statusId, cb) {
 export async function setStatusCommentsHidden(statusId, hidden) {
   if (!statusId) return;
   await setDoc(doc(db, "status", statusId), { commentsHidden: !!hidden }, { merge: true });
+}
+
+export async function retryStatus(statusId) {
+  if (!statusId) return;
+  await setDoc(doc(db, "status", statusId), { state: STATUS_STATES.QUEUED, errorCode: null, errorMessage: null }, { merge: true });
 }

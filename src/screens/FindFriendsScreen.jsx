@@ -3,11 +3,12 @@ import { ChevronLeft, Users, RefreshCw, Smartphone, Share2, Package, Check } fro
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, getDocs } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { sendContactRequest } from "../firebase/contacts";
+import { sendContactRequest, useContacts } from "../firebase/contacts";
 import { getLatestApkUrl } from "../updater/updateChecker";
 import { Capacitor } from "@capacitor/core";
 import { Share } from "@capacitor/share";
 import NextextNative from "../native/nextextNative";
+import { MessageCircle } from "lucide-react";
 
 
 
@@ -39,8 +40,10 @@ function phonesMatch(a, b) {
   return false;
 }
 
-export default function FindFriendsScreen({ myUid, onBack }) {
+export default function FindFriendsScreen({ myUid, onBack, onOpenChat }) {
   const { t } = useTheme();
+  const { contacts } = useContacts(myUid);
+  const acceptedUids = new Set((contacts || []).filter((c) => c.status === "accepted").map((c) => c.uid));
   const [matches, setMatches] = useState([]);
   const [otherContacts, setOtherContacts] = useState([]);
   const [checked, setChecked] = useState(false);
@@ -265,9 +268,20 @@ export default function FindFriendsScreen({ myUid, onBack }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 600, fontSize: 14.5, color: t.text }}>{u.displayName}{u.verified && !u.hideVerified && <Check size={14} color="#1DA1F2" strokeWidth={3} />}</div>
                   <div style={{ fontSize: 12, color: t.textMuted }}>@{u.username}</div>
                 </div>
-                <button disabled={sentTo.includes(u.uid)} onClick={() => handleAdd(u.uid)} style={{ padding: "7px 14px", borderRadius: 16, border: "none", background: sentTo.includes(u.uid) ? t.border : t.primary, color: sentTo.includes(u.uid) ? t.textMuted : t.bubbleMeText, fontSize: 12.5, fontWeight: 700, cursor: sentTo.includes(u.uid) ? "default" : "pointer" }}>
-                  {sentTo.includes(u.uid) ? "Sent" : "Add"}
-                </button>
+                {acceptedUids.has(u.uid) ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted }}>Added</span>
+                    {onOpenChat && (
+                      <div onClick={() => onOpenChat(null, u.uid, { uid: u.uid, profile: { displayName: u.displayName, photoURL: null, username: u.username } })} style={{ width: 34, height: 34, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }} title="Chat">
+                        <MessageCircle size={16} color={t.primary} />
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <button disabled={sentTo.includes(u.uid)} onClick={() => handleAdd(u.uid)} style={{ padding: "7px 14px", borderRadius: 16, border: "none", background: sentTo.includes(u.uid) ? t.border : t.primary, color: sentTo.includes(u.uid) ? t.textMuted : t.bubbleMeText, fontSize: 12.5, fontWeight: 700, cursor: sentTo.includes(u.uid) ? "default" : "pointer" }}>
+                    {sentTo.includes(u.uid) ? "Sent" : "Add"}
+                  </button>
+                )}
               </div>
             ))}
 

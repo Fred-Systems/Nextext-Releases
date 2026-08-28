@@ -1,7 +1,7 @@
 {
   "name": "nextext",
   "private": true,
-  "version": "1.7.36",
+  "version": "1.7.37",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -24,6 +24,7 @@
     "@tanstack/react-virtual": "^3.14.10",
     "browser-image-compression": "^2.0.2",
     "firebase": "^12.16.0",
+    "hls.js": "^1.7.1",
     "lucide-react": "^1.24.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

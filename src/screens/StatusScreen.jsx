@@ -7,7 +7,7 @@ import { useContacts } from "../firebase/contacts";
 import { useChats, getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
 import { uploadChatFile } from "../supabase/media";
 import CameraCapture from "../components/CameraCapture";
-import { doc, onSnapshot, updateDoc, setDoc } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, setDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
 import Avatar from "../components/Avatar";
 import StatusStoryViewer from "./StatusStoryViewer";
@@ -228,6 +228,21 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       }
     } catch { /* no prefill */ }
   }, []);
+  // Expose builder state for global hardware back handling (AppShell).
+  // When the user presses the Android back button while the sheet is open,
+  // AppShell will fire `nextextCloseStatusBuilder` instead of navigating away.
+  useEffect(() => {
+    const open = !!(showPost || showCamera || viewStoryOwner || showCaptureActions);
+    try { window.__nextextStatusBuilderOpen = open; } catch {}
+    const onClose = () => {
+      if (showCaptureActions) { setShowCaptureActions(false); return; }
+      if (showCamera) { try { if (cameraStreamRef.current) cameraStreamRef.current.getTracks().forEach((tr) => tr.stop()); } catch {} setShowCamera(false); return; }
+      if (showPost) { setShowPost(false); setPostMedia(null); setPostText(""); setPostMode("text"); return; }
+      if (viewStoryOwner) { setViewStoryOwner(null); return; }
+    };
+    window.addEventListener("nextextCloseStatusBuilder", onClose);
+    return () => window.removeEventListener("nextextCloseStatusBuilder", onClose);
+  }, [showPost, showCamera, viewStoryOwner, showCaptureActions]);
   const [posting, setPosting] = useState(false);
   const [viewStoryOwner, setViewStoryOwner] = useState(null);
   const [viewedMap, setViewedMap] = useState(() => getStoredViewed());
@@ -252,7 +267,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const [previewAudioURL, setPreviewAudioURL] = useState(null);
   const [previewVideoURL, setPreviewVideoURL] = useState(null);
   const [postImages, setPostImages] = useState([]);
-  const [allowDownload, setAllowDownload] = useState(false);
+  const [allowDownload, setAllowDownload] = useState(true);
+  const [hideComments, setHideComments] = useState(false);
   const previewVideoRef = useRef(null);
   const previewAudioRef = useRef(null);
   const [viewerModalStatusId, setViewerModalStatusId] = useState(null);
@@ -384,7 +400,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     setBgAudioVolume(70);
     setVideoVolume(100);
     setMuteOriginal(false);
-    setAllowDownload(false);
+    setAllowDownload(true);
+    setHideComments(false);
     setPreviewZoom(1);
     setShowZoomHint(false);
     setPostError("");
@@ -397,6 +414,32 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       setPostError("Please select an image, video, or record something.");
       return;
     }
+    // Snapshot and close UI immediately so upload continues in background even if user leaves
+    const snapMode = postMode;
+    const snapText = postText;
+    const snapMedia = postMedia;
+    const snapMediaType = postMediaType;
+    const snapImages = [...postImages];
+    const snapVoice = voiceBlob;
+    const snapDuration = durationSeconds;
+    const snapVoiceDur = voiceDurationMs;
+    const snapTextOverlay = textOverlay;
+    const snapBgAudio = bgAudioFile;
+    const snapAllowDownload = allowDownload;
+    const snapHideComments = hideComments;
+    const snapWaitForVideo = waitForVideo;
+    const snapBgVol = bgAudioVolume;
+    const snapVidVol = videoVolume;
+    const snapMuteOriginal = muteOriginal;
+    setShowPost(false);
+    setPostText("");
+    setPostMedia(null);
+    setPostMediaType(null);
+    setPostImages([]);
+    setTextOverlay("");
+    setBgAudioFile(null);
+    setVoiceBlob(null);
+    setIsVoiceRecording(false);
     setPosting(true);
     setPostError("");
     try {
@@ -404,112 +447,143 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       // (and optional background image). Uploaded the same way chat voice
       // notes are (Supabase `chat-media` bucket) and posted as mediaType
       // "voice" so the viewer can play it back inline.
-      if (postMode === "media" && voiceBlob) {
-        const voiceFile = new File([voiceBlob], `status-voice-${Date.now()}.webm`, { type: voiceBlob.type || "audio/webm" });
+      if (snapMode === "media" && snapVoice) {
+        const voiceFile = new File([snapVoice], `status-voice-${Date.now()}.webm`, { type: snapVoice.type || "audio/webm" });
         const voiceResult = await uploadChatFile(`status-${myUid}`, myUid, voiceFile, { compress: false });
         await postStatus(myUid, {
-          text: postText.trim() || null,
+          text: snapText.trim() || null,
           mediaURL: voiceResult.url,
           mediaType: "voice",
           backgroundColor: null,
           fontFamily: null,
-          durationMs: voiceDurationMs || durationSeconds * 1000,
-          textOverlay: textOverlay.trim() || null,
-          allowDownload,
+          durationMs: snapVoiceDur || snapDuration * 1000,
+          textOverlay: snapTextOverlay.trim() || null,
+          allowDownload: snapAllowDownload,
+          commentsHidden: snapHideComments,
         });
       }
       // Handle multiple images - send as separate status updates
-      if (postMode === "media" && postImages.length > 0 && !voiceBlob) {
-        for (let i = 0; i < postImages.length; i++) {
-          const img = postImages[i];
+      if (snapMode === "media" && snapImages.length > 0 && !snapVoice) {
+        for (let i = 0; i < snapImages.length; i++) {
+          const img = snapImages[i];
           const file = new File([img], `status-${Date.now()}-${i}.jpg`, { type: "image/jpeg" });
           const result = await uploadChatFile(`status-${myUid}`, myUid, file, { compress: true });
           await postStatus(myUid, {
-            text: postText.trim() || null,
+            text: snapText.trim() || null,
             mediaURL: result.url,
             mediaType: "image",
             backgroundColor: null,
             fontFamily: null,
-           durationMs: durationSeconds * 1000,
-           textOverlay: textOverlay.trim() || null,
-           allowDownload,
-         });
+           durationMs: snapDuration * 1000,
+           textOverlay: snapTextOverlay.trim() || null,
+           allowDownload: snapAllowDownload,
+           commentsHidden: snapHideComments,
+          });
         }
         setPostImages([]);
       }
 
       // Handle single video or single image from postMedia
-      if (postMode === "media" && postMedia && !voiceBlob) {
-        const isVideo = postMediaType === "video";
+      if (snapMode === "media" && snapMedia && !snapVoice) {
+        const isVideo = snapMediaType === "video";
         const ext = isVideo ? "mp4" : "jpg";
         const mime = isVideo ? "video/mp4" : "image/jpeg";
-        const file = new File([postMedia], `status-${Date.now()}.${ext}`, { type: mime });
-        const result = await uploadChatFile(`status-${myUid}`, myUid, file, { compress: !isVideo });
-        let durationMs = null;
-        if (isVideo) {
-          durationMs = await getVideoDuration(postMedia);
-        }
+        const file = new File([snapMedia], `status-${Date.now()}.${ext}`, { type: mime });
         let bgAudioURL = null;
         let bgAudioVol = null;
         let vidVol = null;
-        if (bgAudioFile) {
-          const audioFile = new File([bgAudioFile], `status-audio-${Date.now()}.mp3`, { type: bgAudioFile.type || "audio/mpeg" });
+        if (snapBgAudio) {
+          const audioFile = new File([snapBgAudio], `status-audio-${Date.now()}.mp3`, { type: snapBgAudio.type || "audio/mpeg" });
           const audioResult = await uploadChatFile(`status-${myUid}`, myUid, audioFile, { compress: false });
           bgAudioURL = audioResult.url;
-          bgAudioVol = bgAudioVolume;
-          vidVol = muteOriginal ? 0 : videoVolume;
+          bgAudioVol = snapBgVol;
+          vidVol = snapMuteOriginal ? 0 : snapVidVol;
         }
-        await postStatus(myUid, {
-          text: postText.trim() || null,
-          mediaURL: result.url,
-          mediaType: isVideo ? "video" : "image",
-          backgroundColor: null,
-          fontFamily: null,
-          durationMs: durationMs || durationSeconds * 1000,
-          textOverlay: textOverlay.trim() || null,
-          bgAudioURL,
-          bgAudioVolume: bgAudioVol,
-          videoVolume: vidVol,
-          waitForVideo: isVideo && waitForVideo,
-          allowDownload,
-        });
+        if (isVideo && globalSettings?.statusVideoPipelineEnabled) {
+          // Private pipeline: keep original private, create queued status for worker
+          const { uploadPrivateFile } = await import("../supabase/media.js");
+          const statusRef = doc(collection(db, "status"));
+          const statusId = statusRef.id;
+          const originalPath = `status/${myUid}/${statusId}/original.mp4`;
+          await uploadPrivateFile(originalPath, file, mime);
+          let durationMs = await getVideoDuration(snapMedia);
+          await setDoc(statusRef, {
+            ownerId: myUid,
+            text: snapText.trim() || null,
+            mediaType: "video",
+            backgroundColor: null,
+            fontFamily: null,
+            durationMs: durationMs || snapDuration * 1000,
+            textOverlay: snapTextOverlay.trim() || null,
+            bgAudioURL,
+            bgAudioVolume: bgAudioVol,
+            videoVolume: vidVol,
+            waitForVideo: snapWaitForVideo,
+            allowDownload: snapAllowDownload,
+            commentsHidden: snapHideComments,
+            state: "queued",
+            originalPath,
+            hlsMasterPath: null,
+            fallbackPath: null,
+            posterPath: null,
+            previewPath: null,
+            cardPreviewPath: null,
+            renditions: null,
+            commentCount: 0,
+            createdAt: serverTimestamp(),
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          });
+        } else {
+          const result = await uploadChatFile(`status-${myUid}`, myUid, file, { compress: !isVideo });
+          let durationMs = null;
+          if (isVideo) {
+            durationMs = await getVideoDuration(snapMedia);
+          }
+          await postStatus(myUid, {
+            text: snapText.trim() || null,
+            mediaURL: result.url,
+            mediaType: isVideo ? "video" : "image",
+            backgroundColor: null,
+            fontFamily: null,
+            durationMs: durationMs || snapDuration * 1000,
+            textOverlay: snapTextOverlay.trim() || null,
+            bgAudioURL,
+            bgAudioVolume: bgAudioVol,
+            videoVolume: vidVol,
+            waitForVideo: isVideo && snapWaitForVideo,
+            allowDownload: snapAllowDownload,
+            commentsHidden: snapHideComments,
+          });
+        }
       }
 
       // Handle text status (with optional background audio)
-      if (postMode === "text") {
+      if (snapMode === "text") {
         let bgAudioURL = null;
         let bgAudioVol = null;
-        if (bgAudioFile) {
-          const audioFile = new File([bgAudioFile], `status-audio-${Date.now()}.mp3`, { type: bgAudioFile.type || "audio/mpeg" });
+        if (snapBgAudio) {
+          const audioFile = new File([snapBgAudio], `status-audio-${Date.now()}.mp3`, { type: snapBgAudio.type || "audio/mpeg" });
           const audioResult = await uploadChatFile(`status-${myUid}`, myUid, audioFile, { compress: false });
           bgAudioURL = audioResult.url;
-          bgAudioVol = bgAudioVolume;
+          bgAudioVol = snapBgVol;
         }
         await postStatus(myUid, {
-          text: postText.trim(),
+          text: snapText.trim(),
           mediaURL: null,
           mediaType: null,
           backgroundColor: STATUS_BG_COLORS[bgColorIdx],
           fontFamily: FONTS[fontIdx].value,
-          durationMs: durationSeconds * 1000,
+          durationMs: snapDuration * 1000,
           textOverlay: null,
           bgAudioURL,
           bgAudioVolume: bgAudioVol,
           videoVolume: null,
+          commentsHidden: snapHideComments,
         });
       }
 
-      setPostText("");
-      setPostMedia(null);
-      setPostMediaType(null);
-      setPostImages([]);
-      setTextOverlay("");
-      setBgAudioFile(null);
-      setVoiceBlob(null);
-      setVoiceDurationMs(0);
-      setIsVoiceRecording(false);
+      // UI already closed at snapshot time; this is just final cleanup (idempotent)
       setPostError("");
-      setShowPost(false);
       setPostMode("text");
     } catch (err) {
       setPostError("Couldn't post status: " + (err?.message || err || "unknown error"));
@@ -881,11 +955,11 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           <Camera size={20} color={t.primary} />
         </div>
         <div style={{ display: "flex", background: t.primaryLight, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
-          {["cards", "list"].map((l) => (
+          {["cards", "list", "rows"].map((l) => (
             <span
               key={l}
               onClick={() => changeStatusLayout(l)}
-              style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, textTransform: "capitalize", color: statusLayout === l ? "#fff" : t.text, background: statusLayout === l ? t.primary : "transparent", cursor: "pointer" }}
+              style={{ padding: "6px 10px", fontSize: 11, fontWeight: 700, textTransform: "capitalize", color: statusLayout === l ? "#fff" : t.text, background: statusLayout === l ? t.primary : "transparent", cursor: "pointer" }}
             >{l}</span>
           ))}
         </div>
@@ -979,6 +1053,57 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                   <div style={{ padding: "7px 9px" }}>
                     <div style={{ fontWeight: 700, fontSize: 13.5, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
                     <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 1 }}>{items.length} update{items.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : statusLayout === "rows" ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "4px 0" }}>
+            {myStatuses.length > 0 ? (
+              (() => {
+                const latest = myStatuses[myStatuses.length - 1];
+                return (
+                  <div key="__own_row" onClick={() => openStory(myStatuses, myUid)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.surface }}>
+                    <Avatar photoURL={myPhoto} name={myName || myDisplayName} uid={myUid} size={44} hasActiveStatus statusViewed={true} blockStatus={blockStatus} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>My Status</div>
+                      <div style={{ fontSize: 12, color: t.textMuted }}>{myStatuses.length} update{myStatuses.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}</div>
+                    </div>
+                    <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
+                      {latest.mediaURL ? (
+                        latest.mediaType === "video" ? <video src={latest.mediaURL} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : (
+                        <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text, textAlign: "center" }}>{(latest.text || "").slice(0, 12) || "Text"}</span></div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
+              <div onClick={() => openPostSheet("text")} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
+                <div style={{ width: 44, height: 44, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={18} color={t.primary} /></div>
+                <span style={{ fontWeight: 600, color: t.text }}>Post status</span>
+              </div>
+            )}
+            {Object.entries(grouped).map(([uid, items]) => {
+              const contact = acceptedContacts.find((c) => c.uid === uid);
+              const name = contact?.profile?.displayName || "Unknown";
+              const latest = items[items.length - 1];
+              const viewed = isViewed(uid);
+              return (
+                <div key={uid} onClick={() => openStory(items, uid)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.surface }}>
+                  <Avatar photoURL={contact?.profile?.photoURL} name={name} uid={uid} size={42} hasActiveStatus statusViewed={viewed} blockStatus={blockStatus} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14.5, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+                    <div style={{ fontSize: 12, color: t.textMuted }}>{items.length} update{items.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}</div>
+                  </div>
+                  <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
+                    {latest.mediaURL ? (
+                      latest.mediaType === "video" ? <video src={latest.mediaURL} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text }}>{(latest.text || "").slice(0, 12)}</span></div>
+                    )}
                   </div>
                 </div>
               );
@@ -1481,6 +1606,24 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                 </button>
               </div>
             )}
+
+            {/* Hide comments toggle */}
+            <div style={{ marginBottom: 12, padding: "12px 14px", borderRadius: 12, background: t.bg, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <MessageCircle size={18} color={t.primary} />
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>Hide comments</div>
+                  <div style={{ fontSize: 11.5, color: t.textMuted }}>Disable comments on this status</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setHideComments((v) => !v)}
+                aria-label={hideComments ? "Show comments" : "Hide comments"}
+                style={{ width: 46, height: 26, borderRadius: 13, background: hideComments ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.15s ease" }}
+              >
+                <span style={{ position: "absolute", top: 3, left: hideComments ? 23 : 3, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.15s ease", boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }} />
+              </button>
+            </div>
 
             {/* Background audio multi-track mixer */}
             {((postMode === "media" && postMedia) || postMode === "text") && (

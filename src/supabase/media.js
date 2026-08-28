@@ -44,4 +44,25 @@ export async function deleteChatFile(path) {
   if (error) throw error;
 }
 
+export async function uploadPrivateFile(path, file, contentType) {
+  const { error } = await supabase.storage.from(MEDIA_BUCKET).upload(path, file, {
+    cacheControl: "3600",
+    upsert: true,
+    contentType: contentType || file.type || "application/octet-stream",
+  });
+  if (error) throw error;
+  return path;
+}
+
+export async function getSignedUrl(path, expiresAt) {
+  if (!path) return null;
+  const now = Date.now();
+  const expMs = expiresAt?.toMillis?.() ? expiresAt.toMillis() : (expiresAt ? new Date(expiresAt).getTime() : now + 3600 * 1000);
+  const ttl = Math.max(60, Math.min(3600, Math.floor((expMs - now) / 1000)));
+  if (ttl <= 0) return null;
+  const { data, error } = await supabase.storage.from(MEDIA_BUCKET).createSignedUrl(path, ttl);
+  if (error) return null;
+  return data.signedUrl;
+}
+
 export { FileTooLargeError, MAX_UPLOAD_BYTES };

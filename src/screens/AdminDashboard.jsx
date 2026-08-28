@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, Check, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound, ImageIcon } from "lucide-react";
+import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, Check, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound, ImageIcon, RefreshCw } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -301,6 +301,40 @@ export default function AdminDashboard({ myUid, onBack }) {
       await updateDoc(doc(db, "users", uid), { aiApproved: !currentVal });
     } catch (e) {
       setError("Couldn't update AI access: " + e.message);
+    }
+  };
+
+  const resetSingleAIAccess = async (uid) => {
+    if (!window.confirm(`Reset AI for this user? This will revoke AI access, delete their AI chat(s), and clear pending requests. The user will need to re-request access.`)) return;
+    setError("");
+    try {
+      await updateDoc(doc(db, "users", uid), { aiApproved: false });
+      // Delete both possible AI chat docs: the canonical ai_ prefix and the legacy sorted-uid join.
+      const primaryChatId = `ai_${uid}`;
+      const legacyChatId = [uid, AI_CONTACT_UID].sort().join("_");
+      for (const cid of [primaryChatId, legacyChatId]) {
+        try {
+          const cRef = doc(db, "chats", cid);
+          const snap = await getDoc(cRef);
+          if (snap.exists()) {
+            // Delete messages subcollection first (best-effort, then the chat doc)
+            const msgsSnap = await getDocs(collection(db, "chats", cid, "messages"));
+            await Promise.all(msgsSnap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+            await deleteDoc(cRef).catch(() => {});
+          }
+        } catch {}
+      }
+      // Remove any pending AI request doc for this user (aiRequests are keyed by uid or doc id)
+      try {
+        const reqSnap = await getDocs(query(collection(db, "aiRequests"), where("uid", "==", uid)));
+        await Promise.all(reqSnap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+        const directReq = doc(db, "aiRequests", uid);
+        const directSnap = await getDoc(directReq);
+        if (directSnap.exists()) await deleteDoc(directReq).catch(() => {});
+      } catch {}
+      setSelectedUser((prev) => (prev && prev.uid === uid ? { ...prev, aiApproved: false } : prev));
+    } catch (e) {
+      setError("Reset failed: " + e.message);
     }
   };
 
@@ -908,6 +942,12 @@ export default function AdminDashboard({ myUid, onBack }) {
                   <Bot size={12} color={u.aiApproved ? "#28A745" : t.textMuted} />
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: u.aiApproved ? "#28A745" : t.textMuted }}>{u.aiApproved ? "AI On" : "AI Off"}</span>
                 </div>
+                {u.aiApproved && (
+                  <div onClick={(e) => { e.stopPropagation(); resetSingleAIAccess(u.uid); }} title="Reset AI: revoke access and delete AI chats" style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 8, background: "#FFE5E5", border: "1px solid #FF3B30", cursor: "pointer", flexShrink: 0 }}>
+                    <RefreshCw size={11} color="#FF3B30" />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#FF3B30" }}>Reset</span>
+                  </div>
+                )}
                 <div onClick={(e) => { e.stopPropagation(); toggleUserHideAISettings(u.uid, !!u.hideAISettings); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.hideAISettings ? "#FFF3CD" : t.bg, border: `1px solid ${u.hideAISettings ? "#856404" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
                   <EyeOff size={12} color={u.hideAISettings ? "#856404" : t.textMuted} />
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: u.hideAISettings ? "#856404" : t.textMuted }}>{u.hideAISettings ? "AI Settings Hidden" : "AI Settings Visible"}</span>

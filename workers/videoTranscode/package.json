@@ -1,0 +1,13 @@
+{
+  "name": "nextext-video-transcode-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node worker.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.4.0",
+    "@supabase/supabase-js": "^2.110.7"
+  }
+}

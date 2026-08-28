@@ -1677,7 +1677,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     exitSelectionMode();
   };
 
-  const handleEdit = () => { if (!activeMsg) return; setEditingMsg(activeMsg); setInput(activeMsg.text || ""); setActiveMsg(null); setTimeout(autoResizeComposer, 0); };
+  const handleEdit = () => {
+    if (!activeMsg) return;
+    const latest = messages.find((m) => m.id === activeMsg.id) || activeMsg;
+    setEditingMsg(latest);
+    setInput(latest.text || "");
+    setActiveMsg(null);
+    setTimeout(autoResizeComposer, 0);
+  };
 
   // Open the inline "Ask AI about this message" panel. Build the context the
   // AI will see: the tapped message plus up to 10 before and 10 after.
@@ -3721,7 +3728,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <ImageIcon size={Math.max(22, Math.round(25 * composerHeight))} color={galleryActive ? t.primary : t.textMuted} />
                 </div>
               )}
-              {!(parentalBlockedType("image") && parentalBlockedType("video")) && (typeof localStorage === "undefined" || localStorage.getItem("nextext_hide_composer_camera") !== "on") && (
+              {!(parentalBlockedType("image") && parentalBlockedType("video")) && (typeof localStorage === "undefined" || localStorage.getItem("nextext_hide_composer_camera") !== "on") && !sysConfig?.nativeGallery && (
                 <div
                   onClick={() => { setShowEmojiPicker(false); closeAttach(); openCamera(); }}
                   style={{ width: Math.max(30, Math.round(32 * composerHeight)), height: Math.max(30, Math.round(32 * composerHeight)), borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: showCamera ? t.primaryLight : "transparent" }}

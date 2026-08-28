@@ -646,7 +646,7 @@ export default function AIChatScreen({ myUid, onBack }) {
               <Trash2 size={16} color="#FF3B30" />
               <span style={{ fontSize: 14, color: "#FF3B30" }}>Clear chat</span>
             </div>
-            <div onClick={() => { setShowSettings(false); if (window.confirm("Delete this NexText AI chat permanently? This cannot be undone.")) { deleteChatCompletely(chatId).catch(() => {}); onBack(); } }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+            <div onClick={() => { setShowSettings(false); if (window.confirm("Delete this NexText AI chat permanently? This cannot be undone.")) { const legacy = [myUid, AI_CONTACT_UID].sort().join("_"); Promise.all([deleteChatCompletely(chatId).catch(() => {}), deleteChatCompletely(legacy).catch(() => {})]); onBack(); } }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
               <Trash2 size={16} color="#FF3B30" />
               <span style={{ fontSize: 14, fontWeight: 700, color: "#FF3B30" }}>Delete chat</span>
             </div>

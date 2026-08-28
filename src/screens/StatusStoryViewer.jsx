@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, ChevronRight, Eye, Send, Download, Volume2, VolumeX, MessageCircle } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Eye, Send, Download, Volume2, VolumeX, MessageCircle, RefreshCw } from "lucide-react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useTheme } from "../theme/ThemeContext";
-import { useStatusViewers, subscribeStatusComments, addStatusComment, voteStatusComment, deleteStatusComment, setStatusCommentsHidden } from "../firebase/status";
+import { useStatusViewers, subscribeStatusComments, addStatusComment, voteStatusComment, deleteStatusComment, setStatusCommentsHidden, retryStatus } from "../firebase/status";
 import { getOrCreateDirectChat, sendTextMessage } from "../firebase/chats";
 import Avatar from "../components/Avatar";
 import ZoomableMedia from "../components/ZoomableMedia";
+import HlsVideo from "../components/HlsVideo";
+import { getSignedUrl } from "../supabase/media";
 
 const DEFAULT_DURATION_MS = 5000;
 const QUICK_REACTION_EMOJIS = ["❤️", "😂", "😮", "🔥", "👍", "🙏"];
@@ -81,6 +83,8 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
   const [postingComment, setPostingComment] = useState(false);
+  // Pause status playback while comments are open (resume when closed).
+  useEffect(() => { setPaused(showComments); }, [showComments]);
   const touchStartRef = useRef({ x: 0, y: 0 });
   const pressTimerRef = useRef(null);
   const holdFiredRef = useRef(false);
@@ -110,6 +114,33 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
   const isOwner = myUid && ownerUid && myUid === ownerUid;
   const current = statuses[idx];
+  const [hlsUrl, setHlsUrl] = useState(null);
+  const [fallbackUrl, setFallbackUrl] = useState(null);
+  const [posterUrl, setPosterUrl] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!current) { setHlsUrl(null); setFallbackUrl(null); setPosterUrl(null); return; }
+      // Only expose HLS/fallback when ready; while processing/queued show poster or processing UI
+      if (current.state && current.state !== "ready") { setHlsUrl(null); setFallbackUrl(null); setPosterUrl(null); return; }
+      try {
+        if (current.hlsMasterPath) {
+          const u = await getSignedUrl(current.hlsMasterPath, current.expiresAt);
+          if (!cancelled) setHlsUrl(u);
+        } else setHlsUrl(null);
+        if (current.fallbackPath) {
+          const u = await getSignedUrl(current.fallbackPath, current.expiresAt);
+          if (!cancelled) setFallbackUrl(u);
+        } else setFallbackUrl(null);
+        if (current.posterPath) {
+          const u = await getSignedUrl(current.posterPath, current.expiresAt);
+          if (!cancelled) setPosterUrl(u);
+        } else setPosterUrl(null);
+      } catch { /* ignore */ }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [current?.id, current?.state, current?.hlsMasterPath, current?.fallbackPath, current?.posterPath, current?.expiresAt]);
 
   // Live comments for the current status.
   useEffect(() => {
@@ -525,10 +556,41 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 20px 40px", boxSizing: "border-box", overflow: "hidden" }}>
         {current.bgAudioURL && <audio ref={bgAudioRef} src={current.bgAudioURL} loop />}
-        {current.mediaType === "video" && current.mediaURL ? (
+        {(current.state === "queued" || current.state === "processing") ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, color: "#fff" }}>
+            <RefreshCw size={28} color="#fff" style={{ animation: "nextext-spin 1s linear infinite" }} />
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Processing video…</span>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>This will be ready shortly</span>
+          </div>
+        ) : current.state === "failed" ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, color: "#fff", textAlign: "center", padding: 20 }}>
+            <span style={{ fontSize: 14, fontWeight: 700 }}>Video failed: {current.errorCode || "PROCESSING_FAILED"}</span>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>{current.errorMessage || "Try a different video."}</span>
+            {isOwner && <button onClick={() => retryStatus(current.id)} style={{ marginTop: 8, padding: "8px 16px", borderRadius: 8, border: "none", background: "#00A884", color: "#fff", fontWeight: 700, cursor: "pointer" }}>Retry</button>}
+          </div>
+        ) : current.mediaType === "video" && (current.mediaURL || hlsUrl || fallbackUrl) ? (
+          hlsUrl ? (
+            <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+              <HlsVideo
+                src={hlsUrl}
+                fallbackSrc={fallbackUrl || current.mediaURL}
+                poster={posterUrl || undefined}
+                videoRef={videoRef}
+                style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                controls={false}
+                onLoadedMetadata={(e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); }}
+                onEnded={() => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); }}
+              />
+              {(current.textOverlay || current.text) && (
+                <div style={{ position: "absolute", bottom: 16, left: 12, right: 12, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
+                  {current.textOverlay || current.text}
+                </div>
+              )}
+            </div>
+          ) : (
           <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
             <ZoomableMedia
-              src={current.mediaURL}
+              src={fallbackUrl || current.mediaURL}
               type="video"
               mediaRef={videoRef}
               onTap={() => {}}
@@ -555,7 +617,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
               </div>
             )}
           </div>
-        ) : current.mediaType === "image" && current.mediaURL ? (
+          )) : current.mediaType === "image" && current.mediaURL ? (
           <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
             <ZoomableMedia src={current.mediaURL} type="image" onTap={() => {}} />
             {(current.textOverlay || current.text) && (

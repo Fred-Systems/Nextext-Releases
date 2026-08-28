@@ -20,7 +20,7 @@ import Avatar from "../components/Avatar";
 import AISidebarWidget from "../components/AISidebarWidget";
 import NewGroupScreen from "./NewGroupScreen";
 import FindFriendsScreen from "./FindFriendsScreen";
-import { doc, onSnapshot, updateDoc, collection, getCountFromServer } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, collection, getCountFromServer, setDoc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 
 const GLOBAL_CAMERA_FILTERS = [
@@ -158,6 +158,31 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [aiPos, setAiPos] = useState(() => {
     try { const v = JSON.parse(localStorage.getItem("nextext_ai_pos")); return (v?.top && v?.right) ? { top: v.top, right: v.right } : null; } catch { return null; }
   });
+  // Persist FAB/AI positions to Firestore so they survive sign-out/sign-in and
+  // device changes. Load from Firestore if localStorage is empty.
+  useEffect(() => {
+    if (!myUid) return;
+    const unsub = onSnapshot(doc(db, "users", myUid), (snap) => {
+      const d = snap.data() || {};
+      try {
+        if (d.fabPos && !localStorage.getItem("nextext_fab_pos")) setFabPos(d.fabPos);
+        if (d.aiPos && !localStorage.getItem("nextext_ai_pos")) setAiPos(d.aiPos);
+        // Migrate per-user keys if present (from previous version that used per-uid keys)
+        if (d.fabPos && d.fabPos.bottom && !fabPos) { /* handled above */ }
+      } catch {}
+    });
+    return unsub;
+  }, [myUid]);
+  useEffect(() => {
+    if (!fabPos) return;
+    try { localStorage.setItem("nextext_fab_pos", JSON.stringify(fabPos)); } catch {}
+    if (myUid) setDoc(doc(db, "users", myUid), { fabPos }, { merge: true }).catch(() => {});
+  }, [fabPos, myUid]);
+  useEffect(() => {
+    if (!aiPos) return;
+    try { localStorage.setItem("nextext_ai_pos", JSON.stringify(aiPos)); } catch {}
+    if (myUid) setDoc(doc(db, "users", myUid), { aiPos }, { merge: true }).catch(() => {});
+  }, [aiPos, myUid]);
   // Hide the bottom nav whenever the in-app camera (or its preview/send step)
   // is on screen, and bring it back only once the whole flow is finished.
   const pinchStartRef = useRef(null);
@@ -407,12 +432,14 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
 
   const notArchived = chats.filter((c) => !(c.archivedBy || []).includes(myUid));
   // Hide any stray duplicate AI chat: the assistant must only ever appear as
-  // the single "ai_" chat opened by the AI widget.
-  const visibleChats = notArchived.filter((c) => !(c.participants || []).includes(AI_CONTACT_UID) || c.id?.startsWith("ai_"));
+  // the single "ai_" chat opened by the AI widget. Group chats that contain
+  // the AI are NOT filtered — they must stay visible after an admin injects AI.
+  const visibleChats = notArchived.filter((c) => c.type === "group" || !(c.participants || []).includes(AI_CONTACT_UID) || c.id?.startsWith("ai_"));
   const archived = chats.filter((c) => (c.archivedBy || []).includes(myUid));
 
   const chatDisplayName = (chat) => {
     if (chat.id?.startsWith("ai_")) return "NexText AI";
+    if (chat.type !== "group" && (chat.participants || []).includes(AI_CONTACT_UID)) return "NexText AI";
     if (chat.type === "group") return chat.groupName;
     const participants = chat.participants || [myUid];
     const otherUid = participants.find((p) => p !== myUid) || myUid;
@@ -458,12 +485,21 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     }
   })();
 
+  const deleteChatAndAIDuplicates = (chatId) => {
+    const promises = [deleteChatCompletely(chatId).catch(() => {})];
+    const primary = `ai_${myUid}`;
+    const legacy = [myUid, AI_CONTACT_UID].sort().join("_");
+    if (chatId === primary) promises.push(deleteChatCompletely(legacy).catch(() => {}));
+    if (chatId === legacy) promises.push(deleteChatCompletely(primary).catch(() => {}));
+    return Promise.all(promises);
+  };
+
   const openChatRow = (chat) => {
     setLockedChatsUnlocked(false);
     // Rows are only visible after the locked-chats password was entered in
     // search, so the session is already verified for this chat.
     const openOpts = chat.lockedBy?.[myUid] ? { lockVerified: true } : {};
-    if (chat.id?.startsWith("ai_")) {
+    if (chat.id?.startsWith("ai_") || (chat.participants || []).includes(AI_CONTACT_UID) && chat.type !== "group") {
       onOpenChat(chat, AI_CONTACT_UID, getAIContact(), { isAI: true });
       return;
     }
@@ -547,7 +583,6 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       window.removeEventListener("touchmove", onMove);
       window.removeEventListener("touchend", onEnd);
       document.body.style.overflow = "";
-      if (fabPos) localStorage.setItem("nextext_fab_pos", JSON.stringify(fabPos));
     };
     document.body.style.overflow = "hidden";
     window.addEventListener("mousemove", onMove);
@@ -579,7 +614,6 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       window.removeEventListener("touchmove", onMove);
       window.removeEventListener("touchend", onEnd);
       document.body.style.overflow = "";
-      if (aiPos) localStorage.setItem("nextext_ai_pos", JSON.stringify(aiPos));
     };
     document.body.style.overflow = "hidden";
     window.addEventListener("mousemove", onMove);
@@ -1044,15 +1078,13 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             {sortedChats.map(renderChatRow)}
           </>
         )}
-        {aiApproved && effectiveTab === "all" && (
+        {aiApproved && effectiveTab === "all" && !visibleChats.some((c) => c.id === `ai_${myUid}`) && (
           <div
             onClick={() => onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true })}
             style={{ display: "flex", alignItems: "center", gap: compactList ? 10 : 13, padding: compactList ? "8px 16px" : "13px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.bg }}
           >
             <div style={{ position: "relative", flexShrink: 0 }}>
-              <div style={{ width: compactList ? 40 : 52, height: compactList ? 40 : 52, borderRadius: "50%", background: "linear-gradient(135deg, #7C5CFF, #53BDEB)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
-                <span style={{ fontSize: compactList ? 18 : 22 }}>🤖</span>
-              </div>
+              <Avatar uid={AI_CONTACT_UID} size={compactList ? 40 : 52} style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: compactList ? 1 : 3 }}>
@@ -1396,7 +1428,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               <Pin size={17} color={(contextMenuChat.pinnedBy || []).includes(myUid) ? t.accent : t.text} />
               <span style={{ fontSize: 14.5, color: (contextMenuChat.pinnedBy || []).includes(myUid) ? t.accent : t.text }}>{(contextMenuChat.pinnedBy || []).includes(myUid) ? "Unpin chat" : "Pin chat"}</span>
             </div>
-            <div onClick={() => { if (window.confirm("Delete this chat permanently?")) { deleteChatCompletely(contextMenuChat.id).catch(() => {}); } setContextMenuChat(null); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+            <div onClick={() => { if (window.confirm("Delete this chat permanently?")) { deleteChatAndAIDuplicates(contextMenuChat.id); } setContextMenuChat(null); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
               <Trash2 size={17} color="#FF3B30" />
               <span style={{ fontSize: 14.5, color: "#FF3B30" }}>Delete chat</span>
             </div>
@@ -1514,7 +1546,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
                     <Archive size={15} color={t.primary} />
                     <span style={{ fontSize: 13, fontWeight: 700, color: t.primary }}>Unarchive</span>
                   </div>
-                  <div onClick={() => { if (window.confirm("Delete this chat permanently?")) deleteChatCompletely(c.id).catch(() => {}); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, cursor: "pointer" }}>
+                  <div onClick={() => { if (window.confirm("Delete this chat permanently?")) deleteChatAndAIDuplicates(c.id); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, cursor: "pointer" }}>
                     <Trash2 size={15} color="#FF3B30" />
                     <span style={{ fontSize: 13, fontWeight: 700, color: "#FF3B30" }}>Delete</span>
                   </div>

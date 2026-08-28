@@ -3259,6 +3259,15 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       // screen exists, go there, otherwise let the OS close the app.
       let backListener = null;
       const onBack = () => {
+        // If a status builder / camera sheet is open, let it handle the back
+        // press instead of popping the navigation stack. The status screen
+        // exposes `__nextextStatusBuilderOpen` and listens for `nextextCloseStatusBuilder`.
+        try {
+          if (window.__nextextStatusBuilderOpen) {
+            window.dispatchEvent(new CustomEvent("nextextCloseStatusBuilder"));
+            return;
+          }
+        } catch {}
         const cur = screenRef.current;
         const hist = navHistoryRef.current;
         while (hist.length && hist[hist.length - 1] === cur) hist.pop();

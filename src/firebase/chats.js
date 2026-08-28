@@ -615,7 +615,7 @@ export async function sendMediaMessage(chatId, senderUid, type, uploadResult, ot
     editedAt: null,
     editHistory: [],
     editWindowExpiresAt: null,
-    disappearing: null,
+    disappearing: disappearingData,
     screenshotDetected: false,
     replyTo,
     reactions: {},
