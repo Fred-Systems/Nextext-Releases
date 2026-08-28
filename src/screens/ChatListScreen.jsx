@@ -16,6 +16,7 @@ function getStoredViewed() {
   try { const raw = localStorage.getItem(VIEWED_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
 }
 import { uploadChatFile } from "../supabase/media";
+import { uploadMediaFile } from "../services/mediaUpload";
 import Avatar from "../components/Avatar";
 import AISidebarWidget from "../components/AISidebarWidget";
 import NewGroupScreen from "./NewGroupScreen";
@@ -751,7 +752,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       }
       const file = new File([media.blob], `camera-${Date.now()}.${media.ext}`, { type: media.mime });
       try {
-        const result = await uploadChatFile(chatId, myUid, file, { compress: media.type !== "video" });
+        const result = await uploadMediaFile(chatId, myUid, file);
         const participants = target.participants || [];
         await sendMediaMessage(chatId, myUid, media.type, result, participants, { disappearing: globalCameraDisappearing ? { viewOnce: true } : null });
       } catch { /* keep going */ }
@@ -770,7 +771,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     }
     const file = new File([media.blob], `camera-${Date.now()}.${media.ext}`, { type: media.mime });
     try {
-      const result = await uploadChatFile(chatId, myUid, file, { compress: media.type !== "video" });
+      const result = await uploadMediaFile(chatId, myUid, file);
       const participants = targetChat.participants || [];
       await sendMediaMessage(chatId, myUid, media.type, result, participants, { disappearing: globalCameraDisappearing ? { viewOnce: true } : null });
       openChatRow(targetChat);
@@ -785,7 +786,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     try {
       const media = capturedMedia;
       const file = new File([media.blob], `status-${Date.now()}.${media.ext}`, { type: media.mime });
-      const result = await uploadChatFile(`status-${myUid}`, myUid, file, { compress: media.type !== "video" });
+      const result = await uploadMediaFile(`status-${myUid}`, myUid, file);
       let durationMs = null;
       if (media.type === "video") {
         const v = document.createElement("video");
@@ -1510,7 +1511,11 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       {groupMenu && (
         <div onClick={() => setGroupMenu(null)} style={{ position: "fixed", inset: 0, zIndex: 9998 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "rgba(30,30,30,0.97)", borderRadius: 12, overflowY: "auto", maxHeight: "70vh", zIndex: 9999, boxShadow: "0 8px 30px rgba(0,0,0,0.5)", minWidth: 210, whiteSpace: "nowrap", WebkitOverflowScrolling: "touch" }}>
-            <div onClick={() => { setGroupMenu(null); openGroupInfo(groupMenu); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer" }}>
+            <div onClick={() => { const c = groupMenu; setGroupMenu(null); openChatRow(c); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer" }}>
+              <MessageCircle size={16} color={t.primary} />
+              <span style={{ color: "#fff", fontSize: 14, fontWeight: 600 }}>Open Chat</span>
+            </div>
+            <div onClick={() => { setGroupMenu(null); openGroupInfo(groupMenu); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
               <Info size={16} color="#00A884" />
               <span style={{ color: "#fff", fontSize: 14, fontWeight: 600 }}>View Group Info</span>
             </div>

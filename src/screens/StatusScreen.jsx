@@ -6,6 +6,7 @@ import { postStatus, useStatuses, viewStatus, useStatusViewers, deleteStatus } f
 import { useContacts } from "../firebase/contacts";
 import { useChats, getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
 import { uploadChatFile } from "../supabase/media";
+import { uploadMediaFile, RawFileTooLargeError } from "../services/mediaUpload";
 import CameraCapture from "../components/CameraCapture";
 import { doc, onSnapshot, updateDoc, setDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -447,7 +448,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       // "voice" so the viewer can play it back inline.
       if (snapMode === "media" && snapVoice) {
         const voiceFile = new File([snapVoice], `status-voice-${Date.now()}.webm`, { type: snapVoice.type || "audio/webm" });
-        const voiceResult = await uploadChatFile(`status-${myUid}`, myUid, voiceFile, { compress: false });
+        const voiceResult = await uploadMediaFile(`status-${myUid}`, myUid, voiceFile);
         await postStatus(myUid, {
           text: snapText.trim() || null,
           mediaURL: voiceResult.url,
@@ -465,7 +466,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
         for (let i = 0; i < snapImages.length; i++) {
           const img = snapImages[i];
           const file = new File([img], `status-${Date.now()}-${i}.jpg`, { type: "image/jpeg" });
-          const result = await uploadChatFile(`status-${myUid}`, myUid, file, { compress: true });
+          const result = await uploadMediaFile(`status-${myUid}`, myUid, file);
           await postStatus(myUid, {
             text: snapText.trim() || null,
             mediaURL: result.url,
@@ -532,7 +533,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
           });
         } else {
-          const result = await uploadChatFile(`status-${myUid}`, myUid, file, { compress: !isVideo });
+          const result = await uploadMediaFile(`status-${myUid}`, myUid, file);
           let durationMs = null;
           if (isVideo) {
             durationMs = await getVideoDuration(snapMedia);
@@ -751,7 +752,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       // media into the right Supabase folder.
       const chatId = await getOrCreateDirectChat(myUid, targetUid);
       const isImage = postMediaType === "image";
-      const result = await uploadChatFile(chatId, myUid, postMedia, { compress: isImage });
+      const result = await uploadMediaFile(chatId, myUid, postMedia);
       await sendMediaMessage(chatId, myUid, isImage ? "image" : "video", result, [targetUid]);
       setShowCaptureActions(false);
       setShowPost(false);

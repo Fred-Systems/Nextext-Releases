@@ -9,6 +9,8 @@ import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings } fr
 import { getPreWarmConfig, setPreWarmEnabled } from "../firebase/prewarm";
 import { getUserMessageStats, formatActiveTime, formatBytes } from "../firebase/stats";
 import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest } from "../firebase/ai";
+import { getActiveStorageProviderFromDb, setActiveStorageProviderDb } from "../firebase/systemSettings";
+import { invalidateStorageProviderCache } from "../services/mediaUpload";
 
 export default function AdminDashboard({ myUid, onBack }) {
   const { t } = useTheme();
@@ -47,6 +49,12 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [aiModeDraft, setAiModeDraft] = useState(sysConfig?.aiMode || "old");
   const [aiLiveDraft, setAiLiveDraft] = useState(sysConfig?.aiLiveModel || "groq/compound");
   const [aiSaved, setAiSaved] = useState(false);
+  const [storageProvider, setStorageProvider] = useState("supabase");
+  const [storageProviderBusy, setStorageProviderBusy] = useState(false);
+  const [storageProviderError, setStorageProviderError] = useState("");
+  useEffect(() => {
+    getActiveStorageProviderFromDb().then(setStorageProvider).catch(() => {});
+  }, []);
   // Keep the draft in sync with the saved config. sysConfig loads asynchronously
   // (often after this component first renders), so initializing the draft from it
   // once left the selector stuck on "old" even after "live" was saved — reopening
@@ -1095,6 +1103,48 @@ export default function AdminDashboard({ myUid, onBack }) {
 
       {tab === "system" && (
         <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Globe size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Active Storage Provider</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Choose where all media (chat photos/videos, statuses, avatars) is uploaded.
+              <strong> Supabase</strong> stores files in the private <code style={{ background: t.bg, padding: "2px 6px", borderRadius: 4 }}>chat-media</code> bucket.
+              <strong> Cloudinary</strong> uses the backup engine (cloud <code style={{ background: t.bg, padding: "2px 6px", borderRadius: 4 }}>lsfhbqod</code>, unsigned preset <code style={{ background: t.bg, padding: "2px 6px", borderRadius: 4 }}>app_unsigned_preset</code>) for automatic optimization & CDN delivery.
+              All uploads run through the centralized compression pipeline (15MB pre-compression gate, image → 70% JPEG, video → first-frame thumbnail).
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[["supabase", "Supabase"], ["cloudinary", "Cloudinary"]].map(([key, label]) => (
+                <div
+                  key={key}
+                  onClick={async () => {
+                    if (storageProvider === key || storageProviderBusy) return;
+                    setStorageProviderBusy(true);
+                    setStorageProviderError("");
+                    try {
+                      await setActiveStorageProviderDb(key);
+                      setStorageProvider(key);
+                      invalidateStorageProviderCache();
+                    } catch (e) {
+                      setStorageProviderError(e.message || "Couldn't switch provider");
+                    } finally {
+                      setStorageProviderBusy(false);
+                    }
+                  }}
+                  style={{ flex: 1, padding: "13px 0", borderRadius: 10, textAlign: "center", cursor: storageProviderBusy ? "wait" : "pointer", fontWeight: 700, fontSize: 13.5, border: `1.5px solid ${storageProvider === key ? t.primary : t.border}`, background: storageProvider === key ? t.primary : t.surface, color: storageProvider === key ? t.bubbleMeText : t.text, opacity: storageProviderBusy ? 0.6 : 1 }}
+                >
+                  {label}
+                </div>
+              ))}
+            </div>
+            {storageProviderError && <div style={{ color: "#FF3B30", fontSize: 12, marginTop: 8 }}>{storageProviderError}</div>}
+            {storageProvider && !storageProviderError && (
+              <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: storageProvider === "cloudinary" ? "#E5F9E7" : t.primaryLight, color: storageProvider === "cloudinary" ? "#28A745" : t.primary, fontSize: 12.5, fontWeight: 600 }}>
+                Active provider: <strong>{storageProvider === "cloudinary" ? "Cloudinary" : "Supabase"}</strong> — new uploads will route here.
+              </div>
+            )}
+          </div>
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <Power size={18} color="#FF3B30" />

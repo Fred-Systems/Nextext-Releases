@@ -16,6 +16,7 @@ import { Download } from "lucide-react";
 import { getWallpaperForChat, setWallpaperForChat, fileToWallpaperDataUrl } from "../theme/wallpaper";
 import { usePresence, formatLastSeen } from "../firebase/presence";
 import { uploadChatFile, deleteChatFile } from "../supabase/media";
+import { uploadMediaFile, RawFileTooLargeError } from "../services/mediaUpload";
 import { FileTooLargeError } from "../media/mediaCompression";
 import { cacheMedia, getLocalMediaUrl, hasCachedMedia } from "../media/localMediaCache";
 import { doc, getDoc, onSnapshot, addDoc, collection, serverTimestamp, updateDoc, increment } from "firebase/firestore";
@@ -1830,14 +1831,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setCaptionBusy(true);
     setSendError("");
     try {
-      const result = await uploadChatFile(chatId, myUid, pm.file, { compress: pm.isImage });
+      const result = await uploadMediaFile(chatId, myUid, pm.file);
       const caption = captionText.trim();
       await sendMediaMessage(chatId, myUid, pm.isImage ? "image" : "video", result, otherParticipants, { replyTo: replyingTo, text: caption || null, disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
       setDisappearingViews(0);
       setReplyingTo(null);
       cancelPendingMedia();
     } catch (err) {
-      if (err instanceof FileTooLargeError) setSendError("Files must be under 50MB.");
+      if (err instanceof RawFileTooLargeError) setSendError(err.message);
+      else if (err instanceof FileTooLargeError) setSendError("Files must be under 50MB.");
       else setSendError("Couldn't send: " + err.message);
     } finally {
       setCaptionBusy(false);
@@ -1851,7 +1853,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     const isImage = (file.type || "").startsWith("image/");
     const blocked = parentalBlockedType(isImage ? "image" : "video");
     if (blocked) { setSendError(blocked); return; }
-    const result = await uploadChatFile(chatId, myUid, file, { compress: isImage });
+    const result = await uploadMediaFile(chatId, myUid, file);
     await sendMediaMessage(chatId, myUid, isImage ? "image" : "video", result, otherParticipants, { replyTo: replyingTo, disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
   };
 
@@ -1861,12 +1863,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setSendError("");
     setUploading(true);
     try {
-       const result = await uploadChatFile(chatId, myUid, file);
+       const result = await uploadMediaFile(chatId, myUid, file);
        await sendMediaMessage(chatId, myUid, "file", result, otherParticipants, { replyTo: replyingTo, disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
        setDisappearingViews(0);
        setReplyingTo(null);
     } catch (err) {
-      if (err instanceof FileTooLargeError) setSendError("Files must be under 50MB.");
+      if (err instanceof RawFileTooLargeError) setSendError(err.message);
+      else if (err instanceof FileTooLargeError) setSendError("Files must be under 50MB.");
       else setSendError("Couldn't send: " + err.message);
     }
     setUploading(false);
@@ -3124,7 +3127,17 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </div>
         ) : (
           <div style={{ width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)", position: "relative" }}>
-            <video src={localSrc || m.mediaURL} controls className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
+            {/* Thumbnail-first policy: show static thumbnail with play button overlay */}
+            {m.mediaThumbURL ? (
+              <div style={{ position: "relative", width: "100%", height: "100%", cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); setFullscreenImage(localSrc || m.mediaURL); }}>
+                <img src={m.mediaThumbURL} alt="Video thumbnail" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
+                <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: 48, height: 48, borderRadius: "50%", background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)" }}>
+                  <Play size={24} color="#fff" fill="#fff" />
+                </div>
+              </div>
+            ) : (
+              <video src={localSrc || m.mediaURL} controls preload="none" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
+            )}
           </div>
         )}
         {renderDownloadBelow(m)}

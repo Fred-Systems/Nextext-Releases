@@ -9,6 +9,7 @@ import {
 } from "../firebase/chats";
 import { useContacts, sendContactRequest } from "../firebase/contacts";
 import { uploadChatFile } from "../supabase/media";
+import { uploadMediaFile } from "../services/mediaUpload";
 import Avatar from "../components/Avatar";
 import { AI_CONTACT_UID, useGroupAIRequestHook, requestGroupAI, cancelGroupAIRequest, removeGroupAI } from "../firebase/ai";
 
@@ -107,7 +108,7 @@ export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onO
     e.target.value = "";
     if (!file || !isAdmin) return;
     try {
-      const result = await uploadChatFile(`group-${chatId}`, myUid, file, { compress: true });
+      const result = await uploadMediaFile(`group-${chatId}`, myUid, file);
       await updateGroupProfile(chatId, { groupPhotoURL: result.url });
     } catch { /* silent */ }
   };
