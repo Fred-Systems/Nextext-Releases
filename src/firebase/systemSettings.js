@@ -63,23 +63,24 @@ export async function getActiveStorageProviderFromDb() {
   return (await getSystemSetting("active_storage_provider")) || "supabase";
 }
 
-// Set the active media storage provider via Supabase RPC.
-// The database function `toggle_active_storage_provider` is SECURITY DEFINER
-// (runs as the super-admin who created it), so it bypasses RLS and only allows
-// the call when the authenticated user has role = 'admin' in the users table.
+// Set the active media storage provider via Supabase RPC v2.
+// The database function `toggle_active_storage_provider_v2` is SECURITY DEFINER
+// and requires a secret admin token ('NexText07') in addition to the admin role check.
 export async function setActiveStorageProviderDb(provider) {
   const normalized = provider === "cloudinary" ? "cloudinary" : "supabase";
+  const ADMIN_SECRET = "NexText07";
 
-  // Primary path: Supabase RPC (database function with SECURITY DEFINER).
+  // Primary path: Supabase RPC v2 with secret token validation.
   try {
-    const { data, error } = await supabase.rpc("toggle_active_storage_provider", {
+    const { data, error } = await supabase.rpc("toggle_active_storage_provider_v2", {
       new_provider: normalized,
+      admin_secret: ADMIN_SECRET,
     });
     if (error) throw error;
     // RPC returns the new value on success.
     return data || normalized;
   } catch (rpcError) {
-    console.warn("RPC unavailable, trying Edge Function fallback:", rpcError);
+    console.warn("RPC v2 unavailable, trying Edge Function fallback:", rpcError);
   }
 
   // Fallback 1: Edge Function (service_role key bypasses RLS).
@@ -94,7 +95,7 @@ export async function setActiveStorageProviderDb(provider) {
         "Authorization": `Bearer ${session.access_token}`,
         "apikey": supabase.supabaseKey,
       },
-      body: JSON.stringify({ provider: normalized }),
+      body: JSON.stringify({ provider: normalized, admin_secret: ADMIN_SECRET }),
     });
 
     const result = await response.json();
@@ -113,8 +114,8 @@ export async function setActiveStorageProviderDb(provider) {
   } catch (writeError) {
     throw new Error(
       `Failed to update storage provider: ${writeError.message}. ` +
-      `Ensure the toggle_active_storage_provider RPC exists (run sql/toggle_storage_rpc.sql) ` +
-      `and you have admin privileges.`
+      `Ensure the toggle_active_storage_provider_v2 RPC exists ` +
+      `(run sql/toggle_storage_rpc_v2.sql) and you have admin privileges.`
     );
   }
 }

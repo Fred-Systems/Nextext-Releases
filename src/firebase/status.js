@@ -30,6 +30,11 @@ export async function postStatus(ownerId, {
   waitForVideo = false,
   allowDownload = false,
   commentsHidden = false,
+  // Premium low-data preview fields (video only).
+  // previewURL: lightweight 2-3s animated clip for the feed card (loops).
+  // posterURL: static JPEG frame for the feed card and as a poster attribute.
+  previewURL = null,
+  posterURL = null,
   // New pipeline fields (video only). When pipeline is enabled, mediaURL is NOT the original;
   // instead we store private originalPath and derived HLS/fallback/poster paths. While
   // state !== "ready", the client must not expose hlsMasterURL/fallbackURL.
@@ -74,6 +79,8 @@ export async function postStatus(ownerId, {
     renditions: renditions || null,
     errorCode: errorCode || null,
     errorMessage: errorMessage || null,
+    previewURL: previewURL || null,
+    posterURL: posterURL || null,
   });
 }
 
