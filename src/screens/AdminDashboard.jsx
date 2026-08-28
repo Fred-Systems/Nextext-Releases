@@ -9,7 +9,7 @@ import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings } fr
 import { getPreWarmConfig, setPreWarmEnabled } from "../firebase/prewarm";
 import { getUserMessageStats, formatActiveTime, formatBytes } from "../firebase/stats";
 import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest } from "../firebase/ai";
-import { getActiveStorageProviderFromDb, setActiveStorageProviderDb } from "../firebase/systemSettings";
+import { getActiveStorageProviderFromDb, setActiveStorageProviderDb, getSystemSetting, writeSystemSetting } from "../firebase/systemSettings";
 import { invalidateStorageProviderCache } from "../services/mediaUpload";
 
 export default function AdminDashboard({ myUid, onBack }) {
@@ -1142,6 +1142,54 @@ export default function AdminDashboard({ myUid, onBack }) {
             {storageProvider && !storageProviderError && (
               <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: storageProvider === "cloudinary" ? "#E5F9E7" : t.primaryLight, color: storageProvider === "cloudinary" ? "#28A745" : t.primary, fontSize: 12.5, fontWeight: 600 }}>
                 Active provider: <strong>{storageProvider === "cloudinary" ? "Cloudinary" : "Supabase"}</strong> — new uploads will route here.
+              </div>
+            )}
+          </div>
+          {/* Status Preview Mode toggle */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Video size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Status Preview Mode</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Controls how status videos appear in the feed. <strong>Video Loop</strong> shows a lightweight 2-3 second animated preview clip. <strong>Static Picture</strong> shows only the poster JPEG (maximum data savings, no video loading).
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[
+                { key: "video_loop", label: "Video Loop (animated)", icon: "🎬" },
+                { key: "static_picture", label: "Static Picture (saves data)", icon: "🖼️" },
+              ].map(({ key, label, icon }) => (
+                <div
+                  key={key}
+                  onClick={async () => {
+                    try {
+                      await writeSystemSetting("status_preview_mode", key, { description: "Status feed preview mode" });
+                      forceSettingsRerender();
+                    } catch (e) {
+                      console.error("Failed to set preview mode:", e);
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "12px 10px",
+                    borderRadius: 10,
+                    textAlign: "center",
+                    cursor: "pointer",
+                    border: `1.5px solid ${settings?.status_preview_mode === key ? t.primary : t.border}`,
+                    background: settings?.status_preview_mode === key ? t.primary : t.surface,
+                    color: settings?.status_preview_mode === key ? t.bubbleMeText : t.text,
+                    fontWeight: 700,
+                    fontSize: 12.5,
+                  }}
+                >
+                  <div style={{ fontSize: 18, marginBottom: 4 }}>{icon}</div>
+                  {label}
+                </div>
+              ))}
+            </div>
+            {settings?.status_preview_mode === "static_picture" && (
+              <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "#FFF3CD", color: "#856404", fontSize: 12.5, fontWeight: 600 }}>
+                Static mode ON — status feed will only show poster images, never video clips. Saves maximum data.
               </div>
             )}
           </div>

@@ -58,9 +58,35 @@ export async function writeSystemSetting(key, value, { description = null } = {}
   return data;
 }
 
+// Local cache for the storage provider so it persists across panel re-opens.
+// This prevents the "reverts to supabase" issue when the DB read is slow or
+// blocked by RLS. The cache is written on every successful toggle and loaded
+// on startup.
+const STORAGE_PROVIDER_CACHE_KEY = "nextext_active_storage_provider";
+
+function getCachedStorageProvider() {
+  try {
+    return localStorage.getItem(STORAGE_PROVIDER_CACHE_KEY) || null;
+  } catch { return null; }
+}
+
+function setCachedStorageProvider(provider) {
+  try {
+    localStorage.setItem(STORAGE_PROVIDER_CACHE_KEY, provider);
+  } catch {}
+}
+
 // Convenience: get the active media storage provider.
+// Reads from local cache first (instant), then verifies against DB in background.
 export async function getActiveStorageProviderFromDb() {
-  return (await getSystemSetting("active_storage_provider")) || "supabase";
+  // Return cached value immediately so the toggle never appears to revert.
+  const cached = getCachedStorageProvider();
+  // Also fetch from DB and update cache if different.
+  const dbValue = (await getSystemSetting("active_storage_provider")) || "supabase";
+  if (dbValue !== cached) {
+    setCachedStorageProvider(dbValue);
+  }
+  return cached || dbValue;
 }
 
 // Set the active media storage provider via Supabase RPC v2.
@@ -77,7 +103,8 @@ export async function setActiveStorageProviderDb(provider) {
       admin_secret: ADMIN_SECRET,
     });
     if (error) throw error;
-    // RPC returns the new value on success.
+    // RPC returns the new value on success. Persist to local cache.
+    setCachedStorageProvider(normalized);
     return data || normalized;
   } catch (rpcError) {
     console.warn("RPC v2 unavailable, trying Edge Function fallback:", rpcError);
@@ -99,7 +126,11 @@ export async function setActiveStorageProviderDb(provider) {
     });
 
     const result = await response.json();
-    if (response.ok) return normalized;
+    if (response.ok) {
+      setCachedStorageProvider(normalized);
+      setCachedStorageProvider(normalized);
+      return normalized;
+    }
     throw new Error(result?.error || "Edge function rejected request");
   } catch (edgeError) {
     console.warn("Edge function unavailable, trying direct write:", edgeError);

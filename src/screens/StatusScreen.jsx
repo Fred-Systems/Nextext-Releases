@@ -172,6 +172,10 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const globalSettings = useGlobalSettings();
   const hideStatusCamera = globalSettings?.hideStatusCamera === true;
   const hideStatusVoiceNote = globalSettings?.hideStatusVoiceNote === true;
+  // Admin-controlled preview mode: 'video_loop' (default) shows animated clips;
+  // 'static_picture' shows only poster JPEGs (maximum data savings).
+  const statusPreviewMode = globalSettings?.status_preview_mode || "video_loop";
+  const forceStaticPreview = statusPreviewMode === "static_picture";
   const [blockStatus, setBlockStatus] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [myDisplayName, setMyDisplayName] = useState(myName);
@@ -1103,7 +1107,11 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                   <div style={{ position: "relative", paddingBottom: "120%", background: "#000" }}>
                     {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
-                        <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        forceStaticPreview ? (
+                          <img src={latest.posterURL || latest.mediaURL} alt="" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        )
                       ) : (
                         <img src={latest.mediaURL} alt="" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       )
@@ -1138,7 +1146,13 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     </div>
                     <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
                       {latest.mediaURL ? (
-                      latest.mediaType === "video" ? <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      latest.mediaType === "video" ? (
+                        forceStaticPreview ? (
+                          <img src={latest.posterURL || latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        )
+                      ) : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text, textAlign: "center" }}>{(latest.text || "").slice(0, 12) || "Text"}</span></div>
                       )}
@@ -1164,9 +1178,15 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     <div style={{ fontWeight: 700, fontSize: 14.5, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
                     <div style={{ fontSize: 12, color: t.textMuted }}>{items.length} update{items.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}</div>
                   </div>
-                  <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
+                    <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
                     {latest.mediaURL ? (
-                      latest.mediaType === "video" ? <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      latest.mediaType === "video" ? (
+                        forceStaticPreview ? (
+                          <img src={latest.posterURL || latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        )
+                      ) : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text }}>{(latest.text || "").slice(0, 12)}</span></div>
                     )}
@@ -1188,9 +1208,13 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     onClick={() => openStory(myStatuses, myUid)}
                     style={{ position: "relative", borderRadius: 14, overflow: "hidden", border: `2px solid ${t.primary}`, cursor: "pointer", boxSizing: "border-box", paddingBottom: "133.33%", background: "#000", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}
                   >
-                    {latest.mediaURL ? (
+                     {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
+                        forceStaticPreview ? (
+                          <img src={latest.posterURL || latest.mediaURL} alt="" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
                          <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        )
                       ) : (
                         <img src={latest.mediaURL} alt="" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       )
