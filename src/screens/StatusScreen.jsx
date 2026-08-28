@@ -1070,7 +1070,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     </div>
                     <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
                       {latest.mediaURL ? (
-                        latest.mediaType === "video" ? <video src={latest.mediaURL} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        latest.mediaType === "video" ? <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : (
                         <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text, textAlign: "center" }}>{(latest.text || "").slice(0, 12) || "Text"}</span></div>
                       )}
@@ -1098,7 +1098,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                   </div>
                   <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
                     {latest.mediaURL ? (
-                      latest.mediaType === "video" ? <video src={latest.mediaURL} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      latest.mediaType === "video" ? <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text }}>{(latest.text || "").slice(0, 12)}</span></div>
                     )}
@@ -1586,7 +1586,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             )}
 
             {/* Allow download toggle for media statuses */}
-            {(postMode === "media" && (postMedia || postImages.length > 0 || voiceBlob)) && (
+            {postMode === "media" && (
               <div style={{ marginBottom: 12, padding: "12px 14px", borderRadius: 12, background: t.bg, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <Download size={18} color={t.primary} />

@@ -471,7 +471,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   // Pinned chats always sort to the top, regardless of the chosen sort mode.
   const pinCmp = (a, b) => ((b.pinnedBy || []).includes(myUid) ? 1 : 0) - ((a.pinnedBy || []).includes(myUid) ? 1 : 0);
   const sortedChats = (() => {
-    const list = [...tabFiltered];
+    const list = [...tabFiltered].filter((c) => !c.id?.startsWith("ai_"));
     switch (chatSort) {
       case "alpha":
         return list.sort((a, b) => pinCmp(a, b) || (chatDisplayName(a) || "").localeCompare(chatDisplayName(b) || ""));
@@ -1070,30 +1070,30 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           </div>
         ) : (
           <>
+            {aiApproved && effectiveTab === "all" && (
+              <div
+                onClick={() => onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true })}
+                style={{ display: "flex", alignItems: "center", gap: compactList ? 10 : 13, padding: compactList ? "8px 16px" : "13px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.bg }}
+              >
+                <div style={{ position: "relative", flexShrink: 0 }}>
+                  <Avatar uid={AI_CONTACT_UID} size={compactList ? 40 : 52} style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: compactList ? 1 : 3 }}>
+                    <span style={{ fontWeight: 700, color: t.text, fontSize: compactList ? 14.5 : 15.5 }}>NexText AI</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#000", background: "linear-gradient(135deg, #00E676, #00C853)", borderRadius: 6, padding: "1px 6px", marginLeft: 4, letterSpacing: 0.5 }}>NEX-AI</span>
+                  </div>
+                  <span style={{ fontSize: 13.5, color: t.textMuted }}>Ask me anything!</span>
+                </div>
+              </div>
+            )}
             {tabFiltered.length === 0 && !(aiApproved && effectiveTab === "all") && (
               <div style={{ padding: 30, textAlign: "center", color: t.textMuted, fontSize: 13.5, lineHeight: 1.6 }}>
                 {effectiveTab === "all" ? "No chats here yet." : `No ${effectiveTab} chats.`}
               </div>
             )}
-            {sortedChats.map(renderChatRow)}
+            {sortedChats.map((c) => renderChatRow(c))}
           </>
-        )}
-        {aiApproved && effectiveTab === "all" && !visibleChats.some((c) => c.id === `ai_${myUid}`) && (
-          <div
-            onClick={() => onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true })}
-            style={{ display: "flex", alignItems: "center", gap: compactList ? 10 : 13, padding: compactList ? "8px 16px" : "13px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.bg }}
-          >
-            <div style={{ position: "relative", flexShrink: 0 }}>
-              <Avatar uid={AI_CONTACT_UID} size={compactList ? 40 : 52} style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: compactList ? 1 : 3 }}>
-                <span style={{ fontWeight: 700, color: t.text, fontSize: compactList ? 14.5 : 15.5 }}>NexText AI</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: "#000", background: "linear-gradient(135deg, #00E676, #00C853)", borderRadius: 6, padding: "1px 6px", marginLeft: 4, letterSpacing: 0.5 }}>NEX-AI</span>
-              </div>
-              <span style={{ fontSize: 13.5, color: t.textMuted }}>Ask me anything!</span>
-            </div>
-          </div>
         )}
 
         {effectiveTab === "all" && archived.length > 0 && (
@@ -1236,7 +1236,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       )}
 
       {showAddContact && <AddContactSheet myUid={myUid} acceptedContacts={acceptedContacts} onOpenChat={onOpenChat} onClose={() => setShowAddContact(false)} />}
-      {showFindFriends && <FindFriendsScreen myUid={myUid} onBack={() => setShowFindFriends(false)} />}
+      {showFindFriends && <FindFriendsScreen myUid={myUid} onBack={() => setShowFindFriends(false)} onOpenChat={onOpenChat} />}
       {showNewGroup && (
         <NewGroupScreen
           myUid={myUid}

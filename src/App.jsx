@@ -1208,6 +1208,30 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 </div>
               </div>
             )}
+            {/* Message bubble style */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Message bubble style</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Choose the shape of your chat bubbles.</div>
+              </div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: 210 }}>
+                {[["default", "Default"], ["rounded", "Rounded"], ["square", "Square"], ["pill", "Pill"], ["outlined", "Outlined"]].map(([k, label]) => (
+                  <div key={k} onClick={() => { try { localStorage.setItem("nextext_bubble_style", k); } catch {} forceSettingsRerender(); }} style={{ padding: "5px 8px", borderRadius: 7, fontSize: 10.5, fontWeight: 700, cursor: "pointer", background: (localStorage.getItem("nextext_bubble_style") || "default") === k ? t.primary : t.bg, color: (localStorage.getItem("nextext_bubble_style") || "default") === k ? t.bubbleMeText : t.text, border: `1px solid ${(localStorage.getItem("nextext_bubble_style") || "default") === k ? t.primary : t.border}` }}>{label}</div>
+                ))}
+              </div>
+            </div>
+            {/* Unread badge shows */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Unread badge shows</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Count of chats with new messages, or total unread messages.</div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[["chats", "Chats"], ["messages", "Messages"]].map(([k, label]) => (
+                  <div key={k} onClick={() => { try { localStorage.setItem("nextext_badge_mode", k); } catch {} forceSettingsRerender(); }} style={{ padding: "6px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: "pointer", background: (localStorage.getItem("nextext_badge_mode") || "chats") === k ? t.primary : t.bg, color: (localStorage.getItem("nextext_badge_mode") || "chats") === k ? t.bubbleMeText : t.text, border: `1px solid ${(localStorage.getItem("nextext_badge_mode") || "chats") === k ? t.primary : t.border}` }}>{label}</div>
+                ))}
+              </div>
+            </div>
             {/* Hide composer camera button */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
               <div style={{ flex: 1 }}>
@@ -2842,7 +2866,14 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
   const { contacts } = useContacts(myUid);
   const { chats: myChats } = useChats(myUid);
-  const totalUnreadChats = (myChats || []).reduce((sum, c) => sum + (c.unreadCount?.[myUid] || 0), 0);
+  // Badge count mode: "chats" = number of chats that have unread messages
+  // (WhatsApp-style), "messages" = total unread message count. User toggles in
+  // Settings (nextext_badge_mode).
+  const [badgeMode, setBadgeMode] = useState(() => localStorage.getItem("nextext_badge_mode") || "chats");
+  const unreadChatCount = (myChats || []).filter((c) => (c.unreadCount?.[myUid] || 0) > 0).length;
+  const totalUnreadChats = badgeMode === "messages"
+    ? (myChats || []).reduce((sum, c) => sum + (c.unreadCount?.[myUid] || 0), 0)
+    : unreadChatCount;
   const contactUids = (contacts || []).filter((c) => c.status === "accepted").map((c) => c.uid);
   const allStatusUids = [myUid, ...contactUids];
   const allStatuses = useStatuses(myUid ? allStatusUids : []);
@@ -3335,10 +3366,13 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     // the contact name (chatDoc was null → lockedBy check was skipped).
     let resolvedChatDoc = chatDoc;
     if (!resolvedChatDoc && otherUid && myUid) {
-      const directChatId = [myUid, otherUid].sort().join("_");
+      const directChatId = otherUid === AI_CONTACT_UID ? `ai_${myUid}` : [myUid, otherUid].sort().join("_");
       resolvedChatDoc = (myChats || []).find((c) => c.id === directChatId) || null;
     }
-    const chatId = resolvedChatDoc?.id;
+    let chatId = resolvedChatDoc?.id;
+    if (!chatId && otherUid && myUid) {
+      chatId = otherUid === AI_CONTACT_UID ? `ai_${myUid}` : [myUid, otherUid].sort().join("_");
+    }
     const isLockedForMe = !!resolvedChatDoc?.lockedBy?.[myUid];
     const hasLockPass = !!localStorage.getItem("nextext_locked_chats_password");
     if (isLockedForMe && hasLockPass && !options?.lockVerified && !verifiedLockedChatsRef.current.has(chatId)) {

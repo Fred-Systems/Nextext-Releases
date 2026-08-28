@@ -10,6 +10,8 @@ import Avatar from "../components/Avatar";
 import ZoomableMedia from "../components/ZoomableMedia";
 import HlsVideo from "../components/HlsVideo";
 import { getSignedUrl } from "../supabase/media";
+import NextextNative from "../native/nextextNative";
+import { Capacitor } from "@capacitor/core";
 
 const DEFAULT_DURATION_MS = 5000;
 const QUICK_REACTION_EMOJIS = ["❤️", "😂", "😮", "🔥", "👍", "🙏"];
@@ -83,6 +85,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
   const [postingComment, setPostingComment] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   // Pause status playback while comments are open (resume when closed).
   useEffect(() => { setPaused(showComments); }, [showComments]);
   const touchStartRef = useRef({ x: 0, y: 0 });
@@ -487,19 +490,38 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   if (!statuses[idx]) return null;
 
   const handleDownload = async () => {
-    if (!current?.mediaURL) return;
+    const urlToFetch = fallbackUrl || posterUrl || hlsUrl || current?.mediaURL || current?.bgAudioURL;
+    if (!urlToFetch) return;
+    setDownloading(true);
     try {
-      const resp = await fetch(current.mediaURL);
+      const resp = await fetch(urlToFetch);
       const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `nextext-status-${current.id}.${current.mediaType === "video" ? "mp4" : current.mediaType === "voice" ? "webm" : "jpg"}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      const ext = current.mediaType === "video" ? "mp4" : current.mediaType === "voice" ? "webm" : current.mediaType === "image" ? "jpg" : "bin";
+      const fileName = `nextext-status-${current.id}.${ext}`;
+      const mimeType = blob.type || "application/octet-stream";
+      // Native download path (Capacitor WebView) — anchor downloads don't work reliably
+      if (Capacitor.isNativePlatform() && NextextNative.saveToDownloads) {
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const b64 = reader.result.split(",")[1];
+          try { await NextextNative.saveToDownloads({ data: b64, fileName, mimeType }); } catch {}
+          setDownloading(false);
+        };
+        reader.onerror = () => { setDownloading(false); };
+        reader.readAsDataURL(blob);
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+        setDownloading(false);
+      }
     } catch { /* best effort */ }
+    setDownloading(false);
   };
 
   const timeAgo = (ts) => {
@@ -666,21 +688,21 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
               {muted ? <VolumeX size={18} color="#fff" /> : <Volume2 size={18} color="#fff" />}
             </div>
           )}
-          {current?.allowDownload && current?.mediaURL && (
-            <div onClick={(e) => { e.stopPropagation(); handleDownload(); }} title="Download" style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-              <Download size={18} color="#fff" />
+          {(current?.allowDownload || current?.state === "ready" || !current?.state) && (current?.mediaURL || current?.fallbackPath || current?.posterPath || current?.hlsMasterPath) && (
+            <div onClick={(e) => { e.stopPropagation(); if (!downloading) handleDownload(); }} title={downloading ? "Downloading…" : "Download"} style={{ width: 38, height: 38, borderRadius: "50%", background: downloading ? "rgba(0,168,132,0.9)" : "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", cursor: downloading ? "wait" : "pointer", opacity: downloading ? 0.9 : 1 }}>
+              {downloading ? <RefreshCw size={16} color="#fff" style={{ animation: "nextext-spin 0.9s linear infinite" }} /> : <Download size={18} color="#fff" />}
             </div>
           )}
         </div>
       )}
 
       {!showViewers && idx > 0 && (
-        <div onClick={goBack} style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 12 }}>
+        <div onClick={(e) => { e.stopPropagation(); goBack(); }} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()} style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 12 }}>
           <ChevronLeft size={18} color="#fff" />
         </div>
       )}
       {!showViewers && idx < statuses.length - 1 && (
-        <div onClick={() => advanceRef.current?.()} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 12 }}>
+        <div onClick={(e) => { e.stopPropagation(); advanceRef.current?.(); }} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 12 }}>
           <ChevronRight size={18} color="#fff" />
         </div>
       )}

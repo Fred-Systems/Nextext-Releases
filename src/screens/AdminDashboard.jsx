@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, Check, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound, ImageIcon, RefreshCw } from "lucide-react";
+import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, Check, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound, ImageIcon, RefreshCw, Video } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -1528,6 +1528,24 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
               <span style={{ fontWeight: 700, fontSize: 14, color: sysConfig?.nativeGallery ? "#fff" : t.text }}>
                 {sysConfig?.nativeGallery ? "NATIVE GALLERY ON" : "Native gallery off (Files app)"}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Video size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Status Video Pipeline (HLS)</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              When ON, Status videos are uploaded private and transcoded to adaptive HLS (360p/540p/720p) + fallback + poster + card-preview. Requires Blaze + FFmpeg worker (see workers/videoTranscode). Off = legacy direct public URL (Spark-compatible).
+            </div>
+            <div onClick={() => updateGlobalSettings({ statusVideoPipelineEnabled: !settings?.statusVideoPipelineEnabled }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.statusVideoPipelineEnabled ? "#00A884" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.statusVideoPipelineEnabled ? "#00A884" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.statusVideoPipelineEnabled ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.statusVideoPipelineEnabled ? "#fff" : t.text }}>
+                {settings?.statusVideoPipelineEnabled ? "PIPELINE ON (HLS)" : "Pipeline off (direct)"}
               </span>
             </div>
           </div>

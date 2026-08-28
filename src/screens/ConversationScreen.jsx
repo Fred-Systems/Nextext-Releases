@@ -32,6 +32,23 @@ import { getSystemInsets } from "../utils/systemInsets";
 
 const NEX_TEXT_FOLDER = "NexText";
 
+// Configurable message-bubble corner styles (Settings → "Bubble style").
+// Each returns { tl, tr, br, bl } radii for the current message bubble.
+const BUBBLE_STYLES = {
+  default: () => 14,
+  rounded: () => 20,
+  square: () => 5,
+  pill: (gPrev, gNext) => (gPrev || gNext ? 18 : 24),
+  outlined: () => 14,
+};
+function getBubbleRadius(style, groupedWithPrev, groupedWithNext) {
+  const fn = BUBBLE_STYLES[style] || BUBBLE_STYLES.default;
+  return fn(groupedWithPrev, groupedWithNext);
+}
+export function getBubbleStyle() {
+  try { return localStorage.getItem("nextext_bubble_style") || "default"; } catch { return "default"; }
+}
+
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
@@ -1276,15 +1293,18 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (!textToSend) return;
     setSendError("");
     if (!chatId) { setSendError("Chat isn't ready yet — please wait a moment and try again."); return; }
-    setInput("");
-    autoResizeComposer();
   try {
     const sendResult = await sendTextMessage(chatId, myUid, textToSend, otherParticipants, { replyTo: replyingTo });
+    // If queued (offline / network), keep the text visible so the user knows it
+    // hasn't actually gone out yet and can re-tap later. The queued item will
+    // flush automatically when back online.
+    if (sendResult && sendResult.queued) {
+      setSendError("Offline — message saved and will send when you're back online.");
+      return;
+    }
+    setInput("");
+    autoResizeComposer();
     setReplyingTo(null);
-    // If the message was queued (offline / Firestore blocked), don't also fire
-    // the group-AI reply now — it would queue a second message and the AI can't
-    // see the (not-yet-sent) prompt anyway. It will send normally when online.
-    if (sendResult && sendResult.queued) return;
     if (isGroup && shouldTriggerGroupAI(textToSend)) {
         const hasAI = (chatMeta?.participants || []).includes(AI_CONTACT_UID);
         if (hasAI) {
@@ -3653,8 +3673,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
             {/* In-app gallery sheet (enabled via the admin "Native Photo Picker" toggle).
                 Shows selected photos scrollable at the bottom with a quick camera. */}
-            <input ref={galleryCamRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) setGalleryPicks((p) => [...p, { file: f, url: (f.type || "").startsWith("image/") ? URL.createObjectURL(f) : null }]); e.target.value = ""; }} />
-            <input ref={galleryPhotoRef} type="file" accept="image/*,video/*" multiple style={{ display: "none" }} onChange={(e) => { const files = Array.from(e.target.files || []); if (files.length) setGalleryPicks((p) => [...p, ...files.map((f) => ({ file: f, url: (f.type || "").startsWith("image/") ? URL.createObjectURL(f) : null }))]); e.target.value = ""; }} />
+            <input ref={galleryCamRef} type="file" accept="image/*" capture="environment" style={{ position: "absolute", width: 0, height: 0, opacity: 0, pointerEvents: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) setGalleryPicks((p) => [...p, { file: f, url: (f.type || "").startsWith("image/") ? URL.createObjectURL(f) : null }]); e.target.value = ""; }} />
+            <input ref={galleryPhotoRef} type="file" accept="image/*,video/*" multiple style={{ position: "absolute", width: 0, height: 0, opacity: 0, pointerEvents: "none" }} onChange={(e) => { const files = Array.from(e.target.files || []); if (files.length) setGalleryPicks((p) => [...p, ...files.map((f) => ({ file: f, url: (f.type || "").startsWith("image/") ? URL.createObjectURL(f) : null }))]); e.target.value = ""; }} />
             {composerGalleryOpen && (
               <div onClick={() => { setComposerGalleryOpen(false); setGalleryPicks((p) => { p.forEach((x) => x.url && URL.revokeObjectURL(x.url)); return []; }); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 99998, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
                 <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 390, background: t.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 14, boxShadow: "0 -4px 20px rgba(0,0,0,0.3)" }}>
@@ -4241,6 +4261,8 @@ const MessageList = React.memo(function MessageList({ ctx }) {
     const groupedWithPrev = prev && prev.senderId === m.senderId && !prev.deletedForEveryone;
     const groupedWithNext = next && next.senderId === m.senderId && !next.deletedForEveryone;
     const isMine = m.senderId === myUid;
+    const bubbleStyle = getBubbleStyle();
+    const bRadius = getBubbleRadius(bubbleStyle, groupedWithPrev, groupedWithNext);
     const mDate = msgDisplayDate(m);
     const prevDate = msgDisplayDate(prev);
     const newDay = mDate && (!prevDate || prevDate.toDateString() !== mDate.toDateString());
@@ -4265,9 +4287,10 @@ const MessageList = React.memo(function MessageList({ ctx }) {
             onPointerLeave={cancelMessageLongPress}
             onContextMenu={(e) => { e.preventDefault(); if (!selectionMode) enterSelectionMode(m); }}
             style={{
-              position: "relative", maxWidth: (messageWidth === "compact" ? "58%" : messageWidth === "standard" ? "74%" : "90%"), padding: "8px 12px", cursor: "pointer", boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+              position: "relative", maxWidth: (messageWidth === "compact" ? "58%" : messageWidth === "standard" ? "74%" : "90%"), padding: "8px 12px", cursor: "pointer", boxShadow: bubbleStyle === "outlined" ? "0 1px 2px rgba(0,0,0,0.08)" : "0 1px 2px rgba(0,0,0,0.08)",
               background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText,
-              borderRadius: `${groupedWithPrev ? 6 : 14}px ${groupedWithPrev ? 6 : 14}px ${groupedWithNext ? 6 : 14}px ${groupedWithNext ? 6 : 14}px`,
+              borderRadius: `${bRadius}px ${bRadius}px ${bRadius}px ${bRadius}px`,
+              border: bubbleStyle === "outlined" ? `1.5px solid ${isMine ? t.primary : t.border}` : "none",
               outline: selectedMessages.has(m.id) ? `2px solid ${t.primary}` : "none",
               transform: "translate3d(0,0,0)",
               transition: `transform ${replySnapMs}s ease`,

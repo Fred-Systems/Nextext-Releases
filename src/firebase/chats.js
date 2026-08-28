@@ -95,13 +95,11 @@ let outboxFlushing = false;
 let outboxWatcherStarted = false;
 async function flushOutbox() {
   if (outboxFlushing) return;
-  if (isOffline()) return;
   const items = readOutbox();
   if (!items.length) return;
   outboxFlushing = true;
   try {
     for (const item of items) {
-      if (isOffline()) break;
       try {
         await sendTextMessageRaw(item.chatId, item.senderUid, item.text, item.otherParticipants, item.options);
         writeOutbox(readOutbox().filter((x) => x._id !== item._id));
@@ -122,8 +120,10 @@ function ensureOutboxWatcher() {
   outboxWatcherStarted = true;
   if (typeof window !== "undefined") {
     window.addEventListener("online", () => { flushOutbox(); });
-    // Calm retry cadence — 20s, NOT a per-second storm.
-    setInterval(() => { flushOutbox(); }, 20000);
+    window.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") flushOutbox(); });
+    // Calm retry cadence — 5s (fast enough to feel snappy, slow enough to avoid
+    // a per-second write storm on a flaky network).
+    setInterval(() => { flushOutbox(); }, 5000);
   }
   flushOutbox();
 }
