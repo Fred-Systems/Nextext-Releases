@@ -3686,8 +3686,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
             {/* In-app gallery sheet (enabled via the admin "Native Photo Picker" toggle).
                 Shows selected photos scrollable at the bottom with a quick camera. */}
-            <input ref={galleryCamRef} type="file" accept="image/*" capture="environment" style={{ position: "absolute", width: 0, height: 0, opacity: 0, pointerEvents: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) setGalleryPicks((p) => [...p, { file: f, url: (f.type || "").startsWith("image/") ? URL.createObjectURL(f) : null }]); e.target.value = ""; }} />
-            <input ref={galleryPhotoRef} type="file" accept="image/*,video/*" multiple style={{ position: "absolute", width: 0, height: 0, opacity: 0, pointerEvents: "none" }} onChange={(e) => { const files = Array.from(e.target.files || []); if (files.length) setGalleryPicks((p) => [...p, ...files.map((f) => ({ file: f, url: (f.type || "").startsWith("image/") ? URL.createObjectURL(f) : null }))]); e.target.value = ""; }} />
+            <input ref={galleryCamRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) setGalleryPicks((p) => [...p, { file: f, url: (f.type || "").startsWith("image/") ? URL.createObjectURL(f) : null }]); e.target.value = ""; }} />
+            <input ref={galleryPhotoRef} type="file" accept="image/*,video/*" multiple style={{ display: "none" }} onChange={(e) => { const files = Array.from(e.target.files || []); if (files.length) setGalleryPicks((p) => [...p, ...files.map((f) => ({ file: f, url: (f.type || "").startsWith("image/") ? URL.createObjectURL(f) : null }))]); e.target.value = ""; }} />
             {composerGalleryOpen && (
               <div onClick={() => { setComposerGalleryOpen(false); setGalleryPicks((p) => { p.forEach((x) => x.url && URL.revokeObjectURL(x.url)); return []; }); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 99998, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
                 <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 390, background: t.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 14, boxShadow: "0 -4px 20px rgba(0,0,0,0.3)" }}>
@@ -3737,7 +3737,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                       for (const p of picks) { try { await sendFileDirectly(p.file); } catch (err) { console.warn("gallery send failed", err); } }
                       setDisappearingViews(0);
                     }}
-                    style={{ width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: galleryPicks.length ? t.primary : t.border, color: galleryPicks.length ? t.bubbleMeText : t.textMuted, fontWeight: 700, fontSize: 14, cursor: galleryPicks.length ? "pointer" : "default" }}
+                    style={{ width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: galleryPicks.length ? "pointer" : "default", opacity: galleryPicks.length ? 1 : 0.5 }}
                   >
                     Send{galleryPicks.length ? ` (${galleryPicks.length})` : ""}
                   </button>
