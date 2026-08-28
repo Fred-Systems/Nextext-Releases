@@ -172,10 +172,10 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const globalSettings = useGlobalSettings();
   const hideStatusCamera = globalSettings?.hideStatusCamera === true;
   const hideStatusVoiceNote = globalSettings?.hideStatusVoiceNote === true;
-  // Admin-controlled preview mode: 'video_loop' (default) shows animated clips;
-  // 'static_picture' shows only poster JPEGs (maximum data savings).
-  const statusPreviewMode = globalSettings?.status_preview_mode || "video_loop";
-  const forceStaticPreview = statusPreviewMode === "static_picture";
+  // Admin-controlled preview mode: 'static_picture' (default) shows poster JPEGs;
+  // 'video_loop' shows lightweight animated preview clips.
+  const statusPreviewMode = globalSettings?.status_preview_mode || "static_picture";
+  const forceStaticPreview = statusPreviewMode !== "video_loop";
   const [blockStatus, setBlockStatus] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [myDisplayName, setMyDisplayName] = useState(myName);

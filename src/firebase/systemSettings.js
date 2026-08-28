@@ -77,16 +77,28 @@ function setCachedStorageProvider(provider) {
 }
 
 // Convenience: get the active media storage provider.
-// Reads from local cache first (instant), then verifies against DB in background.
+// Three-tier read for maximum reliability:
+// 1. Local localStorage cache (instant, never reverts)
+// 2. Firestore globalSettings (primary source, same doc the admin panel reads)
+// 3. Supabase system_settings (legacy fallback)
 export async function getActiveStorageProviderFromDb() {
-  // Return cached value immediately so the toggle never appears to revert.
   const cached = getCachedStorageProvider();
-  // Also fetch from DB and update cache if different.
+  if (cached) return cached;
+
+  // Try Firestore globalSettings first (same doc the admin panel reads from)
+  try {
+    const { default: configSettings } = await import("./config-settings.js");
+    const globalSettings = configSettings.getSnapshot?.() || {};
+    if (globalSettings?.active_storage_provider) {
+      setCachedStorageProvider(globalSettings.active_storage_provider);
+      return globalSettings.active_storage_provider;
+    }
+  } catch {}
+
+  // Fallback to Supabase system_settings
   const dbValue = (await getSystemSetting("active_storage_provider")) || "supabase";
-  if (dbValue !== cached) {
-    setCachedStorageProvider(dbValue);
-  }
-  return cached || dbValue;
+  setCachedStorageProvider(dbValue);
+  return dbValue;
 }
 
 // Set the active media storage provider via Supabase RPC v2.

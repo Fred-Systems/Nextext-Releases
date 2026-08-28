@@ -1163,7 +1163,10 @@ export default function AdminDashboard({ myUid, onBack }) {
                   key={key}
                   onClick={async () => {
                     try {
-                      await writeSystemSetting("status_preview_mode", key, { description: "Status feed preview mode" });
+                      // Write to Firestore globalSettings (same doc the panel reads from)
+                      await updateGlobalSettings({ status_preview_mode: key }, myUid);
+                      // Also persist to Supabase system_settings for worker access
+                      await writeSystemSetting("status_preview_mode", key, { description: "Status feed preview mode" }).catch(() => {});
                       forceSettingsRerender();
                     } catch (e) {
                       console.error("Failed to set preview mode:", e);
