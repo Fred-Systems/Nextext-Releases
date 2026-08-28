@@ -63,13 +63,26 @@ export async function getActiveStorageProviderFromDb() {
   return (await getSystemSetting("active_storage_provider")) || "supabase";
 }
 
-// Set the active media storage provider via Supabase Edge Function.
-// This bypasses RLS using the service_role key server-side.
-// Falls back to direct client write if the edge function is unavailable.
+// Set the active media storage provider via Supabase RPC.
+// The database function `toggle_active_storage_provider` is SECURITY DEFINER
+// (runs as the super-admin who created it), so it bypasses RLS and only allows
+// the call when the authenticated user has role = 'admin' in the users table.
 export async function setActiveStorageProviderDb(provider) {
   const normalized = provider === "cloudinary" ? "cloudinary" : "supabase";
 
-  // Try the Edge Function first (secure, bypasses RLS)
+  // Primary path: Supabase RPC (database function with SECURITY DEFINER).
+  try {
+    const { data, error } = await supabase.rpc("toggle_active_storage_provider", {
+      new_provider: normalized,
+    });
+    if (error) throw error;
+    // RPC returns the new value on success.
+    return data || normalized;
+  } catch (rpcError) {
+    console.warn("RPC unavailable, trying Edge Function fallback:", rpcError);
+  }
+
+  // Fallback 1: Edge Function (service_role key bypasses RLS).
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) throw new Error("No active session");
@@ -85,29 +98,24 @@ export async function setActiveStorageProviderDb(provider) {
     });
 
     const result = await response.json();
-
-    if (!response.ok) {
-      console.error("Edge function error:", result);
-      // Fall back to direct write (may fail due to RLS, but worth trying)
-      console.warn("Falling back to direct write (may fail due to RLS)");
-      await writeSystemSetting("active_storage_provider", normalized, {
-        description: "Active media storage provider: supabase or cloudinary",
-      });
-      return normalized;
-    }
-
-    return normalized;
+    if (response.ok) return normalized;
+    throw new Error(result?.error || "Edge function rejected request");
   } catch (edgeError) {
-    console.warn("Edge function unavailable, falling back to direct write:", edgeError);
-    // Fall back to direct client write
-    try {
-      await writeSystemSetting("active_storage_provider", normalized, {
-        description: "Active media storage provider: supabase or cloudinary",
-      });
-      return normalized;
-    } catch (writeError) {
-      throw new Error(`Failed to update storage provider: ${writeError.message}. Ensure you have admin privileges.`);
-    }
+    console.warn("Edge function unavailable, trying direct write:", edgeError);
+  }
+
+  // Fallback 2: direct client write (will fail if RLS blocks it).
+  try {
+    await writeSystemSetting("active_storage_provider", normalized, {
+      description: "Active media storage provider: supabase or cloudinary",
+    });
+    return normalized;
+  } catch (writeError) {
+    throw new Error(
+      `Failed to update storage provider: ${writeError.message}. ` +
+      `Ensure the toggle_active_storage_provider RPC exists (run sql/toggle_storage_rpc.sql) ` +
+      `and you have admin privileges.`
+    );
   }
 }
 

@@ -535,24 +535,91 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
         } else {
           const result = await uploadMediaFile(`status-${myUid}`, myUid, file);
           let durationMs = null;
+          let previewURL = null;
           if (isVideo) {
             durationMs = await getVideoDuration(snapMedia);
+            // Generate lightweight preview clip + poster for the feed card.
+            try {
+              const { generateStatusPreview } = await import("../media/videoPreview.js");
+              const { previewBlob, posterBlob } = await generateStatusPreview(snapMedia);
+              if (previewBlob) {
+                const previewFile = new File([previewBlob], `status-preview-${Date.now()}.webm`, { type: previewBlob.type || "video/webm" });
+                const previewResult = await uploadMediaFile(`status-${myUid}`, myUid, previewFile);
+                previewURL = previewResult.url;
+              }
+              if (posterBlob) {
+                const posterFile = new File([posterBlob], `status-poster-${Date.now()}.jpg`, { type: "image/jpeg" });
+                const posterResult = await uploadMediaFile(`status-${myUid}`, myUid, posterFile);
+                await postStatus(myUid, {
+                  text: snapText.trim() || null,
+                  mediaURL: result.url,
+                  mediaType: "video",
+                  backgroundColor: null,
+                  fontFamily: null,
+                  durationMs: durationMs || snapDuration * 1000,
+                  textOverlay: snapTextOverlay.trim() || null,
+                  bgAudioURL,
+                  bgAudioVolume: bgAudioVol,
+                  videoVolume: vidVol,
+                  waitForVideo: isVideo && snapWaitForVideo,
+                  allowDownload: snapAllowDownload,
+                  commentsHidden: snapHideComments,
+                  previewURL: previewURL || null,
+                  posterURL: posterResult.url,
+                });
+              } else {
+                await postStatus(myUid, {
+                  text: snapText.trim() || null,
+                  mediaURL: result.url,
+                  mediaType: "video",
+                  backgroundColor: null,
+                  fontFamily: null,
+                  durationMs: durationMs || snapDuration * 1000,
+                  textOverlay: snapTextOverlay.trim() || null,
+                  bgAudioURL,
+                  bgAudioVolume: bgAudioVol,
+                  videoVolume: vidVol,
+                  waitForVideo: isVideo && snapWaitForVideo,
+                  allowDownload: snapAllowDownload,
+                  commentsHidden: snapHideComments,
+                  previewURL: previewURL || null,
+                });
+              }
+            } catch {
+              // Preview generation failed — post without preview.
+              await postStatus(myUid, {
+                text: snapText.trim() || null,
+                mediaURL: result.url,
+                mediaType: "video",
+                backgroundColor: null,
+                fontFamily: null,
+                durationMs: durationMs || snapDuration * 1000,
+                textOverlay: snapTextOverlay.trim() || null,
+                bgAudioURL,
+                bgAudioVolume: bgAudioVol,
+                videoVolume: vidVol,
+                waitForVideo: isVideo && snapWaitForVideo,
+                allowDownload: snapAllowDownload,
+                commentsHidden: snapHideComments,
+              });
+            }
+          } else {
+            await postStatus(myUid, {
+              text: snapText.trim() || null,
+              mediaURL: result.url,
+              mediaType: "image",
+              backgroundColor: null,
+              fontFamily: null,
+              durationMs: durationMs || snapDuration * 1000,
+              textOverlay: snapTextOverlay.trim() || null,
+              bgAudioURL,
+              bgAudioVolume: bgAudioVol,
+              videoVolume: vidVol,
+              waitForVideo: isVideo && snapWaitForVideo,
+              allowDownload: snapAllowDownload,
+              commentsHidden: snapHideComments,
+            });
           }
-          await postStatus(myUid, {
-            text: snapText.trim() || null,
-            mediaURL: result.url,
-            mediaType: isVideo ? "video" : "image",
-            backgroundColor: null,
-            fontFamily: null,
-            durationMs: durationMs || snapDuration * 1000,
-            textOverlay: snapTextOverlay.trim() || null,
-            bgAudioURL,
-            bgAudioVolume: bgAudioVol,
-            videoVolume: vidVol,
-            waitForVideo: isVideo && snapWaitForVideo,
-            allowDownload: snapAllowDownload,
-            commentsHidden: snapHideComments,
-          });
         }
       }
 
@@ -1036,7 +1103,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                   <div style={{ position: "relative", paddingBottom: "120%", background: "#000" }}>
                     {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
-                        <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : (
                         <img src={latest.mediaURL} alt="" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       )
@@ -1071,9 +1138,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     </div>
                     <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
                       {latest.mediaURL ? (
-                        latest.mediaType === "video" ? <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      ) : (
-                        <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text, textAlign: "center" }}>{(latest.text || "").slice(0, 12) || "Text"}</span></div>
+                      latest.mediaType === "video" ? <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text, textAlign: "center" }}>{(latest.text || "").slice(0, 12) || "Text"}</span></div>
                       )}
                     </div>
                   </div>
@@ -1099,7 +1166,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                   </div>
                   <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
                     {latest.mediaURL ? (
-                      latest.mediaType === "video" ? <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      latest.mediaType === "video" ? <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <img src={latest.mediaURL} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text }}>{(latest.text || "").slice(0, 12)}</span></div>
                     )}
@@ -1123,7 +1190,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                   >
                     {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
-                         <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                         <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : (
                         <img src={latest.mediaURL} alt="" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       )
@@ -1169,7 +1236,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                 >
                   {latest.mediaURL ? (
                     latest.mediaType === "video" ? (
-                       <video src={latest.mediaURL} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        <video src={latest.previewURL || latest.mediaURL} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
 
                     ) : (
                       <img src={latest.mediaURL} alt="" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />

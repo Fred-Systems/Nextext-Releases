@@ -593,16 +593,31 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
         ) : current.mediaType === "video" && (current.mediaURL || hlsUrl || fallbackUrl) ? (
           hlsUrl ? (
             <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-              <HlsVideo
-                src={hlsUrl}
-                fallbackSrc={fallbackUrl || current.mediaURL}
-                poster={posterUrl || undefined}
-                videoRef={videoRef}
-                style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                controls={false}
-                onLoadedMetadata={(e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); }}
-                onEnded={() => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); }}
-              />
+              {/* Show lightweight preview loop if available; otherwise full HLS */}
+              {current.previewURL && !liveVideoDuration ? (
+                <video
+                  ref={videoRef}
+                  src={current.previewURL}
+                  loop
+                  muted
+                  autoPlay
+                  playsInline
+                  poster={posterUrl || current.posterURL || undefined}
+                  style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                  onLoadedMetadata={(e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); }}
+                />
+              ) : (
+                <HlsVideo
+                  src={hlsUrl}
+                  fallbackSrc={fallbackUrl || current.mediaURL}
+                  poster={posterUrl || current.posterURL || undefined}
+                  videoRef={videoRef}
+                  style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                  controls={false}
+                  onLoadedMetadata={(e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); }}
+                  onEnded={() => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); }}
+                />
+              )}
               {(current.textOverlay || current.text) && (
                 <div style={{ position: "absolute", bottom: 16, left: 12, right: 12, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
                   {current.textOverlay || current.text}
