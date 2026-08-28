@@ -228,21 +228,6 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       }
     } catch { /* no prefill */ }
   }, []);
-  // Expose builder state for global hardware back handling (AppShell).
-  // When the user presses the Android back button while the sheet is open,
-  // AppShell will fire `nextextCloseStatusBuilder` instead of navigating away.
-  useEffect(() => {
-    const open = !!(showPost || showCamera || viewStoryOwner || showCaptureActions);
-    try { window.__nextextStatusBuilderOpen = open; } catch {}
-    const onClose = () => {
-      if (showCaptureActions) { setShowCaptureActions(false); return; }
-      if (showCamera) { try { if (cameraStreamRef.current) cameraStreamRef.current.getTracks().forEach((tr) => tr.stop()); } catch {} setShowCamera(false); return; }
-      if (showPost) { setShowPost(false); setPostMedia(null); setPostText(""); setPostMode("text"); return; }
-      if (viewStoryOwner) { setViewStoryOwner(null); return; }
-    };
-    window.addEventListener("nextextCloseStatusBuilder", onClose);
-    return () => window.removeEventListener("nextextCloseStatusBuilder", onClose);
-  }, [showPost, showCamera, viewStoryOwner, showCaptureActions]);
   const [posting, setPosting] = useState(false);
   const [viewStoryOwner, setViewStoryOwner] = useState(null);
   const [viewedMap, setViewedMap] = useState(() => getStoredViewed());
@@ -291,6 +276,19 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const [showCaptureActions, setShowCaptureActions] = useState(false);
   const [_sendingToChat, setSendingToChat] = useState(false);
   const [chatSendTarget, setChatSendTarget] = useState(null);
+  // Expose builder state for global hardware back handling (AppShell).
+  useEffect(() => {
+    const open = !!(showPost || showCamera || viewStoryOwner || showCaptureActions);
+    try { window.__nextextStatusBuilderOpen = open; } catch {}
+    const onClose = () => {
+      if (showCaptureActions) { setShowCaptureActions(false); return; }
+      if (showCamera) { try { if (cameraStreamRef.current) cameraStreamRef.current.getTracks().forEach((tr) => tr.stop()); } catch {} setShowCamera(false); return; }
+      if (showPost) { setShowPost(false); setPostMedia(null); setPostText(""); setPostMode("text"); return; }
+      if (viewStoryOwner) { setViewStoryOwner(null); return; }
+    };
+    window.addEventListener("nextextCloseStatusBuilder", onClose);
+    return () => window.removeEventListener("nextextCloseStatusBuilder", onClose);
+  }, [showPost, showCamera, viewStoryOwner, showCaptureActions]);
   const photoInputRef = useRef(null);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [showZoomHint, setShowZoomHint] = useState(false);

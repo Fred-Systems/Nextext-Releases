@@ -1391,6 +1391,12 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               <X size={18} color={t.textMuted} onClick={(e) => { e.stopPropagation(); setContextMenuChat(null); setMenuError(""); }} style={{ cursor: "pointer", flexShrink: 0 }} />
             </div>
             {menuError && <div style={{ padding: "8px 18px", fontSize: 12, color: "#FF3B30", background: "#FF3B3015" }}>{menuError}</div>}
+            {contextMenuChat.type === "group" && (
+              <div onClick={() => { const c = contextMenuChat; setContextMenuChat(null); openGroupInfo(c); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", cursor: "pointer" }}>
+                <Info size={17} color={t.text} />
+                <span style={{ fontSize: 14.5, color: t.text }}>View Group Info</span>
+              </div>
+            )}
             <div onClick={() => {
               setMenuError("");
               const chat = contextMenuChat;

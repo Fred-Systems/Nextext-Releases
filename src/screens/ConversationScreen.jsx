@@ -1361,9 +1361,29 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
   const handleCopyText = useCallback(() => {
     if (!activeMsg?.text) return;
-    navigator.clipboard?.writeText(activeMsg.text).catch(() => {});
+    const latest = messages.find((m) => m.id === activeMsg.id) || activeMsg;
+    const text = latest.text || activeMsg.text;
+    const doCopy = async (t) => {
+      try {
+        if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(t); return true; }
+      } catch {}
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = t;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, ta.value.length);
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+      } catch { return false; }
+    };
+    doCopy(text).catch(() => {});
     setActiveMsg(null);
-  }, [activeMsg]);
+  }, [activeMsg, messages]);
 
   const handleTranslateSelect = async (langCode) => {
     const m = translateMsg || activeMsg;
