@@ -25,14 +25,37 @@ const THUMB_WIDTH = 480;
 
 export const RAW_UPLOAD_LIMIT = RAW_PRE_COMPRESSION_LIMIT;
 
-// Read the active storage provider. Falls back to "supabase" on any error so
-// the app keeps working even if the system_settings table isn't provisioned.
+// Read the active storage provider with 3-tier fallback:
+// 1. localStorage cache (instant, set by the admin toggle)
+// 2. Firestore globalSettings (primary source, same doc the admin panel reads)
+// 3. Supabase system_settings (legacy fallback)
 let cachedProvider = null;
 let providerCheckPromise = null;
 export function getActiveStorageProvider() {
   if (cachedProvider) return Promise.resolve(cachedProvider);
   if (providerCheckPromise) return providerCheckPromise;
   providerCheckPromise = (async () => {
+    // Tier 1: localStorage cache (set by the admin toggle)
+    try {
+      const lsVal = localStorage.getItem("nextext_active_storage_provider");
+      if (lsVal === "cloudinary" || lsVal === "supabase") {
+        cachedProvider = lsVal;
+        return cachedProvider;
+      }
+    } catch {}
+
+    // Tier 2: Firestore globalSettings
+    try {
+      const { getSnapshot } = await import("../firebase/config-settings.js");
+      const gs = getSnapshot?.();
+      if (gs?.active_storage_provider) {
+        cachedProvider = gs.active_storage_provider;
+        try { localStorage.setItem("nextext_active_storage_provider", cachedProvider); } catch {}
+        return cachedProvider;
+      }
+    } catch {}
+
+    // Tier 3: Supabase system_settings
     try {
       const { data, error } = await supabase
         .from("system_settings")
@@ -41,6 +64,7 @@ export function getActiveStorageProvider() {
         .maybeSingle();
       if (error) throw error;
       cachedProvider = data?.value === "cloudinary" ? "cloudinary" : "supabase";
+      try { localStorage.setItem("nextext_active_storage_provider", cachedProvider); } catch {}
     } catch {
       cachedProvider = "supabase";
     }
@@ -190,13 +214,34 @@ async function uploadToCloudinary(file, { resourceType = "auto" } = {}) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-  formData.append("resource_type", resourceType);
+  // resource_type must be "image", "video", "raw", or "auto" — NOT arbitrary strings.
+  const safeResourceType = ["image", "video", "raw", "auto"].includes(resourceType) ? resourceType : "auto";
+  formData.append("resource_type", safeResourceType);
 
-  const res = await fetch(`${CLOUDINARY_BASE_URL}/image/upload`, { method: "POST", body: formData });
-  const json = await res.json().catch(() => null);
-  if (!json || json.error || !json.secure_url) {
-    throw new Error(json?.error?.message || "Cloudinary upload failed");
+  const endpoint = `${CLOUDINARY_BASE_URL}/${safeResourceType}/upload`;
+
+  let res;
+  try {
+    res = await fetch(endpoint, { method: "POST", body: formData });
+  } catch (fetchErr) {
+    throw new Error(`Cloudinary network error: ${fetchErr.message || "fetch failed"}. Check your internet connection and Cloudinary configuration.`);
   }
+
+  const json = await res.json().catch(() => null);
+
+  if (!json || json.error) {
+    const errMsg = json?.error?.message || json?.error?.reason || `HTTP ${res.status}`;
+    console.error("[Cloudinary] Upload rejected:", errMsg, json);
+    throw new Error(`Cloudinary rejected the upload: ${errMsg}`);
+  }
+  if (!json.secure_url) {
+    console.error("[Cloudinary] Response missing secure_url:", json);
+    throw new Error("Cloudinary upload succeeded but returned no URL. Check your upload preset.");
+  }
+  if (json.folder && json.folder.includes("upload_error")) {
+    throw new Error("Cloudinary returned an upload_error folder. Check your preset configuration.");
+  }
+
   return { url: json.secure_url, path: json.public_id, thumbnailURL: null, thumbnailPath: null, provider: "cloudinary" };
 }
 

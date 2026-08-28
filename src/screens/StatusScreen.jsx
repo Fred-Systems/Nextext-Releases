@@ -540,90 +540,74 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           const result = await uploadMediaFile(`status-${myUid}`, myUid, file);
           let durationMs = null;
           let previewURL = null;
+          let posterURL = null;
           if (isVideo) {
             durationMs = await getVideoDuration(snapMedia);
             // Generate lightweight preview clip + poster for the feed card.
             try {
               const { generateStatusPreview } = await import("../media/videoPreview.js");
               const { previewBlob, posterBlob } = await generateStatusPreview(snapMedia);
+              // Always upload whatever we got — even just a poster is useful.
+              if (posterBlob) {
+                const posterFile = new File([posterBlob], `status-poster-${Date.now()}.jpg`, { type: "image/jpeg" });
+                const posterResult = await uploadMediaFile(`status-${myUid}`, myUid, posterFile);
+                posterURL = posterResult.url;
+              }
               if (previewBlob) {
                 const previewFile = new File([previewBlob], `status-preview-${Date.now()}.webm`, { type: previewBlob.type || "video/webm" });
                 const previewResult = await uploadMediaFile(`status-${myUid}`, myUid, previewFile);
                 previewURL = previewResult.url;
               }
-              if (posterBlob) {
-                const posterFile = new File([posterBlob], `status-poster-${Date.now()}.jpg`, { type: "image/jpeg" });
-                const posterResult = await uploadMediaFile(`status-${myUid}`, myUid, posterFile);
-                await postStatus(myUid, {
-                  text: snapText.trim() || null,
-                  mediaURL: result.url,
-                  mediaType: "video",
-                  backgroundColor: null,
-                  fontFamily: null,
-                  durationMs: durationMs || snapDuration * 1000,
-                  textOverlay: snapTextOverlay.trim() || null,
-                  bgAudioURL,
-                  bgAudioVolume: bgAudioVol,
-                  videoVolume: vidVol,
-                  waitForVideo: isVideo && snapWaitForVideo,
-                  allowDownload: snapAllowDownload,
-                  commentsHidden: snapHideComments,
-                  previewURL: previewURL || null,
-                  posterURL: posterResult.url,
+            } catch (previewErr) {
+              console.warn("[StatusScreen] Preview generation failed, generating poster-only fallback:", previewErr);
+              // Generate a poster directly from the video as a last resort.
+              try {
+                const posterBlob = await new Promise((resolve) => {
+                  const video = document.createElement("video");
+                  video.muted = true;
+                  video.playsInline = true;
+                  video.preload = "metadata";
+                  video.src = URL.createObjectURL(snapMedia);
+                  video.onloadeddata = () => {
+                    video.currentTime = Math.min(0.5, (video.duration || 1) / 4);
+                  };
+                  video.onseeked = () => {
+                    const c = document.createElement("canvas");
+                    c.width = video.videoWidth || 480;
+                    c.height = video.videoHeight || 360;
+                    c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+                    c.toBlob((b) => { URL.revokeObjectURL(video.src); resolve(b); }, "image/jpeg", 0.8);
+                  };
+                  video.onerror = () => resolve(null);
+                  setTimeout(() => resolve(null), 8000);
                 });
-              } else {
-                await postStatus(myUid, {
-                  text: snapText.trim() || null,
-                  mediaURL: result.url,
-                  mediaType: "video",
-                  backgroundColor: null,
-                  fontFamily: null,
-                  durationMs: durationMs || snapDuration * 1000,
-                  textOverlay: snapTextOverlay.trim() || null,
-                  bgAudioURL,
-                  bgAudioVolume: bgAudioVol,
-                  videoVolume: vidVol,
-                  waitForVideo: isVideo && snapWaitForVideo,
-                  allowDownload: snapAllowDownload,
-                  commentsHidden: snapHideComments,
-                  previewURL: previewURL || null,
-                });
+                if (posterBlob) {
+                  const posterFile = new File([posterBlob], `status-poster-${Date.now()}.jpg`, { type: "image/jpeg" });
+                  const posterResult = await uploadMediaFile(`status-${myUid}`, myUid, posterFile);
+                  posterURL = posterResult.url;
+                }
+              } catch (posterErr) {
+                console.warn("[StatusScreen] Poster fallback also failed:", posterErr);
               }
-            } catch {
-              // Preview generation failed — post without preview.
-              await postStatus(myUid, {
-                text: snapText.trim() || null,
-                mediaURL: result.url,
-                mediaType: "video",
-                backgroundColor: null,
-                fontFamily: null,
-                durationMs: durationMs || snapDuration * 1000,
-                textOverlay: snapTextOverlay.trim() || null,
-                bgAudioURL,
-                bgAudioVolume: bgAudioVol,
-                videoVolume: vidVol,
-                waitForVideo: isVideo && snapWaitForVideo,
-                allowDownload: snapAllowDownload,
-                commentsHidden: snapHideComments,
-              });
             }
-          } else {
-            await postStatus(myUid, {
-              text: snapText.trim() || null,
-              mediaURL: result.url,
-              mediaType: "image",
-              backgroundColor: null,
-              fontFamily: null,
-              durationMs: durationMs || snapDuration * 1000,
-              textOverlay: snapTextOverlay.trim() || null,
-              bgAudioURL,
-              bgAudioVolume: bgAudioVol,
-              videoVolume: vidVol,
-              waitForVideo: isVideo && snapWaitForVideo,
-              allowDownload: snapAllowDownload,
-              commentsHidden: snapHideComments,
-            });
           }
+          await postStatus(myUid, {
+            text: snapText.trim() || null,
+            mediaURL: result.url,
+            mediaType: isVideo ? "video" : "image",
+            backgroundColor: null,
+            fontFamily: null,
+            durationMs: durationMs || snapDuration * 1000,
+            textOverlay: snapTextOverlay.trim() || null,
+            bgAudioURL,
+            bgAudioVolume: bgAudioVol,
+            videoVolume: vidVol,
+            waitForVideo: isVideo && snapWaitForVideo,
+            allowDownload: snapAllowDownload,
+            commentsHidden: snapHideComments,
+            previewURL: previewURL || null,
+            posterURL: posterURL || null,
+          });
         }
       }
 
