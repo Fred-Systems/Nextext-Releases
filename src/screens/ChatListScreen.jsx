@@ -885,7 +885,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         style={{ display: "flex", alignItems: "center", gap, padding: rowPadding, cursor: "pointer", background: t.bg, position: "relative", zIndex: 1, touchAction: "pan-y" }}
       >
       {c.type === "group" ? (
-        <div style={{ position: "relative", width: avatarSize, height: avatarSize, flexShrink: 0 }} onClick={(e) => { e.stopPropagation(); setGroupMenu(c); }}>
+        <div style={{ position: "relative", width: avatarSize, height: avatarSize, flexShrink: 0 }} onClick={(e) => { e.stopPropagation(); if (navTab === "groups") { openChatRow(c); } else { setGroupMenu(c); } }}>
           {c.groupPhotoURL ? (
             <img src={c.groupPhotoURL} alt="" style={{ width: avatarSize, height: avatarSize, borderRadius: "50%", objectFit: "cover", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }} />
           ) : (
