@@ -2475,17 +2475,9 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const myUidRef = useRef(myUid);
   useEffect(() => { myUidRef.current = myUid; }, [myUid]);
 
-  // Ref mirrors of chats/contacts/openChat so the mount-only notification tap
-  // handler can route into a conversation even when the user is on a non-chat
-  // screen (Settings, etc.) without a stale closure. Initialized to null and
-  // populated via effects below — the underlying values are declared later in
-  // this component, so referencing them here directly would hit a TDZ error.
-  const myChatsRef = useRef(null);
-  useEffect(() => { myChatsRef.current = myChats; }, [myChats]);
-  const contactsRef = useRef(null);
-  useEffect(() => { contactsRef.current = contacts; }, [contacts]);
-  const openChatRef = useRef(null);
-  useEffect(() => { openChatRef.current = openChat; }, [openChat]);
+  // Ref mirrors of chats/contacts/openChat are set up further down, AFTER those
+  // values are declared, to avoid a Temporal Dead Zone error (see openChatRef
+  // block just after openChat's definition).
 
   const screenRef = useRef(screen);
   useEffect(() => { screenRef.current = screen; }, [screen]);
@@ -3407,6 +3399,17 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     setActiveChat({ chatId, otherUid, contact, origin: "chat", openSettings: options?.openSettings || false });
     setScreen("chat");
   };
+
+  // Ref mirrors of chats/contacts/openChat. Declared HERE (after those values are
+  // defined) so the dependency arrays don't hit a Temporal Dead Zone error. The
+  // mount-only notification tap handler reads these to route into a conversation
+  // even when the user is on a non-chat screen (Settings, etc.).
+  const myChatsRef = useRef(null);
+  useEffect(() => { myChatsRef.current = myChats; }, [myChats]);
+  const contactsRef = useRef(null);
+  useEffect(() => { contactsRef.current = contacts; }, [contacts]);
+  const openChatRef = useRef(null);
+  useEffect(() => { openChatRef.current = openChat; }, [openChat]);
 
   // Route into a chat when the user taps a notification (or a background
   // payload arrived while the app was closed). Waits for the chat list to load
