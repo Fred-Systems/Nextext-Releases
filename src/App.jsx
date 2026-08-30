@@ -2477,12 +2477,14 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
   // Ref mirrors of chats/contacts/openChat so the mount-only notification tap
   // handler can route into a conversation even when the user is on a non-chat
-  // screen (Settings, etc.) without a stale closure.
-  const myChatsRef = useRef(myChats);
+  // screen (Settings, etc.) without a stale closure. Initialized to null and
+  // populated via effects below — the underlying values are declared later in
+  // this component, so referencing them here directly would hit a TDZ error.
+  const myChatsRef = useRef(null);
   useEffect(() => { myChatsRef.current = myChats; }, [myChats]);
-  const contactsRef = useRef(contacts);
+  const contactsRef = useRef(null);
   useEffect(() => { contactsRef.current = contacts; }, [contacts]);
-  const openChatRef = useRef(openChat);
+  const openChatRef = useRef(null);
   useEffect(() => { openChatRef.current = openChat; }, [openChat]);
 
   const screenRef = useRef(screen);
