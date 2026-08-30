@@ -16,6 +16,37 @@ import { Capacitor } from "@capacitor/core";
 const DEFAULT_DURATION_MS = 5000;
 const QUICK_REACTION_EMOJIS = ["❤️", "😂", "😮", "🔥", "👍", "🙏"];
 
+// Renders movable, colored text stickers (stored on a status) positioned over
+// the media. `x`/`y` are relative (0..1) within the media container.
+function TextStickerLayer({ stickers }) {
+  if (!stickers || !stickers.length) return null;
+  return (
+    <>
+      {stickers.map((s) => (
+        <div
+          key={s.id}
+          style={{
+            position: "absolute",
+            left: `${((s.x != null ? s.x : 0.5) * 100)}%`,
+            top: `${((s.y != null ? s.y : 0.4) * 100)}%`,
+            transform: "translate(-50%, -50%)",
+            color: s.color || "#fff",
+            fontSize: s.size || 22,
+            fontWeight: 800,
+            textShadow: "0 1px 4px rgba(0,0,0,0.85), 0 0 2px rgba(0,0,0,0.85)",
+            padding: "2px 6px",
+            whiteSpace: "pre-wrap",
+            maxWidth: "90%",
+            textAlign: "center",
+            pointerEvents: "none",
+            lineHeight: 1.2,
+          }}
+        >{s.text}</div>
+      ))}
+    </>
+  );
+}
+
 function getSlideDuration(status) {
   if (status?.durationMs && status.durationMs > 0) return status.durationMs;
   if (status?.mediaType === "video") return 10000;
@@ -618,7 +649,8 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                   onEnded={() => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); }}
                 />
               )}
-              {(current.textOverlay || current.text) && (
+              <TextStickerLayer stickers={current.textStickers} />
+              {!current.textStickers && (current.textOverlay || current.text) && (
                 <div style={{ position: "absolute", bottom: 16, left: 12, right: 12, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
                   {current.textOverlay || current.text}
                 </div>
@@ -648,7 +680,8 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                 onEnded: () => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); },
               }}
             />
-            {(current.textOverlay || current.text) && (
+            <TextStickerLayer stickers={current.textStickers} />
+            {!current.textStickers && (current.textOverlay || current.text) && (
               <div style={{ position: "absolute", bottom: 16, left: 12, right: 12, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
                 {current.textOverlay || current.text}
               </div>
@@ -657,7 +690,8 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
           )) : current.mediaType === "image" && current.mediaURL ? (
           <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
             <ZoomableMedia src={current.mediaURL} type="image" onTap={() => {}} />
-            {(current.textOverlay || current.text) && (
+            <TextStickerLayer stickers={current.textStickers} />
+            {!current.textStickers && (current.textOverlay || current.text) && (
               <div style={{ position: "absolute", bottom: 16, left: 12, right: 12, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
                 {current.textOverlay || current.text}
               </div>
@@ -676,7 +710,8 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
               onEnded={() => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); }}
               style={{ width: "82%", maxWidth: 340 }}
             />
-            {(current.textOverlay || current.text) && (
+            <TextStickerLayer stickers={current.textStickers} />
+            {!current.textStickers && (current.textOverlay || current.text) && (
               <div style={{ maxWidth: "82%", background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>
                 {current.textOverlay || current.text}
               </div>

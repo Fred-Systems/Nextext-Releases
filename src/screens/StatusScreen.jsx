@@ -244,6 +244,17 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const [durationSeconds, setDurationSeconds] = useState(5);
   const [waitForVideo, setWaitForVideo] = useState(false);
   const [textOverlay, setTextOverlay] = useState("");
+  // Movable, colored text stickers drawn over image/video statuses.
+  const [textStickers, setTextStickers] = useState([]); // {id, text, x, y, color, size}
+  const [activeStickerId, setActiveStickerId] = useState(null);
+  const STICKER_COLORS = ["#FFFFFF", "#000000", "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#30B0C7", "#007AFF", "#AF52DE", "#FF2D55"];
+  const addTextSticker = () => {
+    const id = `st_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setTextStickers((prev) => [...prev, { id, text: "Tap to edit", x: 0.5, y: 0.4, color: "#FFFFFF", size: 22 }]);
+    setActiveStickerId(id);
+  };
+  const updateSticker = (id, patch) => setTextStickers((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  const removeSticker = (id) => { setTextStickers((prev) => prev.filter((s) => s.id !== id)); setActiveStickerId((cur) => (cur === id ? null : cur)); };
   const [bgAudioFile, setBgAudioFile] = useState(null);
   const [bgAudioVolume, setBgAudioVolume] = useState(70);
   const [videoVolume, setVideoVolume] = useState(100);
@@ -288,13 +299,14 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     const onClose = () => {
       if (showCaptureActions) { setShowCaptureActions(false); return; }
       if (showCamera) { try { if (cameraStreamRef.current) cameraStreamRef.current.getTracks().forEach((tr) => tr.stop()); } catch {} setShowCamera(false); return; }
-      if (showPost) { setShowPost(false); setPostMedia(null); setPostText(""); setPostMode("text"); return; }
-      if (viewStoryOwner) { setViewStoryOwner(null); return; }
+      if (showPost) { setShowPost(false); setPostMedia(null); setPostText(""); setPostMode("text"); setTextStickers([]); setActiveStickerId(null); return; }
+      if (viewStoryOwner) { setViewStoryOwner(null); onStoryViewerChange?.(false); return; }
     };
     window.addEventListener("nextextCloseStatusBuilder", onClose);
     return () => window.removeEventListener("nextextCloseStatusBuilder", onClose);
   }, [showPost, showCamera, viewStoryOwner, showCaptureActions]);
   const photoInputRef = useRef(null);
+  const mediaPreviewRef = useRef(null);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [showZoomHint, setShowZoomHint] = useState(false);
   const pinchRef = useRef(null);
@@ -399,6 +411,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     setDurationSeconds(5);
     setWaitForVideo(false);
     setTextOverlay("");
+    setTextStickers([]);
+    setActiveStickerId(null);
     setBgAudioFile(null);
     setBgAudioVolume(70);
     setVideoVolume(100);
@@ -440,6 +454,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     setPostMediaType(null);
     setPostImages([]);
     setTextOverlay("");
+    setTextStickers([]);
+    setActiveStickerId(null);
     setBgAudioFile(null);
     setVoiceBlob(null);
     setIsVoiceRecording(false);
@@ -461,6 +477,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           fontFamily: null,
           durationMs: snapVoiceDur || snapDuration * 1000,
           textOverlay: snapTextOverlay.trim() || null,
+          textStickers: textStickers.length ? textStickers : null,
           allowDownload: snapAllowDownload,
           commentsHidden: snapHideComments,
         });
@@ -479,6 +496,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             fontFamily: null,
            durationMs: snapDuration * 1000,
            textOverlay: snapTextOverlay.trim() || null,
+          textStickers: textStickers.length ? textStickers : null,
            allowDownload: snapAllowDownload,
            commentsHidden: snapHideComments,
           });
@@ -518,6 +536,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             fontFamily: null,
             durationMs: durationMs || snapDuration * 1000,
             textOverlay: snapTextOverlay.trim() || null,
+          textStickers: textStickers.length ? textStickers : null,
             bgAudioURL,
             bgAudioVolume: bgAudioVol,
             videoVolume: vidVol,
@@ -599,6 +618,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             fontFamily: null,
             durationMs: durationMs || snapDuration * 1000,
             textOverlay: snapTextOverlay.trim() || null,
+          textStickers: textStickers.length ? textStickers : null,
             bgAudioURL,
             bgAudioVolume: bgAudioVol,
             videoVolume: vidVol,
@@ -1601,12 +1621,58 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                 {/* Single video/image fallback when no multiple images */}
                 {(postMedia || postImages.length === 0) && postMedia && (
                   <div style={{ position: "relative", marginBottom: 12, width: "100%", display: "flex", justifyContent: "center", alignItems: "center" }}>
-                    <div style={{ width: "100%", maxWidth: "none", height: "min(62vh, 520px)", borderRadius: 10, overflow: "hidden", background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <div ref={mediaPreviewRef} style={{ position: "relative", width: "100%", maxWidth: "none", height: "min(62vh, 520px)", borderRadius: 10, overflow: "hidden", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }}>
                       {postMediaType === "video" ? (
                         <video src={URL.createObjectURL(postMedia)} controls playsInline style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                       ) : (
                         <img src={URL.createObjectURL(postMedia)} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                       )}
+                      {/* Draggable, colored text stickers overlaid on the media */}
+                      {textStickers.map((s) => (
+                        <div
+                          key={s.id}
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            setActiveStickerId(s.id);
+                            const rect = mediaPreviewRef.current?.getBoundingClientRect();
+                            if (!rect) return;
+                            const startX = e.clientX, startY = e.clientY;
+                            const origX = s.x, origY = s.y;
+                            const move = (ev) => {
+                              const dx = (ev.clientX - startX) / rect.width;
+                              const dy = (ev.clientY - startY) / rect.height;
+                              updateSticker(s.id, {
+                                x: Math.max(0.02, Math.min(0.98, origX + dx)),
+                                y: Math.max(0.02, Math.min(0.98, origY + dy)),
+                              });
+                            };
+                            const up = () => {
+                              window.removeEventListener("pointermove", move);
+                              window.removeEventListener("pointerup", up);
+                            };
+                            window.addEventListener("pointermove", move);
+                            window.addEventListener("pointerup", up);
+                          }}
+                          style={{
+                            position: "absolute",
+                            left: `${s.x * 100}%`,
+                            top: `${s.y * 100}%`,
+                            transform: "translate(-50%, -50%)",
+                            color: s.color,
+                            fontSize: s.size,
+                            fontWeight: 800,
+                            textShadow: "0 1px 4px rgba(0,0,0,0.85), 0 0 2px rgba(0,0,0,0.85)",
+                            padding: "2px 6px",
+                            background: activeStickerId === s.id ? "rgba(124,92,255,0.35)" : "transparent",
+                            borderRadius: 6,
+                            cursor: "move",
+                            whiteSpace: "pre-wrap",
+                            maxWidth: "90%",
+                            textAlign: "center",
+                            userSelect: "none",
+                          }}
+                        >{s.text}</div>
+                      ))}
                     </div>
                     <div onClick={() => { setPostMedia(null); setPostMediaType(null); setPostMode("text"); }} style={{ position: "absolute", top: 8, right: 8, width: 22, height: 22, borderRadius: "50%", background: "#FF3B30", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                       <X size={12} color="#fff" />
@@ -1649,15 +1715,42 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
               </div>
             </div>
 
-            {/* Text overlay for media mode */}
+            {/* Movable, colored text stickers for media mode */}
             {postMode === "media" && (postMedia || postImages.length > 0) && (
               <div style={{ marginBottom: 12 }}>
-                <input
-                  value={textOverlay}
-                  onChange={(e) => setTextOverlay(e.target.value)}
-                  placeholder="Add text overlay on media…"
-                  style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, background: t.bg, color: t.text, boxSizing: "border-box", fontFamily: "inherit" }}
-                />
+                <div onClick={addTextSticker} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primary, color: t.bubbleMeText, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>
+                  <Type size={15} /> Add text on media
+                </div>
+                {textStickers.length > 0 && (
+                  <div style={{ marginTop: 10, padding: "12px 12px", borderRadius: 12, background: t.bg, border: `1px solid ${t.border}` }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: t.text, marginBottom: 8 }}>Edit text sticker</div>
+                    {activeStickerId && (
+                      <>
+                        <input
+                          autoFocus
+                          value={textStickers.find((s) => s.id === activeStickerId)?.text || ""}
+                          onChange={(e) => updateSticker(activeStickerId, { text: e.target.value })}
+                          placeholder="Sticker text…"
+                          style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13.5, background: t.surface, color: t.text, boxSizing: "border-box", fontFamily: "inherit", marginBottom: 10 }}
+                        />
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                          {STICKER_COLORS.map((c) => (
+                            <div key={c} onClick={() => updateSticker(activeStickerId, { color: c })} style={{ width: 26, height: 26, borderRadius: "50%", background: c, border: textStickers.find((s) => s.id === activeStickerId)?.color === c ? `3px solid ${t.primary}` : "2px solid transparent", cursor: "pointer", flexShrink: 0 }} />
+                          ))}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                          <span style={{ fontSize: 12, color: t.textMuted }}>Size</span>
+                          <input type="range" min="12" max="48" step="1" value={textStickers.find((s) => s.id === activeStickerId)?.size || 22} onChange={(e) => updateSticker(activeStickerId, { size: Number(e.target.value) })} style={{ flex: 1, accentColor: t.primary }} />
+                          <div onClick={() => removeSticker(activeStickerId)} style={{ padding: "5px 10px", borderRadius: 8, background: "rgba(255,59,48,0.15)", color: "#FF3B30", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Delete</div>
+                        </div>
+                        <div style={{ fontSize: 11, color: t.textMuted }}>Drag the text on the preview to reposition it.</div>
+                      </>
+                    )}
+                    {!activeStickerId && (
+                      <div style={{ fontSize: 12, color: t.textMuted }}>Tap a sticker on the preview to edit it.</div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

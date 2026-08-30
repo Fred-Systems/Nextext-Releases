@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, Check, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound, ImageIcon, RefreshCw, Video } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc, writeBatch } from "firebase/firestore";
@@ -30,6 +30,26 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [clearedMsg, setClearedMsg] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [allUsersLoading, setAllUsersLoading] = useState(false);
+  const [directorySearch, setDirectorySearch] = useState("");
+
+  // Smart filter across display name, @username, email, and phone number.
+  const filteredDirectory = useMemo(() => {
+    const q = directorySearch.trim().toLowerCase().replace(/^@/, "");
+    if (!q) return allUsers;
+    return allUsers.filter((u) => {
+      const name = (u.displayName || "").toLowerCase();
+      const username = (u.username || "").toLowerCase();
+      const email = (u.email || "").toLowerCase();
+      const phone = (u.phoneNumber || u.phoneNumberNormalized || "").replace(/[^\d]/g, "");
+      const qPhone = q.replace(/[^\d]/g, "");
+      return (
+        name.includes(q) ||
+        username.includes(q) ||
+        email.includes(q) ||
+        (qPhone.length >= 3 && phone.includes(qPhone))
+      );
+    });
+  }, [allUsers, directorySearch]);
   const [expiryInput, setExpiryInput] = useState("");
   const [expiryNever, setExpiryNever] = useState(false);
   const [allGroups, setAllGroups] = useState([]);
@@ -361,6 +381,26 @@ export default function AdminDashboard({ myUid, onBack }) {
       await updateDoc(doc(db, "users", uid), { hideAISettings: !currentVal });
     } catch (e) {
       setError("Couldn't update AI settings visibility: " + e.message);
+    }
+  };
+
+  // Reset a user's profile cover, display name, and email (keeps the account &
+  // auth intact). The app reads displayName/username/email/photoURL/coverURL from
+  // the Firestore user doc, so clearing those fields drops them back to defaults.
+  const resetUserProfile = async (uid) => {
+    if (!window.confirm("Reset this user's cover photo, display name, and email? Their account stays active but profile info is cleared. They can set it again.")) return;
+    setError("");
+    try {
+      await updateDoc(doc(db, "users", uid), {
+        coverURL: null,
+        photoURL: null,
+        displayName: null,
+        username: null,
+        email: null,
+      });
+      setAllUsers((prev) => prev.map((u) => (u.uid === uid ? { ...u, coverURL: null, photoURL: null, displayName: null, username: null, email: null } : u)));
+    } catch (e) {
+      setError("Couldn't reset profile: " + e.message);
     }
   };
 
@@ -927,15 +967,31 @@ export default function AdminDashboard({ myUid, onBack }) {
         </>
       )}
 
-      {tab === "directory" && (
+       {tab === "directory" && (
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
             <Users size={16} color={t.primary} />
             <span style={{ fontSize: 13, color: t.textMuted }}>All registered users ({allUsers.length})</span>
           </div>
+          {/* Smart search across display name, username, email, and phone */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: t.bg, border: `1px solid ${t.border}`, marginBottom: 12 }}>
+            <Search size={15} color={t.textMuted} />
+            <input
+              value={directorySearch}
+              onChange={(e) => setDirectorySearch(e.target.value)}
+              placeholder="Smart search: name, @username, email, or phone…"
+              style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 13.5, color: t.text }}
+            />
+            {directorySearch && (
+              <span onClick={() => setDirectorySearch("")} style={{ color: t.textMuted, cursor: "pointer", fontSize: 16 }}>×</span>
+            )}
+          </div>
           {allUsersLoading && <div style={{ color: t.textMuted, fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>}
           {!allUsersLoading && allUsers.length === 0 && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No users found.</div>}
-          {allUsers.map((u) => (
+          {!allUsersLoading && directorySearch.trim().length >= 1 && filteredDirectory.length === 0 && (
+            <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No matching users.</div>
+          )}
+          {filteredDirectory.map((u) => (
             <div key={u.uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", borderBottom: `1px solid ${t.border}` }}>
               <div onClick={() => setSelectedUser(u)} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, cursor: "pointer", minWidth: 0 }}>
                 <div style={{ width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: t.primary }}>{u.displayName?.[0]}</div>
@@ -963,6 +1019,10 @@ export default function AdminDashboard({ myUid, onBack }) {
                 <div onClick={(e) => { e.stopPropagation(); toggleUserVerified(u.uid, !!u.verified); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.verified ? "#E1F0FF" : t.bg, border: `1px solid ${u.verified ? "#1DA1F2" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
                   <Check size={12} color={u.verified ? "#1DA1F2" : t.textMuted} />
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: u.verified ? "#1DA1F2" : t.textMuted }}>{u.verified ? "Verified" : "Verify"}</span>
+                </div>
+                <div onClick={(e) => { e.stopPropagation(); resetUserProfile(u.uid); }} title="Reset cover, name & email" style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 8, background: "#FFF3CD", border: "1px solid #856404", cursor: "pointer", flexShrink: 0 }}>
+                  <RefreshCw size={11} color="#856404" />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#856404" }}>Reset info</span>
                 </div>
               </div>
             </div>

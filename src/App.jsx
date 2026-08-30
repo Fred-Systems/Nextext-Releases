@@ -2475,6 +2475,16 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const myUidRef = useRef(myUid);
   useEffect(() => { myUidRef.current = myUid; }, [myUid]);
 
+  // Ref mirrors of chats/contacts/openChat so the mount-only notification tap
+  // handler can route into a conversation even when the user is on a non-chat
+  // screen (Settings, etc.) without a stale closure.
+  const myChatsRef = useRef(myChats);
+  useEffect(() => { myChatsRef.current = myChats; }, [myChats]);
+  const contactsRef = useRef(contacts);
+  useEffect(() => { contactsRef.current = contacts; }, [contacts]);
+  const openChatRef = useRef(openChat);
+  useEffect(() => { openChatRef.current = openChat; }, [openChat]);
+
   const screenRef = useRef(screen);
   useEffect(() => { screenRef.current = screen; }, [screen]);
   // In-app navigation history so the Android hardware Back button walks back
@@ -2806,7 +2816,19 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const [pendingNotifChatId, setPendingNotifChatId] = useState(null);
 
   useEffect(() => {
-    setNotificationTapHandler((chatId) => setPendingNotifChatId(chatId));
+    setNotificationTapHandler((chatId) => {
+      // Route directly into the conversation. This works from ANY screen
+      // (including Settings) so a notification tap while the app is already open
+      // always brings the user to the chat. If the chat list hasn't loaded yet
+      // (cold start), buffer it via pendingNotifChatId for the watcher below.
+      const chat = (myChatsRef.current || []).find((c) => c.id === chatId);
+      if (chat) {
+        const otherUid = (chat.participants || []).find((p) => p !== myUidRef.current);
+        openChatRef.current(chat, otherUid, (contactsRef.current || []).find((c) => c.uid === otherUid));
+      } else {
+        setPendingNotifChatId(chatId);
+      }
+    });
     // A tapped notification on a cold start fires before any JS listener
     // exists; the native side holds the chatId until we poll for it here.
     pollPendingNotificationTap();

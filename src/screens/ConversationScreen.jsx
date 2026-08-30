@@ -4305,9 +4305,6 @@ const MessageList = React.memo(function MessageList({ ctx }) {
               borderRadius: `${bRadius}px ${bRadius}px ${bRadius}px ${bRadius}px`,
               border: bubbleStyle === "outlined" ? `1.5px solid ${isMine ? t.primary : t.border}` : "none",
               outline: selectedMessages.has(m.id) ? `2px solid ${t.primary}` : "none",
-              transform: "translate3d(0,0,0)",
-              transition: `transform ${replySnapMs}s ease`,
-              willChange: "transform",
               touchAction: "pan-y",
             }}>
             {isGroup && !isMine && !groupedWithPrev && (
@@ -4361,15 +4358,15 @@ const MessageList = React.memo(function MessageList({ ctx }) {
     getScrollElement: () => scrollRef?.current,
     estimateSize: (index) => {
       const m = displayMessages[index];
-      if (!m) return 64;
-      if (m.type === "image" || m.type === "video") return m.text ? 268 : 232;
-      if (m.type === "audio" || m.type === "voice" || m.mediaURL) return 96;
+      if (!m) return 72;
+      if (m.type === "image" || m.type === "video") return m.text ? 280 : 244;
+      if (m.type === "audio" || m.type === "voice" || m.mediaURL) return 104;
       if (m.text) {
         const len = (m.text || "").length;
-        if (len > 140) return len > 280 ? 140 : 110;
-        if (len > 70) return 92;
+        if (len > 140) return len > 280 ? 168 : 132;
+        if (len > 70) return 108;
       }
-      return 64;
+      return 72;
     },
     overscan: 8,
     getItemKey: (index) => displayMessages[index]?.id || index,

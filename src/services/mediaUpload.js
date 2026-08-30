@@ -6,24 +6,35 @@ import { compressImage as _compressImage, assertUnderSizeLimit, FileTooLargeErro
 //
 // Every media upload in the app (chat media, status updates, group photos,
 // avatars) goes through uploadMediaFile(). It:
-//   1. Blocks any raw file over 15MB BEFORE compression (user-facing alert).
+//   1. Blocks any raw file over 50MB BEFORE compression (user-facing alert).
+//      Videos are allowed up to 50MB (no aggressive pre-compression gate).
 //   2. Compresses images to ~70% JPEG quality, capped at 1920px.
 //   3. Extracts a static .jpg thumbnail from the FIRST FRAME of any video.
 //   4. Routes to the active storage provider (supabase | cloudinary) read from
 //      the Supabase `system_settings` table (active_storage_provider).
+//      - cloudinary : ONLY used for image/video media (unsigned upload via
+//                     cloud name 'lsfhbqod', preset 'app_unsigned_preset').
+//                     Non-media files (documents, audio, etc.) are never sent
+//                     to Cloudinary — they always go to Supabase regardless of
+//                     the active provider, because the unsigned preset can't
+//                     handle them and they shouldn't live on a CDN.
 //      - supabase   : uploads to chat-media bucket with cacheControl: 31536000
-//      - cloudinary : unsigned upload via cloud name 'lsfhbqod', preset
-//                     'app_unsigned_preset'
 //   5. Returns { url, thumbnailURL, path, sizeBytes, ... } to save into the
 //      messages / statuses tables.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const RAW_PRE_COMPRESSION_LIMIT = 15 * 1024 * 1024; // 15MB
+// Raw pre-compression gate. Videos and images may be up to 50MB (videos are
+// NOT re-encoded client-side, so the 50MB raw limit is the real upload cap).
+// Other file types also get 50MB but are never routed to Cloudinary.
+const RAW_IMAGE_LIMIT = 50 * 1024 * 1024;
+const RAW_VIDEO_LIMIT = 50 * 1024 * 1024;
+const RAW_OTHER_LIMIT = 50 * 1024 * 1024;
+
 const MAX_IMAGE_DIMENSION = 1920;
 const IMAGE_QUALITY = 0.7;
 const THUMB_WIDTH = 480;
 
-export const RAW_UPLOAD_LIMIT = RAW_PRE_COMPRESSION_LIMIT;
+export const RAW_UPLOAD_LIMIT = RAW_VIDEO_LIMIT;
 
 // Read the active storage provider with 3-tier fallback:
 // 1. localStorage cache (instant, set by the admin toggle)
@@ -85,18 +96,23 @@ export function invalidateStorageProviderCache() {
 
 // ── Client-side compression & guards ─────────────────────────────────────────
 export class RawFileTooLargeError extends Error {
-  constructor(sizeBytes) {
-    super("This file is over 15MB before compression and can't be uploaded. Please pick a smaller file.");
+  constructor(sizeBytes, limitBytes) {
+    const mb = Math.round(limitBytes / (1024 * 1024));
+    super(`This file is over ${mb}MB before compression and can't be uploaded. Please pick a smaller file.`);
     this.name = "RawFileTooLargeError";
     this.sizeBytes = sizeBytes;
   }
 }
 
-// Strict guard: a raw file over 15MB is blocked immediately, before any
-// compression step. Callers should catch RawFileTooLargeError and alert.
+// Strict guard: a raw file over the type-specific limit is blocked immediately,
+// before any compression step. Callers should catch RawFileTooLargeError and alert.
+// Videos and images are allowed up to 50MB; other files up to 50MB as well.
 export function assertRawUnderLimit(file) {
-  if (file.size > RAW_PRE_COMPRESSION_LIMIT) {
-    throw new RawFileTooLargeError(file.size);
+  let limit = RAW_OTHER_LIMIT;
+  if (file.type.startsWith("video/")) limit = RAW_VIDEO_LIMIT;
+  else if (file.type.startsWith("image/")) limit = RAW_IMAGE_LIMIT;
+  if (file.size > limit) {
+    throw new RawFileTooLargeError(file.size, limit);
   }
 }
 
@@ -269,10 +285,13 @@ export async function uploadMediaFile(chatId, senderUid, file, options = {}) {
     thumbnailBlob = await extractVideoThumbnail(file);
   }
 
-  // 4. Route by active provider.
+  // 4. Route by active provider. Cloudinary is ONLY used for image/video media.
+  //    Documents, audio, and any other non-media file always go to Supabase
+  //    (the unsigned preset can't handle them and they shouldn't be CDN-served).
   const provider = options.provider || (await getActiveStorageProvider());
+  const isMedia = file.type.startsWith("image/") || file.type.startsWith("video/");
   let result;
-  if (provider === "cloudinary") {
+  if (provider === "cloudinary" && isMedia) {
     result = await uploadToCloudinary(uploadFile, { resourceType: options.resourceType || "auto" });
   } else {
     result = await uploadToSupabase(chatId, senderUid, uploadFile, { thumbnailBlob });
