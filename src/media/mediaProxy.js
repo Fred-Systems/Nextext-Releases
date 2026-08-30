@@ -37,11 +37,12 @@ export function getProxyMediaUrl(url, type = "image") {
 }
 
 // Generate a still-frame poster for a video through Cloudinary's fetch API.
-// Returns a JPEG of the first frame (so_0) so chat video bubbles never render
-// blank. Falls back to the raw URL when the proxy is disabled.
+// Returns a JPEG of the first frame (so_0) so chat + status video previews never
+// render blank. This always uses Cloudinary (independent of the optimization-proxy
+// flag) because it's the only reliable way to get a poster for a Supabase-stored
+// video without a server round-trip.
 export function getVideoPosterUrl(url) {
   if (!url || typeof url !== "string") return url;
-  if (!proxyEnabled) return url;
   if (url.includes("res.cloudinary.com")) return url;
   const base = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/fetch/so_0,f_jpg,w_480,q_auto/`;
   return base + encodeURIComponent(url);

@@ -70,6 +70,19 @@ function cleanAIText(text) {
     .trim();
 }
 
+// Renders AI message text with *single* and **double** asterisks converted to
+// bold (asterisks stripped), so model-emitted emphasis actually shows up bold
+// instead of as raw characters.
+function renderAIBold(text) {
+  if (!text) return text;
+  const parts = String(text).split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+  return parts.map((p, i) => {
+    if (/^\*\*[^*]+\*\*$/.test(p)) return <strong key={i}>{p.slice(2, -2)}</strong>;
+    if (/^\*[^*]+\*$/.test(p)) return <strong key={i}>{p.slice(1, -1)}</strong>;
+    return p;
+  });
+}
+
 // Ordinal suffix (1st, 2nd, 3rd, 4th, …) for date divider labels.
 function getOrdinalSuffix(day) {
   if (day > 3 && day < 21) return "th";
@@ -868,7 +881,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                           <div style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200 }}>{m.replyTo.previewText}</div>
                         </div>
                       )}
-                      {m.text}
+                      {renderAIBold(m.text)}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                         <span style={{ fontSize: 10.5, opacity: 0.55 }}>
                           {m.sentAt?.toDate ? m.sentAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}

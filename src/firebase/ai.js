@@ -559,7 +559,9 @@ export async function generateGeminiImage(userUid, prompt) {
   // one explicitly AND it differs from the legacy default. This avoids calling the
   // deprecated `gemini-3.1-flash-image` model, which returns 429s on new keys.
   const explicitImageModel = (config.geminiImageModel && config.geminiImageModel !== GEMINI_IMAGE_MODEL) ? config.geminiImageModel : null;
-  const candidates = [explicitImageModel, config.model, "gemini-3.6-flash"].filter(Boolean);
+  // Try dedicated image-generation models first (the text chat model often can't
+  // emit images), then fall back to the configured chat model as a last resort.
+  const candidates = [explicitImageModel, "gemini-3.6-flash-image", "gemini-3.5-flash-image", "gemini-3.1-flash-image", config.model].filter(Boolean);
   let lastErr;
   for (const model of candidates) {
     try {
@@ -931,7 +933,12 @@ export async function analyzeImageWithGroq(userUid, input, question = "Describe 
 // endpoint. Uses the same admin-configured API key as chat/vison; if the app
 // isn't AI-enabled this throws the standard "not configured" error.
 export async function transcribeVoiceNote(userUid, audioBlob) {
-  const key = await getApiKeyFresh();
+  // Transcription ALWAYS uses Groq's Whisper endpoint, regardless of which AI
+  // provider (Groq or Gemini) is selected for chat — Gemini keys aren't valid
+  // against Groq's API (would 401). Pull the Groq key directly.
+  const sysCfg = await getSystemConfig();
+  const key = (sysCfg?.groqApiKey || "").trim();
+  if (!key) throw new Error("Transcription needs a Groq API key. Add one in the Admin Dashboard (AI Provider → Groq key) — this is independent of the chat provider.");
   if (!audioBlob) throw new Error("No audio provided for transcription.");
   const blobType = (audioBlob?.type || "").toLowerCase();
   const ext = blobType.includes("mp4") || blobType.includes("m4a") ? "m4a"
