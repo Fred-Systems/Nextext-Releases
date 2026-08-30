@@ -8,6 +8,7 @@ import { useStatusViewers, subscribeStatusComments, addStatusComment, voteStatus
 import { getOrCreateDirectChat, sendTextMessage } from "../firebase/chats";
 import Avatar from "../components/Avatar";
 import ZoomableMedia from "../components/ZoomableMedia";
+import { getProxyMediaUrl } from "../media/mediaProxy";
 import HlsVideo from "../components/HlsVideo";
 import { getSignedUrl } from "../supabase/media";
 import NextextNative from "../native/nextextNative";
@@ -640,7 +641,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
               ) : (
                 <HlsVideo
                   src={hlsUrl}
-                  fallbackSrc={fallbackUrl || current.mediaURL}
+                  fallbackSrc={fallbackUrl || getProxyMediaUrl(current.mediaURL, "video")}
                   poster={posterUrl || current.posterURL || undefined}
                   videoRef={videoRef}
                   style={{ width: "100%", height: "100%", objectFit: "contain" }}
@@ -659,7 +660,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
           ) : (
           <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
             <ZoomableMedia
-              src={fallbackUrl || current.mediaURL}
+              src={fallbackUrl || getProxyMediaUrl(current.mediaURL, "video")}
               type="video"
               mediaRef={videoRef}
               onTap={() => {}}
@@ -689,7 +690,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
           </div>
           )) : current.mediaType === "image" && current.mediaURL ? (
           <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-            <ZoomableMedia src={current.mediaURL} type="image" onTap={() => {}} />
+            <ZoomableMedia src={getProxyMediaUrl(current.mediaURL, "image")} type="image" onTap={() => {}} />
             <TextStickerLayer stickers={current.textStickers} />
             {!current.textStickers && (current.textOverlay || current.text) && (
               <div style={{ position: "absolute", bottom: 16, left: 12, right: 12, background: "rgba(0,0,0,0.6)", borderRadius: 8, padding: "6px 10px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center" }}>

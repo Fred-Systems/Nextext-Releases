@@ -285,17 +285,11 @@ export async function uploadMediaFile(chatId, senderUid, file, options = {}) {
     thumbnailBlob = await extractVideoThumbnail(file);
   }
 
-  // 4. Route by active provider. Cloudinary is ONLY used for image/video media.
-  //    Documents, audio, and any other non-media file always go to Supabase
-  //    (the unsigned preset can't handle them and they shouldn't be CDN-served).
-  const provider = options.provider || (await getActiveStorageProvider());
-  const isMedia = file.type.startsWith("image/") || file.type.startsWith("video/");
-  let result;
-  if (provider === "cloudinary" && isMedia) {
-    result = await uploadToCloudinary(uploadFile, { resourceType: options.resourceType || "auto" });
-  } else {
-    result = await uploadToSupabase(chatId, senderUid, uploadFile, { thumbnailBlob });
-  }
+  // 4. All media is stored in Supabase. Optimization is handled at DISPLAY time
+  //    via the Cloudinary Fetch proxy (see src/media/mediaProxy.js) when the
+  //    admin "Cloudinary Media Optimization Proxy" flag is enabled — we never
+  //    save assets permanently inside Cloudinary.
+  let result = await uploadToSupabase(chatId, senderUid, uploadFile, { thumbnailBlob });
 
   // 5. Small blur placeholder for images (used by chat media blur previews).
   let blurData = null;

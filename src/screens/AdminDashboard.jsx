@@ -949,6 +949,22 @@ export default function AdminDashboard({ myUid, onBack }) {
               })}
             </div>
 
+            {/* Cloudinary media optimization proxy (fetch API — no permanent storage) */}
+            <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>Enable Cloudinary Media Optimization Proxy</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                When ON, images and videos are served through Cloudinary's fetch API (f_auto, q_auto) for automatic optimization and CDN delivery. Media always stays stored in Supabase — nothing is saved permanently in Cloudinary. When OFF, media is served directly from Supabase.
+              </div>
+              <div onClick={() => updateGlobalSettings({ cloudinaryProxyEnabled: !settings?.cloudinaryProxyEnabled }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.cloudinaryProxyEnabled ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.cloudinaryProxyEnabled ? "#34C759" : t.border, position: "relative" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.cloudinaryProxyEnabled ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: settings?.cloudinaryProxyEnabled ? "#fff" : t.text }}>
+                  {settings?.cloudinaryProxyEnabled ? "PROXY ENABLED" : "PROXY DISABLED"}
+                </span>
+              </div>
+            </div>
+
            </div>
           )}
           <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>
@@ -992,7 +1008,7 @@ export default function AdminDashboard({ myUid, onBack }) {
             <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No matching users.</div>
           )}
           {filteredDirectory.map((u) => (
-            <div key={u.uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", borderBottom: `1px solid ${t.border}` }}>
+            <div key={u.uid} style={{ padding: "11px 4px", borderBottom: `1px solid ${t.border}` }}>
               <div onClick={() => setSelectedUser(u)} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, cursor: "pointer", minWidth: 0 }}>
                 <div style={{ width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: t.primary }}>{u.displayName?.[0]}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -1001,7 +1017,7 @@ export default function AdminDashboard({ myUid, onBack }) {
                 </div>
                 {u.moderation?.banType && u.moderation.banType !== "none" && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 6, background: "#FFE5E5", color: "#FF3B30", fontWeight: 700 }}>{u.moderation.banType}</span>}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                 <div onClick={(e) => { e.stopPropagation(); toggleUserAIAccess(u.uid, !!u.aiApproved); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.aiApproved ? "#E5F9E7" : t.bg, border: `1px solid ${u.aiApproved ? "#28A745" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
                   <Bot size={12} color={u.aiApproved ? "#28A745" : t.textMuted} />
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: u.aiApproved ? "#28A745" : t.textMuted }}>{u.aiApproved ? "AI On" : "AI Off"}</span>

@@ -61,6 +61,8 @@ import PageErrorBoundary from "./components/PageErrorBoundary";
 import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, openDownloadUrl, saveApkToDevice, setLastSeenRelease } from "./updater/updateChecker";
 import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
 import { updateGlobalSettings, useGlobalSettings, subscribe as subscribeGlobalSettings, getQuotaSnapshot } from "./firebase/config-settings";
+import { BUBBLE_STYLE_ORDER, BUBBLE_STYLE_LABELS, getBubbleStyle, setBubbleStyle, resolveBubble } from "./theme/bubbleStyles";
+import { setCloudinaryProxyEnabled } from "./media/mediaProxy";
 import { runPreWarmPing } from "./firebase/prewarm";
 import { useSystemInsets } from "./utils/useSystemInsets";
 import { changeNames, isNameChangeBlocked, isUsernameAvailable } from "./firebase/names";
@@ -71,6 +73,7 @@ const SCROLL_DOWN_KEY = "nextext_show_scrolldown";
 function ThemeSheet({ current, onSelect, onClose }) {
   const { t, customTheme, setCustomThemeColors, rotateDays, setRotateDays } = useTheme();
   const [tab, setTab] = useState("presets");
+  const [bubbleSel, setBubbleSel] = useState(getBubbleStyle());
   const base = customTheme || t;
   const [colors, setColors] = useState({
     primary: base.primary, bg: base.bg, surface: base.surface, bubbleMe: base.bubbleMe,
@@ -93,7 +96,7 @@ function ThemeSheet({ current, onSelect, onClose }) {
           <X size={20} color={t.textMuted} onClick={onClose} style={{ cursor: "pointer" }} />
         </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          {[["presets", "Presets"], ["custom", "Custom colors"], ["rotate", "Auto-switch"]].map(([key, label]) => (
+          {[["presets", "Presets"], ["bubbles", "Bubble style"], ["custom", "Custom colors"], ["rotate", "Auto-switch"]].map(([key, label]) => (
             <div key={key} onClick={() => setTab(key)} style={{ padding: "6px 14px", borderRadius: 16, background: tab === key ? t.primary : t.primaryLight, color: tab === key ? t.bubbleMeText : t.primary, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>{label}</div>
           ))}
         </div>
@@ -108,6 +111,30 @@ function ThemeSheet({ current, onSelect, onClose }) {
                 <div style={{ fontSize: 12, fontWeight: 600, color: th.text }}>{th.name}</div>
               </div>
             ))}
+          </div>
+        )}
+
+        {tab === "bubbles" && (
+          <div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
+              Choose how your message bubbles look. Tap a style to preview it live — your choice applies across all chats.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {BUBBLE_STYLE_ORDER.map((key) => {
+                const sel = bubbleSel === key;
+                const mine = resolveBubble(key, true, t);
+                const them = resolveBubble(key, false, t);
+                return (
+                  <div key={key} onClick={() => { setBubbleStyle(key); setBubbleSel(key); }} style={{ border: `2px solid ${sel ? t.primary : t.border}`, borderRadius: 14, padding: "10px 12px", cursor: "pointer", background: t.bg }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: t.text, marginBottom: 8 }}>{BUBBLE_STYLE_LABELS[key]}</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ alignSelf: "flex-start", maxWidth: "72%", padding: "7px 11px", fontSize: 13, ...them }}>{BUBBLE_STYLE_LABELS[key]} preview</div>
+                      <div style={{ alignSelf: "flex-end", maxWidth: "72%", padding: "7px 11px", fontSize: 13, ...mine }}>Hey there! 👋</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -463,6 +490,12 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const appLockPassRef = useRef(null);
   const sysConfig = useSystemConfigHook();
   const globalSettings = useGlobalSettings();
+
+  // Keep the Cloudinary media-optimization proxy flag in sync with the DB so the
+  // proxy utility (src/media/mediaProxy.js) rewrites media URLs app-wide.
+  useEffect(() => {
+    setCloudinaryProxyEnabled(globalSettings?.cloudinaryProxyEnabled === true);
+  }, [globalSettings?.cloudinaryProxyEnabled]);
 
   // Cache the admin version override in localStorage so the updater can read it synchronously.
   useEffect(() => {

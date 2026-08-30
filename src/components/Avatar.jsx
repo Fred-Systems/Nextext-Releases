@@ -4,6 +4,7 @@ import { X, Eye, User, Image as ImageIcon, Info, Check } from "lucide-react";
 import { getAvatarColor, getAvatarStyle, lightenColor, getAvatarInitial } from "../utils/avatarColors";
 import { useAIIconStyle } from "../services/aiIcon";
 import { AI_CONTACT_UID } from "../firebase/ai";
+import { getProxyMediaUrl } from "../media/mediaProxy";
 
 const LOCAL_OVERRIDE_KEY = "nextext_contact_photo_overrides";
 export function getLocalPhotoOverride(uid) {
@@ -57,6 +58,8 @@ export default React.memo(function Avatar({ photoURL, name, uid, size = 52, styl
   uidRef.current = uid;
   const localOverride = hideLocalOverride ? null : getLocalPhotoOverride(uid);
   const effectivePhotoURL = localOverride || photoURL;
+  // Route profile/status avatars through the Cloudinary fetch proxy when enabled.
+  const proxiedPhotoURL = getProxyMediaUrl(effectivePhotoURL, "image");
   const bg = getAvatarColor(uid || name || "");
   const bgStyle = getAvatarStyle(uid || name || "") === "gradient"
     ? { background: `linear-gradient(135deg, ${lightenColor(bg, 0.25)}, ${bg})` }
@@ -157,7 +160,7 @@ export default React.memo(function Avatar({ photoURL, name, uid, size = 52, styl
       {isAI ? (
         (() => { const a = aiAvatarInner(aiStyle, size, fontSize); return <div style={a.style}>{a.label}</div>; })()
       ) : effectivePhotoURL ? (
-        <img src={effectivePhotoURL} alt={name || "avatar"} className="nx-avatar-thumb" style={{ width: size, height: size, objectFit: "cover" }} />
+        <img src={proxiedPhotoURL} alt={name || "avatar"} className="nx-avatar-thumb" style={{ width: size, height: size, objectFit: "cover" }} />
       ) : (
         <div style={{ width: size, height: size, borderRadius: "50%", ...bgStyle, display: "flex", alignItems: "center", justifyContent: "center", fontSize, fontWeight: 700, color: "#fff", userSelect: "none" }}>
           {initial}
@@ -222,7 +225,7 @@ export default React.memo(function Avatar({ photoURL, name, uid, size = 52, styl
           </div>
           {effectivePhotoURL ? (
             <div onClick={(e) => e.stopPropagation()} style={{ flex: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 16px 40px", boxSizing: "border-box" }}>
-              <img src={effectivePhotoURL} alt={name || "avatar"} style={{ maxWidth: "100%", maxHeight: "100%", width: "auto", height: "auto", borderRadius: 8, objectFit: "contain", display: "block" }} onError={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
+              <img src={proxiedPhotoURL} alt={name || "avatar"} style={{ maxWidth: "100%", maxHeight: "100%", width: "auto", height: "auto", borderRadius: 8, objectFit: "contain", display: "block" }} onError={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
               <div style={{ display: "none", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", background: "#111b21" }}>
                 <span style={{ fontSize: "min(200px, 40vw)", fontWeight: 700, color: "#fff", userSelect: "none" }}>{initial}</span>
               </div>

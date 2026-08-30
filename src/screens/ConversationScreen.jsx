@@ -33,22 +33,9 @@ import { getSystemInsets } from "../utils/systemInsets";
 
 const NEX_TEXT_FOLDER = "NexText";
 
-// Configurable message-bubble corner styles (Settings → "Bubble style").
-// Each returns { tl, tr, br, bl } radii for the current message bubble.
-const BUBBLE_STYLES = {
-  default: () => 14,
-  rounded: () => 20,
-  square: () => 5,
-  pill: (gPrev, gNext) => (gPrev || gNext ? 18 : 24),
-  outlined: () => 14,
-};
-function getBubbleRadius(style, groupedWithPrev, groupedWithNext) {
-  const fn = BUBBLE_STYLES[style] || BUBBLE_STYLES.default;
-  return fn(groupedWithPrev, groupedWithNext);
-}
-export function getBubbleStyle() {
-  try { return localStorage.getItem("nextext_bubble_style") || "default"; } catch { return "default"; }
-}
+// Configurable message-bubble corner styles live in src/theme/bubbleStyles.js
+// (shared with the Theme picker) so there is a single source of truth.
+import { getBubbleStyle, getBubbleRadius } from "../theme/bubbleStyles";
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -107,6 +94,7 @@ async function saveToNexTextFolder(fileName, blob, mimeType) {
 
 import { useStatuses } from "../firebase/status";
 import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote, useSystemConfigHook, translateMessage, LANGUAGES, getLanguageLabel } from "../firebase/ai";
+import { getProxyMediaUrl } from "../media/mediaProxy";
 import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
 import ContactSharePicker from "../components/ContactSharePicker";
 import ForwardPicker from "../components/ForwardPicker";
@@ -3102,8 +3090,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             </div>
           </div>
         ) : (
-          <div onClick={(e) => { e.stopPropagation(); setFullscreenImage(localSrc || m.mediaURL); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)", position: "relative" }}>
-            <img src={localSrc || m.mediaURL} alt="Sent photo" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
+          <div onClick={(e) => { e.stopPropagation(); setFullscreenImage(localSrc || getProxyMediaUrl(m.mediaURL, m.type)); }} style={{ cursor: "pointer", width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)", position: "relative" }}>
+            <img src={localSrc || getProxyMediaUrl(m.mediaURL, m.type)} alt="Sent photo" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
           </div>
         )}
         {renderDownloadBelow(m)}
@@ -3129,14 +3117,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           <div style={{ width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)", position: "relative" }}>
             {/* Thumbnail-first policy: show static thumbnail with play button overlay */}
             {m.mediaThumbURL ? (
-              <div style={{ position: "relative", width: "100%", height: "100%", cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); setFullscreenImage(localSrc || m.mediaURL); }}>
-                <img src={m.mediaThumbURL} alt="Video thumbnail" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
+              <div style={{ position: "relative", width: "100%", height: "100%", cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); setFullscreenImage(localSrc || getProxyMediaUrl(m.mediaURL, m.type)); }}>
+                <img src={getProxyMediaUrl(m.mediaThumbURL, "image")} alt="Video thumbnail" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
                 <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: 48, height: 48, borderRadius: "50%", background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)" }}>
                   <Play size={24} color="#fff" fill="#fff" />
                 </div>
               </div>
             ) : (
-              <video src={localSrc || m.mediaURL} controls preload="none" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
+              <video src={localSrc || getProxyMediaUrl(m.mediaURL, "video")} controls preload="none" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
             )}
           </div>
         )}
@@ -4174,8 +4162,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             </div>
           </div>
           <div style={{ flex: 1, minHeight: 0, width: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: "60px 16px 30px", boxSizing: "border-box" }}>
-            {viewingDisappearing.type === "image" && <img src={viewingDisappearing.mediaURL} alt="" style={{ maxWidth: "100%", maxHeight: "68%", objectFit: "contain", borderRadius: 10 }} onError={() => setImgErrorIds((prev) => new Set(prev).add(viewingDisappearing.id))} />}
-            {viewingDisappearing.type === "video" && <video src={viewingDisappearing.mediaURL} controls autoPlay playsInline style={{ maxWidth: "100%", maxHeight: "68%", borderRadius: 10 }} onError={() => setImgErrorIds((prev) => new Set(prev).add(viewingDisappearing.id))} />}
+            {viewingDisappearing.type === "image" && <img src={getProxyMediaUrl(viewingDisappearing.mediaURL, "image")} alt="" style={{ maxWidth: "100%", maxHeight: "68%", objectFit: "contain", borderRadius: 10 }} onError={() => setImgErrorIds((prev) => new Set(prev).add(viewingDisappearing.id))} />}
+            {viewingDisappearing.type === "video" && <video src={getProxyMediaUrl(viewingDisappearing.mediaURL, "video")} controls autoPlay playsInline style={{ maxWidth: "100%", maxHeight: "68%", borderRadius: 10 }} onError={() => setImgErrorIds((prev) => new Set(prev).add(viewingDisappearing.id))} />}
             {viewingDisappearing.type === "file" && <a href={viewingDisappearing.mediaURL} target="_blank" rel="noopener noreferrer" download={viewingDisappearing.fileName || undefined} style={{ color: "#fff", fontSize: 15, fontWeight: 600, textDecoration: "underline" }}>Open file: {viewingDisappearing.fileName || "file"}</a>}
             <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 13, textAlign: "center", maxWidth: 300, lineHeight: 1.4 }}>This disappearing media will be deleted for everyone once you leave this view. Please don't screenshot or screen-record.</div>
           </div>
