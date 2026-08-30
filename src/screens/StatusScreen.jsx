@@ -15,7 +15,17 @@ import StatusStoryViewer from "./StatusStoryViewer";
 import { getMicrophoneStream } from "../media/microphone";
 import { base64ToBlob } from "../media/base64";
 import { useGlobalSettings } from "../firebase/config-settings";
-import { getProxyMediaUrl } from "../media/mediaProxy";
+import { getProxyMediaUrl, getVideoPosterUrl } from "../media/mediaProxy";
+
+// Resolve the thumbnail shown in the status feed for a video item. Prefers a
+// generated poster; when none exists, derive a Cloudinary still-frame poster from
+// the video so the feed never renders blank.
+function statusPosterSrc(item) {
+  if (!item) return "";
+  if (item.posterURL) return getProxyMediaUrl(item.posterURL, "image");
+  if (item.mediaURL) return getVideoPosterUrl(item.mediaURL);
+  return "";
+}
 
 // Camera preview / capture effect filters (CSS filter strings). Applied live to
 // the preview and baked into captured photos via canvas ctx.filter.
@@ -1113,7 +1123,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
                         forceStaticPreview ? (
-                          <img src={getProxyMediaUrl(latest.posterURL || latest.mediaURL, "image")} alt="" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                          <img src={statusPosterSrc(latest)} alt="" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                         ) : (
                           <video src={getProxyMediaUrl(latest.previewURL || latest.mediaURL, "video")} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                         )
@@ -1153,7 +1163,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                       {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
                         forceStaticPreview ? (
-                          <img src={getProxyMediaUrl(latest.posterURL || latest.mediaURL, "image")} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          <img src={statusPosterSrc(latest)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         ) : (
                           <video src={getProxyMediaUrl(latest.previewURL || latest.mediaURL, "video")} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         )
@@ -1187,7 +1197,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
                         forceStaticPreview ? (
-                          <img src={getProxyMediaUrl(latest.posterURL || latest.mediaURL, "image")} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          <img src={statusPosterSrc(latest)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         ) : (
                           <video src={getProxyMediaUrl(latest.previewURL || latest.mediaURL, "video")} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         )
@@ -1216,7 +1226,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                      {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
                         forceStaticPreview ? (
-                          <img src={getProxyMediaUrl(latest.posterURL || latest.mediaURL, "image")} alt="" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                          <img src={statusPosterSrc(latest)} alt="" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                         ) : (
                          <video src={getProxyMediaUrl(latest.previewURL || latest.mediaURL, "video")} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                         )

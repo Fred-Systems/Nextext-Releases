@@ -554,43 +554,62 @@ export async function generateGeminiImage(userUid, prompt) {
   if (config.provider !== "gemini") {
     throw new Error("Image generation is only available when the AI provider is set to Gemini.");
   }
-  const model = config.geminiImageModel || GEMINI_IMAGE_MODEL;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(config.key)}`;
-  const body = {
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
-  };
-  let response;
-  try {
-    response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  } catch {
-    throw new Error("Couldn't reach the image service. Check your connection and try again.");
-  }
-  if (!response.ok) {
-    const errText = await response.text().catch(() => "Unknown error");
-    if (response.status === 400 && /API_KEY|key/i.test(errText)) {
-      throw new Error("The Gemini API key is invalid. An admin must set a valid key in the Admin Dashboard.");
+  // Prefer the admin-selected text model (the one that already works for chat).
+  // Only fall back to a separately-configured image model when the admin has set
+  // one explicitly AND it differs from the legacy default. This avoids calling the
+  // deprecated `gemini-3.1-flash-image` model, which returns 429s on new keys.
+  const explicitImageModel = (config.geminiImageModel && config.geminiImageModel !== GEMINI_IMAGE_MODEL) ? config.geminiImageModel : null;
+  const candidates = [explicitImageModel, config.model, "gemini-3.6-flash"].filter(Boolean);
+  let lastErr;
+  for (const model of candidates) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(config.key)}`;
+      const body = {
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+      };
+      let response;
+      try {
+        response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      } catch {
+        lastErr = new Error("Couldn't reach the image service. Check your connection and try again.");
+        continue;
+      }
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "Unknown error");
+        if (response.status === 400 && /API_KEY|key/i.test(errText)) {
+          throw new Error("The Gemini API key is invalid. An admin must set a valid key in the Admin Dashboard.");
+        }
+        // Try the next candidate model instead of failing immediately.
+        lastErr = new Error(`Image model ${model} failed (${response.status}): ${errText}`);
+        continue;
+      }
+      const data = await response.json().catch(() => null);
+      const parts = data?.candidates?.[0]?.content?.parts || [];
+      const imgPart = parts.find((p) => p.inlineData && p.inlineData.data);
+      if (!imgPart?.inlineData?.data) { lastErr = new Error("Image generation returned no image. Try a different prompt."); continue; }
+      const mime = imgPart.inlineData.mimeType || "image/png";
+      const byteChars = atob(imgPart.inlineData.data);
+      const len = byteChars.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([bytes], { type: mime });
+      try {
+        const up = await uploadToCloudinary(blob, { resourceType: "image" });
+        return up.url;
+      } catch {
+        const chatId = getAIChatId(userUid);
+        const up = await uploadMediaFile(chatId, userUid, blob, { skipThumbnail: true });
+        return up.url;
+      }
+    } catch (e) {
+      lastErr = e;
+      // A hard error (bad key, network) should surface immediately.
+      if (/API key is invalid|reach the image service/i.test(e.message)) throw e;
+      continue;
     }
-    throw new Error(`Image generation failed (${response.status}): ${errText}`);
   }
-  const data = await response.json().catch(() => null);
-  const parts = data?.candidates?.[0]?.content?.parts || [];
-  const imgPart = parts.find((p) => p.inlineData && p.inlineData.data);
-  if (!imgPart?.inlineData?.data) throw new Error("Image generation returned no image. Try a different prompt.");
-  const mime = imgPart.inlineData.mimeType || "image/png";
-  const byteChars = atob(imgPart.inlineData.data);
-  const len = byteChars.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = byteChars.charCodeAt(i);
-  const blob = new Blob([bytes], { type: mime });
-  try {
-    const up = await uploadToCloudinary(blob, { resourceType: "image" });
-    return up.url;
-  } catch {
-    const chatId = getAIChatId(userUid);
-    const up = await uploadMediaFile(chatId, userUid, blob, { skipThumbnail: true });
-    return up.url;
-  }
+  throw lastErr || new Error("Image generation failed. Try again.");
 }
 
 // Detects whether a user message is asking to generate an image, and extracts the

@@ -224,6 +224,25 @@ public class NextextNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void cancelNotificationForChat(PluginCall call) {
+        // Dismisses the status-bar notification posted for a specific chat (it is
+        // posted with notify(tag=chatId, id=0)). Called when the user opens that
+        // chat by any means — not only by tapping the notification — so the toast
+        // never lingers after they've already gone to read the conversation.
+        final String chatId = call.getString("chatId", "");
+        try {
+            android.content.Context ctx = getContext();
+            android.app.NotificationManager nm = (android.app.NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null && chatId != null && !chatId.isEmpty()) {
+                nm.cancel(chatId, 0);
+            }
+            call.resolve();
+        } catch (final Exception e) {
+            call.reject("cancel failed: " + (e.getMessage() == null ? String.valueOf(e) : e.getMessage()));
+        }
+    }
+
+    @PluginMethod
     public void showLocalNotification(PluginCall call) {
         // Shows a real Android status-bar notification. HTML5 Notification is a
         // no-op in the Capacitor WebView on modern Android, so this native

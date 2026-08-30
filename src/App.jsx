@@ -51,7 +51,7 @@ import NotepadScreen from "./screens/NotepadScreen";
 import AnnouncementsScreen from "./screens/AnnouncementsScreen";
 import IconPickerScreen from "./screens/IconPickerScreen";
 import { getActiveProfileId, syncNativeProfile, ICON_PROFILES, setNotepadKeyword, setActiveProfile } from "./services/iconManager";
-import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead, VIBRATION_PRESETS, previewNotificationFeedback } from "./firebase/notifications";
+import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead, VIBRATION_PRESETS, previewNotificationFeedback, cancelNotificationForChat } from "./firebase/notifications";
 import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
 import UpdatePrompt from "./components/UpdatePrompt";
@@ -3431,6 +3431,9 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     if (chatId) verifiedLockedChatsRef.current.add(chatId);
     setActiveChat({ chatId, otherUid, contact, origin: "chat", openSettings: options?.openSettings || false });
     setScreen("chat");
+    // Dismiss this chat's OS notification the moment the user opens it — whether
+    // they tapped the notification or navigated in from the chat list.
+    if (chatId) cancelNotificationForChat(chatId);
   };
 
   // Ref mirrors of chats/contacts/openChat. Declared HERE (after those values are

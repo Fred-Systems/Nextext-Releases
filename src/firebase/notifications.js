@@ -194,6 +194,17 @@ export function showLocalNotification(title, body, tag = "nextext-msg", info = {
 // in Settings / a contact profile. Chime ids (the Web Audio voice-note chimes)
 // are played by the JS layer; everything else (default/none/ping1-3) is handled
 // natively. Vibration always goes through the native layer.
+// Dismisses the OS status-bar notification for a specific chat. The native side
+// posts each message notification with tag=chatId; calling this when the user
+// opens that chat (by any route, not only by tapping the notification) makes the
+// lingering toast disappear immediately.
+export function cancelNotificationForChat(chatId) {
+  if (!chatId) return;
+  if (Capacitor.isNativePlatform()) {
+    try { NextextNative.cancelNotificationForChat({ chatId }).catch(() => {}); } catch {}
+  }
+}
+
 export function previewNotificationFeedback(pattern, sound) {
   if (!Capacitor.isNativePlatform()) return;
   try {
