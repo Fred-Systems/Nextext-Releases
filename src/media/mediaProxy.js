@@ -36,14 +36,19 @@ export function getProxyMediaUrl(url, type = "image") {
   return base + encodeURIComponent(url);
 }
 
-// Generate a still-frame poster for a video through Cloudinary's fetch API.
-// Returns a JPEG of the first frame (so_0) so chat + status video previews never
-// render blank. This always uses Cloudinary (independent of the optimization-proxy
-// flag) because it's the only reliable way to get a poster for a Supabase-stored
-// video without a server round-trip.
+// Derive a Cloudinary first-frame JPEG poster from an ALREADY-Cloudinary video
+// URL (e.g. https://res.cloudinary.com/<cloud>/video/upload/v123/abc.mp4 ->
+// .../video/upload/so_0,f_jpg,w_480/v123/abc.jpg).
+function cloudinaryVideoPoster(url) {
+  return url.replace(/(\/video\/upload\/)(.*?\/)?([^/]+)\.(mp4|webm|ogg|mov|mkv|avi)$/i, "$1so_0,f_jpg,w_480/$2$3.jpg");
+}
+
+// Generate a still-frame poster for a video through Cloudinary. Works for both
+// Cloudinary-hosted videos (transform injection) and external URLs (fetch proxy),
+// so chat + status video previews never render blank.
 export function getVideoPosterUrl(url) {
   if (!url || typeof url !== "string") return url;
-  if (url.includes("res.cloudinary.com")) return url;
+  if (url.includes("res.cloudinary.com")) return cloudinaryVideoPoster(url);
   const base = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/fetch/so_0,f_jpg,w_480,q_auto/`;
   return base + encodeURIComponent(url);
 }

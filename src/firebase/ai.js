@@ -562,8 +562,10 @@ export async function generateGeminiImage(userUid, prompt) {
   // Try dedicated image-generation models first (the text chat model often can't
   // emit images), then fall back to the configured chat model as a last resort.
   const candidates = [explicitImageModel, "gemini-3.6-flash-image", "gemini-3.5-flash-image", "gemini-3.1-flash-image", config.model].filter(Boolean);
+  const tried = [];
   let lastErr;
   for (const model of candidates) {
+    tried.push(model);
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(config.key)}`;
       const body = {
@@ -611,7 +613,7 @@ export async function generateGeminiImage(userUid, prompt) {
       continue;
     }
   }
-  throw lastErr || new Error("Image generation failed. Try again.");
+  throw new Error(`Image generation failed — tried models: ${tried.join(", ")}. None returned an image. Set the correct image model in Admin Dashboard → AI Provider → "Gemini Image Model" (the text model often can't emit images). Last error: ${lastErr?.message || "no image part returned"}`);
 }
 
 // Detects whether a user message is asking to generate an image, and extracts the

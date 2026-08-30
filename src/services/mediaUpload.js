@@ -285,11 +285,22 @@ export async function uploadMediaFile(chatId, senderUid, file, options = {}) {
     thumbnailBlob = await extractVideoThumbnail(file);
   }
 
-  // 4. All media is stored in Supabase. Optimization is handled at DISPLAY time
-  //    via the Cloudinary Fetch proxy (see src/media/mediaProxy.js) when the
-  //    admin "Cloudinary Media Optimization Proxy" flag is enabled — we never
-  //    save assets permanently inside Cloudinary.
-  let result = await uploadToSupabase(chatId, senderUid, uploadFile, { thumbnailBlob });
+  // 4. Route to the active storage provider.
+  //    - cloudinary : direct UNSIGNED client-side upload. We receive the public
+  //      delivery URL and only that string is persisted downstream (no Supabase
+  //      Storage bucket is used for this pipeline). Posters/previews are derived
+  //      on the fly via the Cloudinary Fetch proxy.
+  //    - supabase   : legacy path (uploads to the chat-media bucket).
+  const provider = options.provider || (await getActiveStorageProvider());
+  let result;
+  if (provider === "cloudinary") {
+    const resourceType = file.type.startsWith("video/") ? "video"
+      : file.type.startsWith("image/") ? "image"
+      : "auto";
+    result = await uploadToCloudinary(uploadFile, { resourceType });
+  } else {
+    result = await uploadToSupabase(chatId, senderUid, uploadFile, { thumbnailBlob });
+  }
 
   // 5. Small blur placeholder for images (used by chat media blur previews).
   let blurData = null;
