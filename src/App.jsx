@@ -4282,7 +4282,10 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       {sharePayload && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setSharePayload(null)}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 360, maxHeight: "85vh", background: t.surface, borderRadius: 16, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ padding: "14px 16px", fontWeight: 700, fontSize: 16, color: t.text, borderBottom: `1px solid ${t.border}` }}>Share to NexText</div>
+            <div style={{ padding: "14px 16px", fontWeight: 700, fontSize: 16, color: t.text, borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center" }}>
+              <span style={{ flex: 1 }}>Share to NexText</span>
+              <X size={20} color={t.textMuted} onClick={() => setSharePayload(null)} style={{ cursor: "pointer", flexShrink: 0 }} />
+            </div>
             <div style={{ padding: 14 }}>
               <textarea value={shareText} onChange={(e) => setShareText(e.target.value)} placeholder="Message…" style={{ width: "100%", minHeight: 80, resize: "none", borderRadius: 10, border: `1px solid ${t.border}`, padding: 10, fontSize: 14, color: t.text, boxSizing: "border-box", background: t.bg }} />
               {sharePayload.uris?.length > 0 && (

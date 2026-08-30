@@ -1826,13 +1826,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (blocked) { cancelPendingMedia(); setSendError(blocked); return; }
     setCaptionBusy(true);
     setSendError("");
+    // Close the preview sheet immediately so the user sees the chat while the
+    // upload happens in the background (instead of blocking on a spinner).
+    const caption = captionText.trim();
+    cancelPendingMedia();
     try {
       const result = await uploadMediaFile(chatId, myUid, pm.file);
-      const caption = captionText.trim();
       await sendMediaMessage(chatId, myUid, pm.isImage ? "image" : "video", result, otherParticipants, { replyTo: replyingTo, text: caption || null, disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
       setDisappearingViews(0);
       setReplyingTo(null);
-      cancelPendingMedia();
     } catch (err) {
       if (err instanceof RawFileTooLargeError) setSendError(err.message);
       else if (err instanceof FileTooLargeError) setSendError("Files must be under 50MB.");

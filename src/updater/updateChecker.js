@@ -2,7 +2,7 @@ import { Capacitor } from "@capacitor/core";
 import { version as APP_VERSION } from "../../package.json";
 import NextextNative from "../native/nextextNative";
 
-const GITHUB_REPO = "Fred-Systems/nextext";
+const GITHUB_REPO = "Fred-Systems/Nextext-Releases";
 const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/releases`;
 const LAST_SEEN_KEY = "nextext_last_seen_release";
 const OVERRIDE_KEY = "nextext_app_version_override";

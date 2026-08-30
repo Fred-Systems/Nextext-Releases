@@ -14,7 +14,22 @@ export const AI_CHAT_PREFIX = "ai_";
 // empty so no secret ever lives in source control.
 export const DEFAULT_GEMINI_KEY = "";
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-export const GEMINI_IMAGE_MODEL = "imagen-3.0-generate-002";
+// Image generation model. The user requested gemini-3.1-flash-image, which is a
+// Gemini generative model that returns images as inline_data via generateContent
+// (responseModalities: ["IMAGE"]) — NOT the separate Imagen :predict endpoint.
+export const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image";
+
+// Selectable Gemini models surfaced in the AI chat (and Admin) when the provider
+// is Gemini. The image model is included so users can pick it directly, but image
+// generation is also auto-triggered by intent detection regardless of model.
+export const GEMINI_MODELS = [
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+  { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+  { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+  { id: "gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image (image gen)" },
+];
 
 // Shared identity every NexText AI persona carries, so no matter which
 // personality is active the assistant still knows what/who it is and never
@@ -277,6 +292,11 @@ export async function setAIPersonality(userUid, personalityKey) {
   await setDoc(doc(db, "users", userUid), { aiPersonality: personalityKey }, { merge: true });
 }
 
+// Per-user Gemini model selection (only used when the provider is Gemini).
+export async function setGeminiModel(userUid, model) {
+  await setDoc(doc(db, "users", userUid), { geminiModel: model }, { merge: true });
+}
+
 // ── Groq API — clean browser fetch, no SDK ──
 function parseRateLimitError(errText, status) {
   // Try to extract retry-after from error message or use default
@@ -353,10 +373,13 @@ export function describeAIError(error) {
   if (lower.includes("timeout") || lower.includes("network") || lower.includes("failed to fetch")) {
     return "Couldn't reach the AI service. Check your connection and try again.";
   }
-  return "Something went wrong with the AI. Please try again.";
+  // Fallback: include the raw message so failures aren't a black box (the user can
+  // report the exact text back). Trimmed to keep the bubble readable.
+  const detail = String(error?.message || error || "").slice(0, 240);
+  return detail ? `AI error: ${detail}` : "Something went wrong with the AI. Please try again.";
 }
 
-export async function sendAIMessage(userUid, messageText, chatHistory = [], customInstructions = "", attachment = null) {
+export async function sendAIMessage(userUid, messageText, chatHistory = [], customInstructions = "", attachment = null, modelOverride = null) {
   const config = await getSystemConfigForCall();
   const personalityKey = await getPersonalityKey(userUid);
   // Live Mode (groq/compound) has a tighter practical input limit, so feed it a
@@ -375,11 +398,12 @@ export async function sendAIMessage(userUid, messageText, chatHistory = [], cust
 
   // ── Gemini provider path ──
   if (config.provider === "gemini") {
+    const model = modelOverride || config.model;
     let hist = (chatHistory || []).slice(-MAX_HISTORY);
     for (let attempt = 0; attempt <= 3; attempt++) {
       try {
         const contents = buildGeminiContents(hist, messageText, attachment);
-        return await callGemini(config.key, systemPrompt, contents, config.model);
+        return await callGemini(config.key, systemPrompt, contents, model);
       } catch (err) {
         const msg = String(err?.message || "");
         const isTooLarge = msg.includes("413") || msg.toLowerCase().includes("request entity too large") || msg.includes("too large") || msg.includes("exceeds");
@@ -438,7 +462,27 @@ function buildGeminiContents(history, messageText, attachment) {
     userParts.push({ inlineData: { mimeType: attachment.mimeType, data: attachment.base64 } });
   }
   contents.push({ role: "user", parts: userParts });
-  return contents;
+  return normalizeGeminiContents(contents);
+}
+
+// Gemini requires the conversation to start with a "user" turn and strictly
+// alternate roles. Chat history can begin with an AI greeting (model) or contain
+// two user turns in a row (the appended message + a prior user message), both of
+// which make the API reject the request with a generic 400. This flattens
+// consecutive same-role turns into one and drops any leading model turns.
+function normalizeGeminiContents(contents) {
+  const out = [];
+  for (const c of contents || []) {
+    const role = c.role === "model" ? "model" : "user";
+    const parts = Array.isArray(c.parts) ? c.parts : [{ text: String(c.text || "") }];
+    if (out.length && out[out.length - 1].role === role) {
+      out[out.length - 1].parts.push(...parts);
+    } else {
+      out.push({ role, parts: [...parts] });
+    }
+  }
+  while (out.length && out[0].role !== "user") out.shift();
+  return out;
 }
 
 async function callGemini(apiKey, systemInstruction, contents, model = DEFAULT_GEMINI_MODEL, temperature = 0.7) {
@@ -498,15 +542,21 @@ async function callGeminiVision(apiKey, base64, mimeType, prompt, systemInstruct
   return callGemini(apiKey, systemInstruction, contents, DEFAULT_GEMINI_MODEL, 0.5);
 }
 
-// Text → image. Calls Imagen, then uploads the generated bytes to Cloudinary so
-// the result is optimized/delivered via CDN, with a Supabase fallback.
+// Text → image. Uses the Gemini image model (gemini-3.1-flash-image) via
+// generateContent with responseModalities: ["IMAGE"], reads the returned
+// inline_data bytes, then uploads them to Cloudinary (optimized/CDN) with a
+// Supabase fallback so the chat can display the result as a normal image bubble.
 export async function generateGeminiImage(userUid, prompt) {
   const config = await getSystemConfigForCall();
   if (config.provider !== "gemini") {
     throw new Error("Image generation is only available when the AI provider is set to Gemini.");
   }
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:predict?key=${encodeURIComponent(config.key)}`;
-  const body = { instances: [{ prompt: prompt }], parameters: { sampleCount: 1, aspectRatio: "1:1" } };
+  const model = config.geminiImageModel || GEMINI_IMAGE_MODEL;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(config.key)}`;
+  const body = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+  };
   let response;
   try {
     response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -515,16 +565,21 @@ export async function generateGeminiImage(userUid, prompt) {
   }
   if (!response.ok) {
     const errText = await response.text().catch(() => "Unknown error");
+    if (response.status === 400 && /API_KEY|key/i.test(errText)) {
+      throw new Error("The Gemini API key is invalid. An admin must set a valid key in the Admin Dashboard.");
+    }
     throw new Error(`Image generation failed (${response.status}): ${errText}`);
   }
   const data = await response.json().catch(() => null);
-  const b64 = data?.predictions?.[0]?.bytesBase64Encoded;
-  if (!b64) throw new Error("Image generation returned no image. Try a different prompt.");
-  const byteChars = atob(b64);
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  const imgPart = parts.find((p) => p.inlineData && p.inlineData.data);
+  if (!imgPart?.inlineData?.data) throw new Error("Image generation returned no image. Try a different prompt.");
+  const mime = imgPart.inlineData.mimeType || "image/png";
+  const byteChars = atob(imgPart.inlineData.data);
   const len = byteChars.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) bytes[i] = byteChars.charCodeAt(i);
-  const blob = new Blob([bytes], { type: "image/png" });
+  const blob = new Blob([bytes], { type: mime });
   try {
     const up = await uploadToCloudinary(blob, { resourceType: "image" });
     return up.url;
@@ -533,6 +588,29 @@ export async function generateGeminiImage(userUid, prompt) {
     const up = await uploadMediaFile(chatId, userUid, blob, { skipThumbnail: true });
     return up.url;
   }
+}
+
+// Detects whether a user message is asking to generate an image, and extracts the
+// subject. Used to auto-route to the Gemini image model instead of the text model.
+const IMAGE_INTENT_RE = /\b(image|picture|photo|drawing|draw|generate|create|make|paint|render|sketch)\b/i;
+export function detectImageIntent(text) {
+  if (!text) return null;
+  const t = (text || "").trim();
+  if (t.toLowerCase().startsWith("/image")) return extractImagePrompt(t.slice(6));
+  // Require an image-ish verb AND an object ("draw a cat", "make an image of a dog")
+  if (!IMAGE_INTENT_RE.test(t)) return null;
+  return extractImagePrompt(t);
+}
+
+export function extractImagePrompt(text) {
+  let t = (text || "").trim();
+  if (t.toLowerCase().startsWith("/image")) t = t.slice(6).trim();
+  // Strip common leading trigger phrases so the model gets a clean subject.
+  t = t.replace(/^\/image\s*/i, "")
+    .replace(/\b(please|can you|could you|i want (you to)?|i'd like you to|generate|create|make|draw|paint|render|sketch|produce|an image of|an image|an picture of|a picture of|a photo of|a drawing of|images of|pictures of|image of|picture of|photo of|drawing of|a|an|the|me|my|some|with)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return t || text.trim();
 }
 
 // ── Message Translation (Groq) ──
@@ -680,7 +758,7 @@ async function getSystemConfigForCall() {
   if (provider === "gemini") {
     const key = (config?.geminiApiKey || "").trim();
     if (!key) throw new Error("AI is not configured. No Gemini API key found in Firestore /config/system.");
-    return { provider, key, model: config?.geminiModel || DEFAULT_GEMINI_MODEL, aiMode: config?.aiMode || "old" };
+    return { provider, key, model: config?.geminiModel || DEFAULT_GEMINI_MODEL, geminiImageModel: config?.geminiImageModel || GEMINI_IMAGE_MODEL, aiMode: config?.aiMode || "old" };
   }
   const key = (config?.groqApiKey || "").trim();
   if (!key) throw new Error("AI is not configured. No API key found in Firestore /config/system.");

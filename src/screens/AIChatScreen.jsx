@@ -6,7 +6,7 @@ import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { deleteChatCompletely } from "../firebase/chats";
-import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, useSystemConfigHook, describeAIError } from "../firebase/ai";
+import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, detectImageIntent, GEMINI_MODELS, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, setGeminiModel, useSystemConfigHook, describeAIError } from "../firebase/ai";
 import { useAIIconStyle, getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
 import Avatar from "../components/Avatar";
 
@@ -252,9 +252,11 @@ export default function AIChatScreen({ myUid, onBack }) {
   const handleSend = async (overrideText) => {
     const text = (typeof overrideText === "string" ? overrideText : (input || "")).trim();
     if (!text || sending) return;
-    // ── /image trigger → Gemini Imagen generation ──
-    if (text.startsWith("/image")) {
-      const prompt = text.slice(6).trim() || text;
+    // ── Image generation triggers (Gemini only) ──
+    // Explicit /image command OR natural-language intent ("draw a cat", "make an
+    // image of a sunset"). Bypasses the text model and calls the Gemini image model.
+    const imagePrompt = (sysConfig?.aiProvider === "gemini") ? detectImageIntent(text) : null;
+    if (imagePrompt) {
       setInput("");
       setSending(true);
       setThinking(true);
@@ -263,7 +265,7 @@ export default function AIChatScreen({ myUid, onBack }) {
         await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
           senderId: myUid, type: "text", text,
         }));
-        const url = await generateGeminiImage(myUid, prompt);
+        const url = await generateGeminiImage(myUid, imagePrompt);
         setThinking(false);
         await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
           senderId: AI_CONTACT_UID, type: "image", text: null,
@@ -291,7 +293,7 @@ export default function AIChatScreen({ myUid, onBack }) {
         senderId: myUid, type: "text", text, replyTo,
       }));
       const customInstructions = (typeof window !== "undefined" && localStorage.getItem("nextext_ai_custom_instructions_enabled") !== "off") ? (localStorage.getItem("nextext_ai_custom_instructions") || "") : "";
-      const aiResponse = await sendAIMessage(myUid, text, messages, customInstructions);
+      const aiResponse = await sendAIMessage(myUid, text, messages, customInstructions, null, geminiModel);
       setThinking(false);
       await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
         senderId: AI_CONTACT_UID, type: "text", text: aiResponse,
@@ -627,6 +629,12 @@ export default function AIChatScreen({ myUid, onBack }) {
   };
 
   const currentPersonality = userDoc?.aiPersonality || "default";
+  const [geminiModel, setGeminiModelLocal] = useState(userDoc?.geminiModel || "gemini-2.5-flash");
+  const [showModelTray, setShowModelTray] = useState(false);
+  useEffect(() => {
+    if (userDoc?.geminiModel) setGeminiModelLocal(userDoc.geminiModel);
+  }, [userDoc?.geminiModel]);
+  const isGemini = sysConfig?.aiProvider === "gemini";
 
   return (
     <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 20 }}>
@@ -653,6 +661,18 @@ export default function AIChatScreen({ myUid, onBack }) {
               <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>AI Assistant Persona</span>
               <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
             </div>
+            {isGemini && (
+              <div
+                onClick={() => { setShowSettings(false); setShowModelTray(true); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
+              >
+                <span style={{ fontSize: 16 }}>🧩</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Gemini Model</span>
+                <span style={{ marginLeft: "auto", color: t.primary, fontSize: 12.5, fontWeight: 600 }}>
+                  {GEMINI_MODELS.find((m) => m.id === geminiModel)?.label || geminiModel} ›
+                </span>
+              </div>
+            )}
             <div
               onClick={() => { setShowSettings(false); setShowIconTray(true); }}
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
@@ -708,6 +728,35 @@ export default function AIChatScreen({ myUid, onBack }) {
               >
                 <span style={{ fontWeight: 600, fontSize: 13.5, color: currentPersonality === key ? t.primary : t.text }}>{label}</span>
                 {currentPersonality === key && <span style={{ marginLeft: "auto", color: t.primary, fontWeight: 700 }}>✓</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showModelTray && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: "absolute", top: 52, right: 10, background: t.surface, borderRadius: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.25)", overflow: "hidden", zIndex: 50, minWidth: 240 }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderBottom: `1px solid ${t.border}`, cursor: "pointer" }} onClick={() => setShowModelTray(false)}>
+            <span style={{ fontSize: 16, color: t.textMuted }}>‹</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>Gemini Model</span>
+          </div>
+          <div style={{ maxHeight: 300, overflowY: "auto" }}>
+            {GEMINI_MODELS.map((m) => (
+              <div
+                key={m.id}
+                onClick={() => {
+                  setGeminiModel(myUid, m.id);
+                  setGeminiModelLocal(m.id);
+                  setShowModelTray(false);
+                  setShowSettings(false);
+                }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", cursor: "pointer", background: geminiModel === m.id ? t.primaryLight : "transparent" }}
+              >
+                <span style={{ fontWeight: 600, fontSize: 13.5, color: geminiModel === m.id ? t.primary : t.text }}>{m.label}</span>
+                {geminiModel === m.id && <span style={{ marginLeft: "auto", color: t.primary, fontWeight: 700 }}>✓</span>}
               </div>
             ))}
           </div>
