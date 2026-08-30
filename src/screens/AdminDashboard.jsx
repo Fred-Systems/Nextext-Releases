@@ -68,13 +68,18 @@ function AnalyticsTab() {
       try {
         setLoading(true);
         // ── Real Firestore document counts (no mock data) ──
-        const [usersSnap, chatsSnap, statusSnap, reportsSnap, feedbackSnap, broadcastSnap] = await Promise.all([
-          getDocs(collection(db, "users")),
-          getDocs(collection(db, "chats")),
-          getDocs(collection(db, "status")),
-          getDocs(collection(db, "reports")),
-          getDocs(collection(db, "feedback")),
-          getDocs(collection(db, "broadcastLists")),
+        // Each collection is fetched independently so a single RLS-denied
+        // collection surfaces as a note instead of breaking the whole tab.
+        const fetchCount = async (name) => {
+          try { return (await getDocs(collection(db, name))).size; } catch { return null; }
+        };
+        const [users, chats, status, reports, feedback, broadcasts] = await Promise.all([
+          fetchCount("users"),
+          fetchCount("chats"),
+          fetchCount("status"),
+          fetchCount("reports"),
+          fetchCount("feedback"),
+          fetchCount("broadcastLists"),
         ]);
         // ── Real Supabase storage volume (best-effort) ──
         let storageBytes = 0;
@@ -89,12 +94,7 @@ function AnalyticsTab() {
         }
         if (!active) return;
         setData({
-          users: usersSnap.size,
-          chats: chatsSnap.size,
-          status: statusSnap.size,
-          reports: reportsSnap.size,
-          feedback: feedbackSnap.size,
-          broadcasts: broadcastSnap.size,
+          users, chats, status, reports, feedback, broadcasts,
           storageBytes,
           mediaFiles,
           storageNote,
@@ -140,12 +140,12 @@ function AnalyticsTab() {
       </AnalyticsCard>
 
       <AnalyticsCard title="Firebase / Firestore (real counts)">
-        <Stat label="Registered users" value={data.users.toLocaleString()} />
-        <Stat label="Chats" value={data.chats.toLocaleString()} />
-        <Stat label="Status posts" value={data.status.toLocaleString()} />
-        <Stat label="Broadcast lists" value={data.broadcasts.toLocaleString()} />
-        <Stat label="Reports" value={data.reports.toLocaleString()} />
-        <Stat label="Feedback items" value={data.feedback.toLocaleString()} />
+        <Stat label="Registered users" value={data.users != null ? data.users.toLocaleString() : "— (no access)"} />
+        <Stat label="Chats" value={data.chats != null ? data.chats.toLocaleString() : "— (no access)"} />
+        <Stat label="Status posts" value={data.status != null ? data.status.toLocaleString() : "— (no access)"} />
+        <Stat label="Broadcast lists" value={data.broadcasts != null ? data.broadcasts.toLocaleString() : "— (no access)"} />
+        <Stat label="Reports" value={data.reports != null ? data.reports.toLocaleString() : "— (no access)"} />
+        <Stat label="Feedback items" value={data.feedback != null ? data.feedback.toLocaleString() : "— (no access)"} />
         <div style={{ fontSize: 11, color: t.textMuted, marginTop: 8, lineHeight: 1.5 }}>
           Exact read/write operation billing requires Firebase Monitoring API (backend). These counts are real document totals.
         </div>
@@ -211,6 +211,10 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [aiModeDraft, setAiModeDraft] = useState(sysConfig?.aiMode || "old");
   const [aiLiveDraft, setAiLiveDraft] = useState(sysConfig?.aiLiveModel || "groq/compound");
   const [aiSaved, setAiSaved] = useState(false);
+  const [geminiKeyDraft, setGeminiKeyDraft] = useState(sysConfig?.geminiApiKey || "");
+  useEffect(() => {
+    if (sysConfig?.geminiApiKey != null) setGeminiKeyDraft(sysConfig.geminiApiKey);
+  }, [sysConfig?.geminiApiKey]);
   const [storageProvider, setStorageProvider] = useState("supabase");
   const [storageProviderBusy, setStorageProviderBusy] = useState(false);
   const [storageProviderError, setStorageProviderError] = useState("");
@@ -1442,6 +1446,52 @@ export default function AdminDashboard({ myUid, onBack }) {
                 All users cannot access NexText AI features while this is enabled.
               </div>
             )}
+          </div>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Zap size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>AI Provider</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Choose which AI backend powers NexText AI. "Groq" uses the existing OpenAI/Groq models. "Gemini" uses Google's gemini-2.5-flash and enables AI image generation via the <code style={{ background: t.bg, padding: "1px 5px", borderRadius: 4, fontSize: 11 }}>/image</code> command.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              {[
+                { id: "groq", label: "Groq" },
+                { id: "gemini", label: "Gemini" },
+              ].map((o) => (
+                <div key={o.id} onClick={() => setSystemConfig({ aiProvider: o.id }, myUid)} style={{ flex: 1, textAlign: "center", padding: "10px 8px", borderRadius: 10, fontSize: 13.5, fontWeight: 700, cursor: "pointer", border: `1px solid ${t.border}`, background: (sysConfig?.aiProvider || "groq") === o.id ? t.primary : t.bg, color: (sysConfig?.aiProvider || "groq") === o.id ? "#fff" : t.text }}>
+                  {o.label}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
+              <span style={{ fontWeight: 600, fontSize: 13, color: t.text }}>Gemini API Key</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: sysConfig?.geminiApiKey ? "#28A745" : "#FF3B30", padding: "3px 8px", borderRadius: 6, background: sysConfig?.geminiApiKey ? "#E5F9E7" : "#FFE5E5" }}>
+                {sysConfig?.geminiApiKey ? "Set" : "Missing"}
+              </span>
+            </div>
+            <input
+              type="password"
+              value={geminiKeyDraft}
+              onChange={(e) => setGeminiKeyDraft(e.target.value)}
+              placeholder="Paste Gemini API key"
+              style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontSize: 13, marginTop: 4 }}
+            />
+            <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 6, lineHeight: 1.45 }}>
+              Required only when the provider is Gemini. Paste your Google AI Studio / Vertex API key here (it is stored in Firestore, never in the app source).
+            </div>
+            <button onClick={() => { setSystemConfig({ geminiApiKey: geminiKeyDraft }, myUid); setAiSaved(true); setTimeout(() => setAiSaved(false), 2500); }} style={{ marginTop: 8, width: "100%", padding: 10, borderRadius: 10, border: "none", background: t.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}>
+              Save Gemini Key
+            </button>
+          </div>
+          <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
+            <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.border, position: "relative" }}>
+              <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.hideMizrachiMode ? 23 : 3, transition: "left 0.15s" }} />
+            </div>
+            <span style={{ fontWeight: 700, fontSize: 14, color: sysConfig?.hideMizrachiMode ? "#fff" : t.text }}>
+              {sysConfig?.hideMizrachiMode ? "Y Mizrachi Mode: HIDDEN" : "Y Mizrachi Mode: visible"}
+            </span>
           </div>
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>

@@ -35,7 +35,7 @@ const NEX_TEXT_FOLDER = "NexText";
 
 // Configurable message-bubble corner styles live in src/theme/bubbleStyles.js
 // (shared with the Theme picker) so there is a single source of truth.
-import { getBubbleStyle, getBubbleRadius } from "../theme/bubbleStyles";
+import { getBubbleStyle, resolveBubble } from "../theme/bubbleStyles";
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -1030,6 +1030,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const readTimer = useRef(null);
   const { messages: rawMessages } = useMessages(chatId, myUid);
   const messages = rawMessages || [];
+
+  // Opening a chat the user previously "deleted for themselves" should
+  // un-delete it (clear deletedForSelf) so it stays readable and re-surfaces in
+  // the list. getOrCreateDirectChat already performs this clear for direct chats.
+  useEffect(() => {
+    if (isGroup || !otherUid || otherUid === myUid) return;
+    getOrCreateDirectChat(myUid, otherUid).catch(() => {});
+  }, [chatId, myUid, otherUid, isGroup]);
   const { contacts: convoContacts } = useContacts(myUid);
   const acceptedContacts = (convoContacts || []).filter((c) => c.status === "accepted");
   const presence = usePresence(isGroup ? null : otherUid, myUid);
@@ -4263,7 +4271,7 @@ const MessageList = React.memo(function MessageList({ ctx }) {
     const groupedWithNext = next && next.senderId === m.senderId && !next.deletedForEveryone;
     const isMine = m.senderId === myUid;
     const bubbleStyle = getBubbleStyle();
-    const bRadius = getBubbleRadius(bubbleStyle, groupedWithPrev, groupedWithNext);
+    const bubbleStyleObj = resolveBubble(bubbleStyle, isMine, t, groupedWithPrev, groupedWithNext);
     const mDate = msgDisplayDate(m);
     const prevDate = msgDisplayDate(prev);
     const newDay = mDate && (!prevDate || prevDate.toDateString() !== mDate.toDateString());
@@ -4288,10 +4296,8 @@ const MessageList = React.memo(function MessageList({ ctx }) {
             onPointerLeave={cancelMessageLongPress}
             onContextMenu={(e) => { e.preventDefault(); if (!selectionMode) enterSelectionMode(m); }}
             style={{
-              position: "relative", maxWidth: (messageWidth === "compact" ? "58%" : messageWidth === "standard" ? "74%" : "90%"), padding: "8px 12px", cursor: "pointer", boxShadow: bubbleStyle === "outlined" ? "0 1px 2px rgba(0,0,0,0.08)" : "0 1px 2px rgba(0,0,0,0.08)",
-              background: isMine ? t.bubbleMe : t.bubbleThem, color: isMine ? t.bubbleMeText : t.bubbleThemText,
-              borderRadius: `${bRadius}px ${bRadius}px ${bRadius}px ${bRadius}px`,
-              border: bubbleStyle === "outlined" ? `1.5px solid ${isMine ? t.primary : t.border}` : "none",
+              position: "relative", maxWidth: (messageWidth === "compact" ? "58%" : messageWidth === "standard" ? "74%" : "90%"), padding: "8px 12px", cursor: "pointer",
+              ...bubbleStyleObj,
               outline: selectedMessages.has(m.id) ? `2px solid ${t.primary}` : "none",
               touchAction: "pan-y",
             }}>

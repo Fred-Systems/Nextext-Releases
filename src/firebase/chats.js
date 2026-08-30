@@ -87,6 +87,9 @@ async function sendTextMessageRaw(chatId, senderUid, text, otherParticipants, op
     const chatRef = doc(db, "chats", chatId);
     await updateDoc(chatRef, {
       lastMessage: { text, senderId: senderUid, sentAt: serverTimestamp(), type: "text" },
+      // A new message re-surfaces the chat for anyone who had deleted it for
+      // themselves (per-user delete) — the other person's reply should bring it back.
+      deletedForSelf: deleteField(),
     });
     await incrementUnreadCounts(chatId, otherParticipants);
   }
@@ -170,6 +173,13 @@ export async function getOrCreateDirectChat(myUid, theirUid) {
   const chatId = directChatId(myUid, theirUid);
   const ref = doc(db, "chats", chatId);
   const snap = await getDoc(ref);
+  if (snap.exists()) {
+    // If this user had previously deleted the chat for themselves, opening it
+    // again should un-delete it (re-surface it in their list and make it fully
+    // readable). Without this, re-opening a deleted chat could hit read rules
+    // that expect an active (non-deleted) participant state.
+    try { if (snap.data()?.deletedForSelf?.[myUid]) await updateDoc(ref, { [`deletedForSelf.${myUid}`]: deleteField() }); } catch {}
+  }
   if (!snap.exists()) {
     const participants = myUid === theirUid ? [myUid] : [myUid, theirUid];
     const unreadCount = {};
@@ -309,6 +319,12 @@ export function useMessages(chatId, myUid) {
         });
       setMessages(rows);
       setLoading(false);
+    }, (err) => {
+      // A denied read (e.g. a chat the user deleted for themselves, or a
+      // participant-only rule edge case) must not surface as an unhandled
+      // rejection that blanks the screen. Log it and stop the loading state.
+      console.warn("[useMessages] snapshot error:", err);
+      setLoading(false);
     });
     return unsub;
   }, [chatId, myUid]);
@@ -396,6 +412,7 @@ export async function sendContactMessage(chatId, senderUid, contact, otherPartic
   const chatRef = doc(db, "chats", chatId);
   await updateDoc(chatRef, {
     lastMessage: { text: `📇 ${preview}`, senderId: senderUid, sentAt: serverTimestamp(), type: "contact" },
+    deletedForSelf: deleteField(),
   });
   await incrementUnreadCounts(chatId, otherParticipants);
 }
@@ -627,6 +644,7 @@ export async function sendMediaMessage(chatId, senderUid, type, uploadResult, ot
   });
   await updateDoc(doc(db, "chats", chatId), {
     lastMessage: { text: text ? (text.length > 40 ? text.slice(0, 40) + "…" : text) : mediaLabel(type), senderId: senderUid, sentAt: serverTimestamp(), type },
+    deletedForSelf: deleteField(),
   });
   await incrementUnreadCounts(chatId, otherParticipants);
 }
@@ -678,6 +696,7 @@ export async function sendLocationMessage(chatId, senderUid, location, otherPart
   });
   await updateDoc(doc(db, "chats", chatId), {
     lastMessage: { text: textLabel, senderId: senderUid, sentAt: serverTimestamp(), type: "location" },
+    deletedForSelf: deleteField(),
   });
   await incrementUnreadCounts(chatId, otherParticipants);
 }

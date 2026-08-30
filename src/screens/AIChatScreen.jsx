@@ -6,7 +6,7 @@ import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { deleteChatCompletely } from "../firebase/chats";
-import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, useSystemConfigHook, describeAIError } from "../firebase/ai";
+import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, useSystemConfigHook, describeAIError } from "../firebase/ai";
 import { useAIIconStyle, getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
 import Avatar from "../components/Avatar";
 
@@ -252,6 +252,36 @@ export default function AIChatScreen({ myUid, onBack }) {
   const handleSend = async (overrideText) => {
     const text = (typeof overrideText === "string" ? overrideText : (input || "")).trim();
     if (!text || sending) return;
+    // ── /image trigger → Gemini Imagen generation ──
+    if (text.startsWith("/image")) {
+      const prompt = text.slice(6).trim() || text;
+      setInput("");
+      setSending(true);
+      setThinking(true);
+      try {
+        await ensureChatExists();
+        await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
+          senderId: myUid, type: "text", text,
+        }));
+        const url = await generateGeminiImage(myUid, prompt);
+        setThinking(false);
+        await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
+          senderId: AI_CONTACT_UID, type: "image", text: null,
+          mediaURL: url, mediaExpiresAt: null, mediaExpired: false,
+        }));
+        await updateDoc(doc(db, "chats", chatId), {
+          lastMessage: { text: "🖼️ Generated an image", senderId: AI_CONTACT_UID, sentAt: serverTimestamp(), type: "image" },
+        });
+      } catch (err) {
+        setThinking(false);
+        await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
+          senderId: AI_CONTACT_UID, type: "text", text: describeAIError(err),
+        }));
+      }
+      setReplyTo(null);
+      setSending(false);
+      return;
+    }
     setInput("");
     setSending(true);
     setThinking(true);
@@ -664,7 +694,9 @@ export default function AIChatScreen({ myUid, onBack }) {
             <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>AI Assistant Persona</span>
           </div>
           <div style={{ maxHeight: 280, overflowY: "auto" }}>
-            {AI_PERSONA_TRAY.map(([key, label]) => (
+            {AI_PERSONA_TRAY
+              .filter(([key]) => !(sysConfig?.hideMizrachiMode && key === "mizrachi"))
+              .map(([key, label]) => (
               <div
                 key={key}
                 onClick={() => {

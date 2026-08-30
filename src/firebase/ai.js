@@ -2,9 +2,19 @@ import { useState, useEffect } from "react";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, where, orderBy, getDocs, addDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "./config";
+import { uploadToCloudinary, uploadMediaFile } from "../services/mediaUpload";
 
 export const AI_CONTACT_UID = "nextext-ai-system";
 export const AI_CHAT_PREFIX = "ai_";
+
+// Default Gemini API key. IMPORTANT: do NOT hardcode a real key here — GitHub
+// Push Protection blocks commits that contain cloud API keys. The live key is read
+// from Firestore (config/system.geminiApiKey) at runtime; an admin sets it once
+// in the Admin Dashboard (AI Provider → "Gemini API Key"). This default stays
+// empty so no secret ever lives in source control.
+export const DEFAULT_GEMINI_KEY = "";
+export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+export const GEMINI_IMAGE_MODEL = "imagen-3.0-generate-002";
 
 // Shared identity every NexText AI persona carries, so no matter which
 // personality is active the assistant still knows what/who it is and never
@@ -72,13 +82,14 @@ const AI_CONTACT_OBJ = {
     displayName: "NexText AI",
     photoURL: null,
     isAI: true,
-    about: "I'm NexText AI, the official AI assistant of NexText — powered by Groq. I can help with questions, take on multiple personas, and summarize your chats when asked.",
+    about: "I'm NexText AI, the official AI assistant of NexText — powered by Groq or Gemini (admin-selected). I can help with questions, take on multiple personas, analyze images, and generate images when Gemini is enabled.",
     capabilities: [
       "Official AI assistant of the NexText app",
        "9 unique personalities (Debater, Trump, Sarcastic, Robot, Shakespeare, Old Grump, Typical AI, Default, Y Mizrachi Mode)",
       "Chat summarization and context analysis",
-      "Image analysis with Llama 4 Scout",
-      "Powered by OpenAI GPT-OSS + Llama 4 Scout via Groq",
+      "Image analysis",
+      "Image generation (when the Gemini provider is enabled)",
+      "Powered by Groq or Google Gemini (admin-selected in the Admin Dashboard)",
     ],
   },
   status: "accepted",
@@ -154,16 +165,44 @@ export function getEffectiveModel(config) {
 
 const SYSTEM_CONFIG_REF = doc(db, "config", "system");
 
+const SYSTEM_CONFIG_DEFAULTS = {
+  aiGloballyDisabled: false,
+  hideAiEverywhere: false,
+  disableAiVision: false,
+  allow1on1ExternalSummaries: false,
+  tourDisabled: false,
+  translateDisabled: false,
+  groqApiKey: "",
+  groqModel: DEFAULT_GROQ_MODEL,
+  useDefaultModel: true,
+  aiMode: "old",
+  aiLiveModel: "groq/compound",
+  nativeGallery: false,
+  // ── Gemini provider ──
+  aiProvider: "groq", // "groq" | "gemini"
+  geminiApiKey: DEFAULT_GEMINI_KEY,
+  hideMizrachiMode: false,
+};
+
 export async function ensureSystemConfig() {
   const snap = await getDoc(SYSTEM_CONFIG_REF);
   if (!snap.exists()) {
-    await setDoc(SYSTEM_CONFIG_REF, { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true, aiMode: "old", aiLiveModel: "groq/compound", nativeGallery: false });
+    await setDoc(SYSTEM_CONFIG_REF, { ...SYSTEM_CONFIG_DEFAULTS });
+  } else {
+    // Migrate: backfill any missing keys (including freshly-added ones) without
+    // clobbering values an admin has already set.
+    const data = snap.data() || {};
+    const patch = {};
+    for (const k of Object.keys(SYSTEM_CONFIG_DEFAULTS)) {
+      if (!(k in data)) patch[k] = SYSTEM_CONFIG_DEFAULTS[k];
+    }
+    if (Object.keys(patch).length) await setDoc(SYSTEM_CONFIG_REF, patch, { merge: true });
   }
 }
 
 export async function getSystemConfig() {
   const snap = await getDoc(SYSTEM_CONFIG_REF);
-  return snap.exists() ? snap.data() : { aiGloballyDisabled: false, hideAiEverywhere: false, disableAiVision: false, allow1on1ExternalSummaries: false, tourDisabled: false, translateDisabled: false, groqApiKey: "", groqModel: DEFAULT_GROQ_MODEL, useDefaultModel: true, aiMode: "old", aiLiveModel: "groq/compound", nativeGallery: false };
+  return snap.exists() ? snap.data() : { ...SYSTEM_CONFIG_DEFAULTS };
 }
 
 export async function setSystemConfig(patch, adminUid) {
@@ -305,13 +344,19 @@ export function describeAIError(error) {
   if (lower.includes("empty response")) {
     return "The AI didn't send a reply. Please try again.";
   }
+  if (lower.includes("image generation") || lower.includes("returned no image")) {
+    return "Image generation failed. Try a different or more specific prompt.";
+  }
+  if (lower.includes("invalid") && lower.includes("key")) {
+    return "The AI API key is invalid. An admin must set a valid key in the Admin Dashboard.";
+  }
   if (lower.includes("timeout") || lower.includes("network") || lower.includes("failed to fetch")) {
     return "Couldn't reach the AI service. Check your connection and try again.";
   }
   return "Something went wrong with the AI. Please try again.";
 }
 
-export async function sendAIMessage(userUid, messageText, chatHistory = [], customInstructions = "") {
+export async function sendAIMessage(userUid, messageText, chatHistory = [], customInstructions = "", attachment = null) {
   const config = await getSystemConfigForCall();
   const personalityKey = await getPersonalityKey(userUid);
   // Live Mode (groq/compound) has a tighter practical input limit, so feed it a
@@ -328,6 +373,27 @@ export async function sendAIMessage(userUid, messageText, chatHistory = [], cust
   const safeCustom = truncate((customInstructions || ""), MAX_SYS_CHARS - 500);
   const systemPrompt = truncate(safeCustom ? `${safeCustom}\n\n${getSystemPrompt(personalityKey, config)}` : getSystemPrompt(personalityKey, config), MAX_SYS_CHARS);
 
+  // ── Gemini provider path ──
+  if (config.provider === "gemini") {
+    let hist = (chatHistory || []).slice(-MAX_HISTORY);
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      try {
+        const contents = buildGeminiContents(hist, messageText, attachment);
+        return await callGemini(config.key, systemPrompt, contents, config.model);
+      } catch (err) {
+        const msg = String(err?.message || "");
+        const isTooLarge = msg.includes("413") || msg.toLowerCase().includes("request entity too large") || msg.includes("too large") || msg.includes("exceeds");
+        if (isTooLarge && hist.length > 0 && attempt < 3) {
+          hist = hist.slice(Math.ceil(hist.length / 2));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error("AI request was too large to process. Try a shorter message or start a new chat.");
+  }
+
+  // ── Groq provider path (existing behaviour, unchanged) ──
   const buildMessages = (hist) => ([
     { role: "system", content: systemPrompt },
     ...hist
@@ -353,6 +419,120 @@ export async function sendAIMessage(userUid, messageText, chatHistory = [], cust
     }
   }
   throw new Error("AI request was too large to process. Try a shorter message or start a new chat.");
+}
+
+// ── Gemini (Google) provider ──
+// Maps NexText's flat chat history into Gemini's `contents` shape. The assistant
+// is "model", the user is "user". If an attachment is supplied (image/file the
+// user attached to THIS message), it is wrapped as inlineData and sent alongside
+// the text prompt so Gemini can "see" it (multimodal).
+function buildGeminiContents(history, messageText, attachment) {
+  const contents = [];
+  for (const m of history || []) {
+    const role = m.senderId === AI_CONTACT_UID ? "model" : "user";
+    const text = (m.text || "").slice(0, 1500);
+    if (text) contents.push({ role, parts: [{ text }] });
+  }
+  const userParts = [{ text: messageText || "" }];
+  if (attachment && attachment.base64 && attachment.mimeType) {
+    userParts.push({ inlineData: { mimeType: attachment.mimeType, data: attachment.base64 } });
+  }
+  contents.push({ role: "user", parts: userParts });
+  return contents;
+}
+
+async function callGemini(apiKey, systemInstruction, contents, model = DEFAULT_GEMINI_MODEL, temperature = 0.7) {
+  const key = (apiKey || "").trim();
+  if (!key) throw new Error("AI is not configured. No Gemini API key found in Firestore.");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  const body = {
+    systemInstruction: { parts: [{ text: systemInstruction }] },
+    contents,
+    generationConfig: { temperature, maxOutputTokens: 1024 },
+  };
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (fetchErr) {
+    throw new Error("Couldn't reach the AI service. Check your connection and try again.");
+  }
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "Unknown error");
+    if (response.status === 429) {
+      const match = errText.match(/retryDelay["']?\s*:\s*["']?(\d+)/i) || errText.match(/(\d+)s/i);
+      const secs = match ? parseInt(match[1], 10) : 60;
+      const reset = new Date(Date.now() + secs * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const err = new Error(`AI limit reached. Please try again after ${reset}.`);
+      err.rateLimit = { retrySeconds: secs };
+      throw err;
+    }
+    if (response.status === 400 && /API_KEY|key/i.test(errText)) {
+      throw new Error("The Gemini API key is invalid. An admin must set a valid key in the Admin Dashboard.");
+    }
+    throw new Error(`Gemini API error (${response.status}): ${errText}`);
+  }
+  const data = await response.json().catch(() => null);
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  const text = parts.map((p) => p.text || "").join("").trim();
+  if (!text) {
+    const reason = data?.candidates?.[0]?.finishReason;
+    if (reason === "SAFETY") throw new Error("The AI's reply was blocked by safety filters. Try rephrasing your message.");
+    throw new Error("AI returned an empty response. Please try again.");
+  }
+  return text;
+}
+
+// Vision via Gemini: an attached image is sent as inlineData with the prompt.
+async function callGeminiVision(apiKey, base64, mimeType, prompt, systemInstruction) {
+  const contents = [{
+    role: "user",
+    parts: [
+      { text: prompt || "Describe this image in detail." },
+      { inlineData: { mimeType: mimeType || "image/jpeg", data: base64 } },
+    ],
+  }];
+  return callGemini(apiKey, systemInstruction, contents, DEFAULT_GEMINI_MODEL, 0.5);
+}
+
+// Text → image. Calls Imagen, then uploads the generated bytes to Cloudinary so
+// the result is optimized/delivered via CDN, with a Supabase fallback.
+export async function generateGeminiImage(userUid, prompt) {
+  const config = await getSystemConfigForCall();
+  if (config.provider !== "gemini") {
+    throw new Error("Image generation is only available when the AI provider is set to Gemini.");
+  }
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:predict?key=${encodeURIComponent(config.key)}`;
+  const body = { instances: [{ prompt: prompt }], parameters: { sampleCount: 1, aspectRatio: "1:1" } };
+  let response;
+  try {
+    response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch {
+    throw new Error("Couldn't reach the image service. Check your connection and try again.");
+  }
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "Unknown error");
+    throw new Error(`Image generation failed (${response.status}): ${errText}`);
+  }
+  const data = await response.json().catch(() => null);
+  const b64 = data?.predictions?.[0]?.bytesBase64Encoded;
+  if (!b64) throw new Error("Image generation returned no image. Try a different prompt.");
+  const byteChars = atob(b64);
+  const len = byteChars.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([bytes], { type: "image/png" });
+  try {
+    const up = await uploadToCloudinary(blob, { resourceType: "image" });
+    return up.url;
+  } catch {
+    const chatId = getAIChatId(userUid);
+    const up = await uploadMediaFile(chatId, userUid, blob, { skipThumbnail: true });
+    return up.url;
+  }
 }
 
 // ── Message Translation (Groq) ──
@@ -496,9 +676,15 @@ async function getSystemConfigForCall() {
   }
   if (config?.aiGloballyDisabled) throw new Error("AI is currently disabled by the administrator.");
   if (config?.hideAiEverywhere) throw new Error("AI has been removed by the administrator.");
+  const provider = config?.aiProvider === "gemini" ? "gemini" : "groq";
+  if (provider === "gemini") {
+    const key = (config?.geminiApiKey || "").trim();
+    if (!key) throw new Error("AI is not configured. No Gemini API key found in Firestore /config/system.");
+    return { provider, key, model: config?.geminiModel || DEFAULT_GEMINI_MODEL, aiMode: config?.aiMode || "old" };
+  }
   const key = (config?.groqApiKey || "").trim();
   if (!key) throw new Error("AI is not configured. No API key found in Firestore /config/system.");
-  return { key, model: getEffectiveModel(config), aiMode: config?.aiMode || "old" };
+  return { provider, key, model: getEffectiveModel(config), aiMode: config?.aiMode || "old" };
 }
 
 // Read API key fresh from Firestore on every call (no caching)
@@ -585,12 +771,11 @@ async function fileToBase64InMemory(fileOrBlob) {
 
 export async function analyzeImageWithGroq(userUid, input, question = "Describe this image in detail.") {
   try {
-    const key = await getApiKeyFresh();
+    const config = await getSystemConfigForCall();
     const personalityKey = await getPersonalityKey(userUid);
     // Accept a raw File/Blob (read in-memory) or an already-base64 / data-URI
     // string. Strip any leading "data:image/...;base64," header so we always
-    // pass strictly the raw base64 data string, then wrap it in exactly one
-    // properly-formatted data URI for the Groq multimodal content block.
+    // pass strictly the raw base64 data string.
     let raw;
     if (input instanceof Blob) {
       raw = await fileToBase64InMemory(input);
@@ -598,6 +783,12 @@ export async function analyzeImageWithGroq(userUid, input, question = "Describe 
       const str = String(input || "");
       raw = str.replace(/^data:image\/\w+;base64,/, "").replace(/\s+/g, "");
     }
+    if (config.provider === "gemini") {
+      const systemInstruction = `You are NexText AI analyzing an image. ${getSystemPrompt(personalityKey)} Be helpful, concise, and describe what you see accurately.`;
+      return await callGeminiVision(config.key, raw, "image/jpeg", question, systemInstruction);
+    }
+    // ── Groq vision path (unchanged) ──
+    const key = config.key;
     const dataUri = `data:image/jpeg;base64,${raw}`;
     const messages = [
       {

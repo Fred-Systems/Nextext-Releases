@@ -226,7 +226,7 @@ async function uploadToSupabase(chatId, senderUid, file, { thumbnailBlob = null 
   return { url: data.publicUrl, path: mediaPath, thumbnailURL, thumbnailPath, provider: "supabase" };
 }
 
-async function uploadToCloudinary(file, { resourceType = "auto" } = {}) {
+export async function uploadToCloudinary(file, { resourceType = "auto" } = {}) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);

@@ -1,40 +1,43 @@
-// Shared message-bubble corner styles. Used by the conversation renderer
-// (ConversationScreen) and the Theme picker (ThemeSheet) so there is a single
-// source of truth. Each style returns the corner radius (px) for the current
-// message bubble; some vary by grouping to mimic chat "tails".
+// Shared message-bubble styles. Used by the conversation renderer (ConversationScreen)
+// and the Theme picker (ThemeSheet) so preview == reality. Each style is a descriptor;
+// getBubbleRadius / resolveBubble turn it into concrete styles.
 export const BUBBLE_STYLES = {
-  default: () => 14,
-  modern: () => 8,
-  soft: () => 10,
-  cozy: () => 12,
-  classic: () => 16,
-  rounded: () => 20,
-  chonky: () => 24,
-  maxRound: () => 28,
-  pill: (gPrev, gNext) => (gPrev || gNext ? 18 : 26),
-  bubble: (gPrev) => (gPrev ? 4 : 18),
-  minimal: () => 6,
-  square: () => 5,
-  sharp: () => 2,
-  outlined: () => 14,
+  default:  { r: 14 },
+  modern:   { r: 8 },
+  soft:     { r: 10 },
+  cozy:     { r: 12 },
+  classic:  { r: 16 },
+  rounded:  { r: 20 },
+  chonky:   { r: 24 },
+  maxRound: { r: 30 },
+  pill:     { r: 30, stack: true },
+  bubble:   { r: 18, tail: true },
+  minimal:  { r: 6 },
+  square:   { r: 4 },
+  sharp:    { r: 2 },
+  outlined: { r: 14, border: true },
+  gradient: { r: 18, gradient: true },
 };
 
-// Display order + human labels for the picker.
 export const BUBBLE_STYLE_ORDER = [
   "default", "modern", "soft", "cozy", "classic", "rounded", "chonky",
-  "maxRound", "pill", "bubble", "minimal", "square", "sharp", "outlined",
+  "maxRound", "pill", "bubble", "minimal", "square", "sharp", "outlined", "gradient",
 ];
 
 export const BUBBLE_STYLE_LABELS = {
-  default: "Default", modern: "Modern", soft: "Soft", cozy: "Cozy",
-  classic: "Classic", rounded: "Rounded", chonky: "Chunky", maxRound: "Super Round",
-  pill: "Pill", bubble: "Tail", minimal: "Minimal", square: "Square",
-  sharp: "Sharp", outlined: "Outlined",
+  default: "Default", modern: "Modern", soft: "Soft", cozy: "Cozy", classic: "Classic",
+  rounded: "Rounded", chonky: "Chunky", maxRound: "Super Round", pill: "Pill",
+  bubble: "Tail", minimal: "Minimal", square: "Square", sharp: "Sharp",
+  outlined: "Outlined", gradient: "Gradient",
 };
 
 export function getBubbleRadius(style, groupedWithPrev, groupedWithNext) {
-  const fn = BUBBLE_STYLES[style] || BUBBLE_STYLES.default;
-  return fn(groupedWithPrev, groupedWithNext);
+  const d = BUBBLE_STYLES[style] || BUBBLE_STYLES.default;
+  const r = d.r;
+  // "tail"/"stack": when a message continues a run from the same sender, square
+  // the top corners so the bubbles look grouped/connected.
+  if ((d.tail || d.stack) && groupedWithPrev) return { tl: 4, tr: 4, br: r, bl: r };
+  return { tl: r, tr: r, br: r, bl: r };
 }
 
 export function getBubbleStyle() {
@@ -45,15 +48,24 @@ export function setBubbleStyle(style) {
   try { localStorage.setItem("nextext_bubble_style", style); } catch {}
 }
 
-// Resolved style object for a bubble (background + radius + outline), given the
-// current theme and whether it's the user's own message.
-export function resolveBubble(style, isMine, t) {
-  const radius = getBubbleRadius(style, false, false);
+// Full inline style for a bubble container.
+export function resolveBubble(style, isMine, t, groupedWithPrev = false, groupedWithNext = false) {
+  const { tl, tr, br, bl } = getBubbleRadius(style, groupedWithPrev, groupedWithNext);
+  const d = BUBBLE_STYLES[style] || BUBBLE_STYLES.default;
+  let background = isMine ? t.bubbleMe : t.bubbleThem;
+  let color = isMine ? t.bubbleMeText : t.bubbleThemText;
+  if (d.gradient) {
+    background = isMine
+      ? `linear-gradient(135deg, ${t.primary}, ${t.accent})`
+      : `linear-gradient(135deg, ${t.bubbleThem}, ${t.primaryLight})`;
+  }
+  const border = d.border ? `1.5px solid ${isMine ? t.primary : t.border}` : "none";
+  const boxShadow = d.shadow || "0 1px 2px rgba(0,0,0,0.08)";
   return {
-    background: isMine ? t.bubbleMe : t.bubbleThem,
-    color: isMine ? t.bubbleMeText : t.bubbleThemText,
-    borderRadius: radius,
-    border: style === "outlined" ? `1.5px solid ${isMine ? t.primary : t.border}` : "none",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+    background,
+    color,
+    borderRadius: `${tl}px ${tr}px ${br}px ${bl}px`,
+    border,
+    boxShadow,
   };
 }
