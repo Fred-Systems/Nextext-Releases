@@ -8,7 +8,7 @@ import { getOrCreateDirectChat } from "../firebase/chats";
 import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings } from "../firebase/config-settings";
 import { getPreWarmConfig, setPreWarmEnabled } from "../firebase/prewarm";
 import { getUserMessageStats, formatActiveTime, formatBytes } from "../firebase/stats";
-import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest } from "../firebase/ai";
+import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest, GEMINI_MODELS, DEFAULT_GEMINI_MODEL } from "../firebase/ai";
 import { getActiveStorageProviderFromDb, setActiveStorageProviderDb, getSystemSetting, writeSystemSetting } from "../firebase/systemSettings";
 import { invalidateStorageProviderCache } from "../services/mediaUpload";
 import { supabase, MEDIA_BUCKET } from "../supabase/config";
@@ -1485,6 +1485,35 @@ export default function AdminDashboard({ myUid, onBack }) {
               Save Gemini Key
             </button>
           </div>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Bot size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Gemini Model (admin default)</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Admins choose the Gemini model every user gets. Users only get to pick their own model if you enable the toggle below.
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {GEMINI_MODELS.map((o) => (
+                <div key={o.id} onClick={() => setSystemConfig({ geminiModel: o.id }, myUid)} style={{ flex: "1 1 45%", textAlign: "center", padding: "9px 8px", borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: `1px solid ${t.border}`, background: (sysConfig?.geminiModel || DEFAULT_GEMINI_MODEL) === o.id ? t.primary : t.bg, color: (sysConfig?.geminiModel || DEFAULT_GEMINI_MODEL) === o.id ? "#fff" : t.text }}>
+                  {o.label}
+                </div>
+              ))}
+            </div>
+            <div onClick={() => { setSystemConfig({ allowUserGeminiModel: !sysConfig?.allowUserGeminiModel }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.allowUserGeminiModel ? t.primaryLight : "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginTop: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.allowUserGeminiModel ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.allowUserGeminiModel ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+                  {sysConfig?.allowUserGeminiModel ? "Users CAN pick their own Gemini model" : "Users use the admin default model"}
+                </div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>
+                  Off by default — everyone uses the model you selected above. Enable to show a model picker inside AI chat.
+                </div>
+              </div>
+            </div>
+          </div>
           <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
             <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.border, position: "relative" }}>
               <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.hideMizrachiMode ? 23 : 3, transition: "left 0.15s" }} />
@@ -2195,14 +2224,14 @@ export default function AdminDashboard({ myUid, onBack }) {
             </div>
             <div style={{ marginBottom: 10 }}>
               <input
-                value={sysConfig?.webFallbackUrl || "https://nextext.pages.dev"}
-                onChange={(e) => setSystemConfig({ webFallbackUrl: e.target.value || "https://nextext.pages.dev" }, myUid)}
+                value={sysConfig?.webFallbackUrl || "https://nextext.nextext-app.workers.dev"}
+                onChange={(e) => setSystemConfig({ webFallbackUrl: e.target.value || "https://nextext.nextext-app.workers.dev" }, myUid)}
                 placeholder="https://example.com"
                 style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, background: t.bg, color: t.text, cursor: "pointer" }}
               />
             </div>
             <div style={{ fontSize: 11.5, color: t.textMuted }}>
-              Current: <strong>{sysConfig?.webFallbackUrl || "https://nextext.pages.dev"}</strong>
+              Current: <strong>{sysConfig?.webFallbackUrl || "https://nextext.nextext-app.workers.dev"}</strong>
             </div>
           </div>
 

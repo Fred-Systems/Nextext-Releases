@@ -6,7 +6,7 @@ import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { deleteChatCompletely } from "../firebase/chats";
-import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, detectImageIntent, GEMINI_MODELS, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, setGeminiModel, useSystemConfigHook, describeAIError } from "../firebase/ai";
+import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, detectImageIntent, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, setGeminiModel, useSystemConfigHook, describeAIError } from "../firebase/ai";
 import { useAIIconStyle, getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
 import Avatar from "../components/Avatar";
 
@@ -629,7 +629,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   };
 
   const currentPersonality = userDoc?.aiPersonality || "default";
-  const [geminiModel, setGeminiModelLocal] = useState(userDoc?.geminiModel || "gemini-2.5-flash");
+  const [geminiModel, setGeminiModelLocal] = useState(userDoc?.geminiModel || sysConfig?.geminiModel || DEFAULT_GEMINI_MODEL);
   const [showModelTray, setShowModelTray] = useState(false);
   useEffect(() => {
     if (userDoc?.geminiModel) setGeminiModelLocal(userDoc.geminiModel);
@@ -661,7 +661,7 @@ export default function AIChatScreen({ myUid, onBack }) {
               <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>AI Assistant Persona</span>
               <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
             </div>
-            {isGemini && (
+            {isGemini && sysConfig?.allowUserGeminiModel && (
               <div
                 onClick={() => { setShowSettings(false); setShowModelTray(true); }}
                 style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}

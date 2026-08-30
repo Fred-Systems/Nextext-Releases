@@ -13,21 +13,21 @@ export const AI_CHAT_PREFIX = "ai_";
 // in the Admin Dashboard (AI Provider → "Gemini API Key"). This default stays
 // empty so no secret ever lives in source control.
 export const DEFAULT_GEMINI_KEY = "";
-export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+export const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
 // Image generation model. The user requested gemini-3.1-flash-image, which is a
 // Gemini generative model that returns images as inline_data via generateContent
 // (responseModalities: ["IMAGE"]) — NOT the separate Imagen :predict endpoint.
 export const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image";
 
-// Selectable Gemini models surfaced in the AI chat (and Admin) when the provider
-// is Gemini. The image model is included so users can pick it directly, but image
-// generation is also auto-triggered by intent detection regardless of model.
+// Selectable Gemini models surfaced in the Admin dashboard (and, if the admin
+// enables it, inside AI chat). The image model is included so it can be picked
+// directly, but image generation is also auto-triggered by intent detection
+// regardless of model. Models are kept current — older generations (2.0/2.5) are
+// no longer available to new API keys and will 404.
 export const GEMINI_MODELS = [
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-  { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
-  { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+  { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+  { id: "gemini-3.5-pro", label: "Gemini 3.5 Pro" },
   { id: "gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image (image gen)" },
 ];
 
@@ -398,7 +398,10 @@ export async function sendAIMessage(userUid, messageText, chatHistory = [], cust
 
   // ── Gemini provider path ──
   if (config.provider === "gemini") {
-    const model = modelOverride || config.model;
+    // Users may only choose a non-admin model when the admin has explicitly
+    // enabled it (config.allowUserGeminiModel). Otherwise everyone uses the
+    // admin-selected default.
+    const model = (config.allowUserGeminiModel && modelOverride) || config.model;
     let hist = (chatHistory || []).slice(-MAX_HISTORY);
     for (let attempt = 0; attempt <= 3; attempt++) {
       try {
@@ -758,7 +761,7 @@ async function getSystemConfigForCall() {
   if (provider === "gemini") {
     const key = (config?.geminiApiKey || "").trim();
     if (!key) throw new Error("AI is not configured. No Gemini API key found in Firestore /config/system.");
-    return { provider, key, model: config?.geminiModel || DEFAULT_GEMINI_MODEL, geminiImageModel: config?.geminiImageModel || GEMINI_IMAGE_MODEL, aiMode: config?.aiMode || "old" };
+    return { provider, key, model: config?.geminiModel || DEFAULT_GEMINI_MODEL, geminiImageModel: config?.geminiImageModel || GEMINI_IMAGE_MODEL, aiMode: config?.aiMode || "old", allowUserGeminiModel: !!config?.allowUserGeminiModel };
   }
   const key = (config?.groqApiKey || "").trim();
   if (!key) throw new Error("AI is not configured. No API key found in Firestore /config/system.");

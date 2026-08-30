@@ -104,7 +104,7 @@ export default function FindFriendsScreen({ myUid, onBack, onOpenChat }) {
 
   const handleShare = async (name, phone) => {
     setShareStatus("");
-    const link = `https://nextext.app/invite?r=${encodeURIComponent(myUid || "")}`;
+    const link = `https://nextext.nextext-app.workers.dev/invite?r=${encodeURIComponent(myUid || "")}`;
     // Optional APK: when the toggle is on, fetch (once, cached) the latest
     // Android app download link and append it so the friend can install
     // NexText directly. A fetch failure just drops the APK line — the plain

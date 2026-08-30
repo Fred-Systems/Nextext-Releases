@@ -94,7 +94,7 @@ async function saveToNexTextFolder(fileName, blob, mimeType) {
 
 import { useStatuses } from "../firebase/status";
 import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote, useSystemConfigHook, translateMessage, LANGUAGES, getLanguageLabel } from "../firebase/ai";
-import { getProxyMediaUrl } from "../media/mediaProxy";
+import { getProxyMediaUrl, getVideoPosterUrl } from "../media/mediaProxy";
 import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
 import ContactSharePicker from "../components/ContactSharePicker";
 import ForwardPicker from "../components/ForwardPicker";
@@ -863,6 +863,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [captionText, setCaptionText] = useState("");
   const [captionBusy, setCaptionBusy] = useState(false);
   const [fullscreenImage, setFullscreenImage] = useState(null);
+  const [fullscreenVideo, setFullscreenVideo] = useState(null);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [recordingPaused, setRecordingPaused] = useState(false);
@@ -3124,18 +3125,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             </div>
           </div>
         ) : (
-          <div style={{ width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "rgba(0,0,0,0.05)", position: "relative" }}>
-            {/* Thumbnail-first policy: show static thumbnail with play button overlay */}
-            {m.mediaThumbURL ? (
-              <div style={{ position: "relative", width: "100%", height: "100%", cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); setFullscreenImage(localSrc || getProxyMediaUrl(m.mediaURL, m.type)); }}>
-                <img src={getProxyMediaUrl(m.mediaThumbURL, "image")} alt="Video thumbnail" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
-                <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: 48, height: 48, borderRadius: "50%", background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)" }}>
-                  <Play size={24} color="#fff" fill="#fff" />
-                </div>
+          <div style={{ width: 220, height: 220, overflow: "hidden", borderRadius: 8, background: "#000", position: "relative" }}>
+            {/* Thumbnail-first policy: always show a Cloudinary poster frame (never
+                blank), with a play button overlay. Tapping plays the video. */}
+            <div style={{ position: "relative", width: "100%", height: "100%", cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); setFullscreenVideo(localSrc || getProxyMediaUrl(m.mediaURL, "video")); }}>
+              <img src={m.mediaThumbURL ? getProxyMediaUrl(m.mediaThumbURL, "image") : getVideoPosterUrl(localSrc || m.mediaURL)} alt="Video thumbnail" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
+              <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: 48, height: 48, borderRadius: "50%", background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)" }}>
+                <Play size={24} color="#fff" fill="#fff" />
               </div>
-            ) : (
-              <video src={localSrc || getProxyMediaUrl(m.mediaURL, "video")} controls preload="none" className="nx-media-img" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={() => setImgErrorIds((prev) => new Set(prev).add(m.id))} />
-            )}
+            </div>
           </div>
         )}
         {renderDownloadBelow(m)}
@@ -4159,6 +4157,23 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
           </div>
           <div style={{ flex: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 16px 30px", boxSizing: "border-box" }}>
             <ZoomableMedia src={fullscreenImage} type="image" onTap={() => setFullscreenImage(null)} />
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {fullscreenVideo && createPortal(
+        <div className="nextext-overlay-backdrop" style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.95)", zIndex: 999999, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }} onClick={() => setFullscreenVideo(null)}>
+          <div style={{ position: "absolute", top: 14, right: 14, display: "flex", gap: 14, zIndex: 61 }}>
+            <div onClick={async (e) => { e.stopPropagation(); try { const blob = await fetch(fullscreenVideo).then((r) => r.blob()); await saveToNexTextFolder(`nextext-video-${Date.now()}.mp4`, blob, "video/mp4"); } catch { try { window.open(fullscreenVideo, "_blank"); } catch {} } }} style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </div>
+            <div onClick={(e) => { e.stopPropagation(); setFullscreenVideo(null); }} style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <X size={18} color="#fff" />
+            </div>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 16px 30px", boxSizing: "border-box" }}>
+            <video src={fullscreenVideo} controls autoPlay playsInline style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 10, background: "#000" }} onError={() => setFullscreenVideo(null)} />
           </div>
         </div>,
         document.body
