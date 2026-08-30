@@ -11,6 +11,148 @@ import { getUserMessageStats, formatActiveTime, formatBytes } from "../firebase/
 import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest } from "../firebase/ai";
 import { getActiveStorageProviderFromDb, setActiveStorageProviderDb, getSystemSetting, writeSystemSetting } from "../firebase/systemSettings";
 import { invalidateStorageProviderCache } from "../services/mediaUpload";
+import { supabase, MEDIA_BUCKET } from "../supabase/config";
+
+// Recursively sum file sizes within the Supabase media bucket. Best-effort:
+// anonymous keys are usually blocked by RLS from listing, in which case we report
+// a clear message rather than fake numbers.
+async function listStorageVolume(prefix) {
+  const out = { bytes: 0, count: 0 };
+  const { data, error } = await supabase.storage.from(MEDIA_BUCKET).list(prefix || "", { limit: 1000 });
+  if (error) throw error;
+  for (const item of data || []) {
+    if (item.name === ".emptyFolderPlaceholder") continue;
+    if (item.metadata && item.metadata.size != null) {
+      out.bytes += item.metadata.size;
+      out.count += 1;
+    } else if (item.id) {
+      // Likely a "folder" prefix — recurse.
+      const sub = await listStorageVolume(prefix ? `${prefix}/${item.name}` : item.name);
+      out.bytes += sub.bytes;
+      out.count += sub.count;
+    }
+  }
+  return out;
+}
+
+function AnalyticsCard({ title, children }) {
+  const { t } = useTheme();
+  return (
+    <div style={{ background: t.surface, borderRadius: 12, padding: 14, marginBottom: 12 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 10 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function Stat({ label, value }) {
+  const { t } = useTheme();
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: `1px solid ${t.border}` }}>
+      <span style={{ fontSize: 12.5, color: t.textMuted }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{value}</span>
+    </div>
+  );
+}
+
+function AnalyticsTab() {
+  const { t } = useTheme();
+  const settings = useGlobalSettings();
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        setLoading(true);
+        // ── Real Firestore document counts (no mock data) ──
+        const [usersSnap, chatsSnap, statusSnap, reportsSnap, feedbackSnap, broadcastSnap] = await Promise.all([
+          getDocs(collection(db, "users")),
+          getDocs(collection(db, "chats")),
+          getDocs(collection(db, "status")),
+          getDocs(collection(db, "reports")),
+          getDocs(collection(db, "feedback")),
+          getDocs(collection(db, "broadcastLists")),
+        ]);
+        // ── Real Supabase storage volume (best-effort) ──
+        let storageBytes = 0;
+        let mediaFiles = 0;
+        let storageNote = "";
+        try {
+          const vol = await listStorageVolume("");
+          storageBytes = vol.bytes;
+          mediaFiles = vol.count;
+        } catch {
+          storageNote = "Supabase storage listing is blocked by RLS for the anonymous key. Grant list access or read exact volume via a backend.";
+        }
+        if (!active) return;
+        setData({
+          users: usersSnap.size,
+          chats: chatsSnap.size,
+          status: statusSnap.size,
+          reports: reportsSnap.size,
+          feedback: feedbackSnap.size,
+          broadcasts: broadcastSnap.size,
+          storageBytes,
+          mediaFiles,
+          storageNote,
+          proxyEnabled: settings?.cloudinaryProxyEnabled === true,
+        });
+      } catch (e) {
+        setErr("Failed to load analytics: " + (e.message || e));
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [settings?.cloudinaryProxyEnabled]);
+
+  if (loading) return <div style={{ color: t.textMuted, fontSize: 13, padding: 24, textAlign: "center" }}>Loading live metrics…</div>;
+  if (err) return <div style={{ color: "#FF3B30", fontSize: 13, padding: 24 }}>{err}</div>;
+  if (!data) return null;
+
+  return (
+    <div style={{ padding: 12 }}>
+      <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
+        Live, client-fetched metrics. Cloudinary Admin API and Firebase Monitoring require a secret-holding backend (not available on the free Spark plan), so those are shown as estimates derived from real Supabase/Firestore data.
+      </div>
+
+      <AnalyticsCard title="Supabase Media Storage (real)">
+        <Stat label="Total media files" value={data.mediaFiles.toLocaleString()} />
+        <Stat label="Storage volume" value={formatBytes(data.storageBytes)} />
+        {data.storageNote ? <div style={{ fontSize: 11, color: "#FF9500", marginTop: 8, lineHeight: 1.5 }}>{data.storageNote}</div> : null}
+      </AnalyticsCard>
+
+      <AnalyticsCard title="Cloudinary Proxy (estimated)">
+        <Stat label="Status" value={data.proxyEnabled ? "Enabled" : "Disabled"} />
+        {data.proxyEnabled ? (
+          <>
+            <Stat label="Est. transformations" value={data.mediaFiles.toLocaleString()} />
+            <Stat label="Est. bandwidth served" value={formatBytes(data.storageBytes)} />
+          </>
+        ) : (
+          <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 4, lineHeight: 1.5 }}>
+            Enable "Cloudinary Media Optimization Proxy" in the Users tab to serve media through Cloudinary's CDN. Exact usage (via the Admin API) needs a backend.
+          </div>
+        )}
+      </AnalyticsCard>
+
+      <AnalyticsCard title="Firebase / Firestore (real counts)">
+        <Stat label="Registered users" value={data.users.toLocaleString()} />
+        <Stat label="Chats" value={data.chats.toLocaleString()} />
+        <Stat label="Status posts" value={data.status.toLocaleString()} />
+        <Stat label="Broadcast lists" value={data.broadcasts.toLocaleString()} />
+        <Stat label="Reports" value={data.reports.toLocaleString()} />
+        <Stat label="Feedback items" value={data.feedback.toLocaleString()} />
+        <div style={{ fontSize: 11, color: t.textMuted, marginTop: 8, lineHeight: 1.5 }}>
+          Exact read/write operation billing requires Firebase Monitoring API (backend). These counts are real document totals.
+        </div>
+      </AnalyticsCard>
+    </div>
+  );
+}
 
 export default function AdminDashboard({ myUid, onBack }) {
   const { t } = useTheme();
@@ -712,7 +854,7 @@ export default function AdminDashboard({ myUid, onBack }) {
         <span style={{ color: t.text, fontWeight: 700, fontSize: 17 }}>Admin Dashboard</span>
       </div>
       <div style={{ display: "flex", overflowX: "auto", borderBottom: `1px solid ${t.border}`, flexShrink: 0, WebkitOverflowScrolling: "touch" }}>
-        {[["users", "Users"], ["directory", "Directory"], ["groups", "Groups"], ["reports", "Reports"], ["feedback", "Feedback"], ["broadcast", "Broadcast"], ["system", "System"], ["ai", "AI"]].map(([key, label]) => (
+        {[["users", "Users"], ["directory", "Directory"], ["groups", "Groups"], ["analytics", "Analytics"], ["reports", "Reports"], ["feedback", "Feedback"], ["broadcast", "Broadcast"], ["system", "System"], ["ai", "AI"]].map(([key, label]) => (
           <div key={key} onClick={() => setTab(key)} style={{ flex: "0 0 auto", textAlign: "center", padding: "12px 14px", fontSize: 11, fontWeight: 600, color: tab === key ? t.primary : t.textMuted, borderBottom: tab === key ? `2px solid ${t.primary}` : "2px solid transparent", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</div>
         ))}
       </div>
@@ -982,6 +1124,10 @@ export default function AdminDashboard({ myUid, onBack }) {
           </div>
         </>
       )}
+
+       {tab === "analytics" && (
+         <AnalyticsTab />
+       )}
 
        {tab === "directory" && (
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
