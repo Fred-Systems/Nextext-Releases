@@ -21,13 +21,7 @@ NexText is a fully loaded, hyper-customizable modern messaging app designed excl
 --------------------------------------------------------------------------------------------
 
 The following is a more play store style description for those who prefer having fun reading about a app:
-# Nextext Releases
 
-The official release page for NexText APKs. 
-
-🌐 **Web Version:** You can also access and use NexText directly in your browser at [nextext.nextext-app.workers.dev](https://workers.dev).
-
----
 
 # 📱 About NexText
 
