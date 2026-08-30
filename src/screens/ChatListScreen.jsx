@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, Check, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow, Pin, FlipHorizontal2 } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
-import { useChats, toggleArchive, toggleFavorite, toggleLocked, togglePinned, deleteChatCompletely } from "../firebase/chats";
+import { useChats, toggleArchive, toggleFavorite, toggleLocked, togglePinned, deleteChatForUser } from "../firebase/chats";
 import { useContacts, searchUsersByUsername, sendContactRequest, acceptContactRequest, getContactDisplayName } from "../firebase/contacts";
 import { sendMediaMessage, getOrCreateDirectChat } from "../firebase/chats";
 import { usePresence, formatLastSeen } from "../firebase/presence";
@@ -431,7 +431,11 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     return val?.toMillis?.() > Date.now();
   };
 
-  const notArchived = chats.filter((c) => !(c.archivedBy || []).includes(myUid));
+  // Hide chats this user deleted for themselves (per-user delete). A chat the
+  // other participant still has stays visible for them, just not for us.
+  const notArchived = chats.filter(
+    (c) => !(c.archivedBy || []).includes(myUid) && !(c.deletedForSelf && c.deletedForSelf[myUid] === true)
+  );
   // Hide any stray duplicate AI chat: the assistant must only ever appear as
   // the single "ai_" chat opened by the AI widget. Group chats that contain
   // the AI are NOT filtered — they must stay visible after an admin injects AI.
@@ -486,12 +490,15 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     }
   })();
 
+  // Per-user delete: only hide the chat for THIS user (deletedForSelf.myUid),
+  // never remove the chat doc or affect the other participant. AI chats have two
+  // possible docs (ai_<uid> and the legacy sorted join) — mark both for self.
   const deleteChatAndAIDuplicates = (chatId) => {
-    const promises = [deleteChatCompletely(chatId).catch(() => {})];
+    const promises = [deleteChatForUser(chatId, myUid).catch(() => {})];
     const primary = `ai_${myUid}`;
     const legacy = [myUid, AI_CONTACT_UID].sort().join("_");
-    if (chatId === primary) promises.push(deleteChatCompletely(legacy).catch(() => {}));
-    if (chatId === legacy) promises.push(deleteChatCompletely(primary).catch(() => {}));
+    if (chatId === primary) promises.push(deleteChatForUser(legacy, myUid).catch(() => {}));
+    if (chatId === legacy) promises.push(deleteChatForUser(primary, myUid).catch(() => {}));
     return Promise.all(promises);
   };
 

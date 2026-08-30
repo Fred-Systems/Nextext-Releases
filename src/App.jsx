@@ -42,7 +42,7 @@ import FeedbackScreen from "./screens/FeedbackScreen";
 import ContactProfileScreen from "./screens/ContactProfileScreen";
 import AdminDashboard from "./screens/AdminDashboard";
 import AIChatScreen from "./screens/AIChatScreen";
-import { useSystemConfigHook, requestAIAccess, setAIPersonality, setSystemConfig, PERSONALITIES } from "./firebase/ai";
+import { useSystemConfigHook, requestAIAccess, setAIPersonality, setSystemConfig, PERSONALITIES, AI_CONTACT_UID } from "./firebase/ai";
 import AppLockScreen from "./screens/AppLockScreen";
 import StatusScreen from "./screens/StatusScreen";
 import GroupInfoScreen from "./screens/GroupInfoScreen";

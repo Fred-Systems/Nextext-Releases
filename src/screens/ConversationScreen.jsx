@@ -7,7 +7,7 @@ import {
   useMessages, sendTextMessage, markChatRead, setTypingHeartbeat, reactToMessage,
   getOrCreateDirectChat, markMessagesDelivered, markMessagesRead, sendPollMessage,
   voteOnPoll, editMessage, deleteMessageForSelf, deleteMessageForEveryone,
-  toggleFavorite, setMute, clearMute, sendMediaMessage, toggleLocked, toggleArchive, deleteChatCompletely,
+  toggleFavorite, setMute, clearMute, sendMediaMessage, toggleLocked, toggleArchive, deleteChatForUser,
   isMediaExpired, setVoiceRecordingHeartbeat, clearVoiceRecordingStatus,
   sendLocationMessage, updateLiveLocation, sendContactMessage,
   sendForwardedMessage, incrementForwardedCount,
@@ -3436,9 +3436,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               <span style={{ fontSize: 14, color: t.text }}>Archive chat</span>
             </div>
 
-            <div onClick={async () => { if (window.confirm("Are you sure? This will permanently delete this chat history forever.")) { await deleteChatCompletely(chatId).catch(() => {}); setShowOverflow(false); handleBack(); } }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer" }}>
+            <div onClick={async () => { if (window.confirm("Delete this chat for yourself? The other person keeps their copy.")) { await deleteChatForUser(chatId, myUid).catch(() => {}); setShowOverflow(false); handleBack(); } }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer" }}>
               <Trash2 size={16} color="#FF3B30" />
-              <span style={{ fontSize: 14, color: "#FF3B30" }}>Delete chat</span>
+              <span style={{ fontSize: 14, color: "#FF3B30" }}>Delete chat for me</span>
             </div>
           </div>
           </>
