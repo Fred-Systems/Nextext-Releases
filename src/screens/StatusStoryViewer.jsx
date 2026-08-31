@@ -146,6 +146,12 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const voiceRef = useRef(null);
   const bgAudioRef = useRef(null);
   const initialAnimDoneRef = useRef(false);
+  const durationRef = useRef(0);
+  const startedIdxRef = useRef(-1);
+  // Keep durationRef in sync without making the playback effect re-run every
+  // time the video's real duration is discovered (onLoadedMetadata). Re-running
+  // would restart the video and reset the progress bar.
+  useEffect(() => { durationRef.current = duration; }, [duration]);
 
   const isOwner = myUid && ownerUid && myUid === ownerUid;
   const current = statuses[idx];
@@ -422,26 +428,31 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     }
 
     clearTimeout(timerRef.current);
+    const thisDuration = current?.mediaType === "video" || current?.mediaType === "voice" ? durationRef.current : duration;
     if (isWaitVideo) {
       // Wait for the video to end before advancing (driven by onEnded).
       // Safety cap so a stuck/blocked video never hangs the story forever.
-      timerRef.current = setTimeout(() => advanceRef.current?.(), Math.max(60000, duration + 5000));
+      timerRef.current = setTimeout(() => advanceRef.current?.(), Math.max(60000, thisDuration + 5000));
     } else {
-      timerRef.current = setTimeout(() => advanceRef.current?.(), duration);
+      timerRef.current = setTimeout(() => advanceRef.current?.(), thisDuration);
     }
 
+    // Only (re)start currentTime/playback when actually switching slides — not
+    // when the video's real duration is discovered (which re-mounts the video).
+    const isNewSlide = startedIdxRef.current !== idx;
+    if (isNewSlide) startedIdxRef.current = idx;
     if (current.mediaType === "video" && videoRef.current) {
-      videoRef.current.currentTime = 0;
+      if (isNewSlide) { videoRef.current.currentTime = 0; }
       videoRef.current.play().catch(() => {});
     }
 
     if (current.mediaType === "voice" && voiceRef.current) {
-      voiceRef.current.currentTime = 0;
+      if (isNewSlide) voiceRef.current.currentTime = 0;
       voiceRef.current.play().catch(() => {});
     }
 
     return () => clearTimeout(timerRef.current);
-  }, [idx, duration, current?.mediaType]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [idx, current?.id, current?.mediaType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!barRef.current || !initialAnimDoneRef.current) return;

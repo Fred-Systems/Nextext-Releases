@@ -1513,8 +1513,21 @@ export default function AdminDashboard({ myUid, onBack }) {
                 </div>
               </div>
             </div>
-          </div>
-          <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
+            </div>
+            <div onClick={() => { setSystemConfig({ enableAiImageGenButton: !sysConfig?.enableAiImageGenButton }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.enableAiImageGenButton ? t.primaryLight : "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginTop: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.enableAiImageGenButton ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.enableAiImageGenButton ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+                  {sysConfig?.enableAiImageGenButton ? "AI chat '+': Image generation ON" : "AI chat '+': Image generation OFF"}
+                </div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>
+                  Off by default. When ON, AI chat shows a "+" button so ANY user can generate an image (works even if Groq is the active chat provider).
+                </div>
+              </div>
+            </div>
+            <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
             <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.border, position: "relative" }}>
               <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.hideMizrachiMode ? 23 : 3, transition: "left 0.15s" }} />
             </div>

@@ -197,6 +197,10 @@ const SYSTEM_CONFIG_DEFAULTS = {
   aiProvider: "groq", // "groq" | "gemini"
   geminiApiKey: DEFAULT_GEMINI_KEY,
   hideMizrachiMode: false,
+  // When enabled by an admin, the AI chat shows a "+" button that lets ANY user
+  // generate an image (even if Groq is the active chat provider) by opening a
+  // prompt box and calling the Gemini image model.
+  enableAiImageGenButton: false,
 };
 
 export async function ensureSystemConfig() {

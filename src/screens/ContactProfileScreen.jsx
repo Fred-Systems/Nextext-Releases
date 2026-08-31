@@ -277,7 +277,7 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
   return (
     <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 40 }}>
       {fullscreenImage && createPortal(
-        <div onClick={() => setFullscreenImage(null)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 999999, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+        <div onClick={() => setFullscreenImage(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 999999, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", padding: 16 }}>
             <img src={fullscreenImage} alt="Full" style={{ maxWidth: "100%", maxHeight: "80vh", borderRadius: 12, objectFit: "contain", display: "block" }} />
           </div>

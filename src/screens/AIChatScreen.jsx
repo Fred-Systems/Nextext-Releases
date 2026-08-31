@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ChevronLeft, Send, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive, Copy, Forward, MessageSquare } from "lucide-react";
+import { ChevronLeft, Send, Plus, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive, Copy, Forward, MessageSquare } from "lucide-react";
 import VoiceToTextButton from "../components/VoiceToTextButton";
 import { useTheme } from "../theme/ThemeContext";
 import { useGlobalSettings } from "../firebase/config-settings";
@@ -157,6 +157,9 @@ export default function AIChatScreen({ myUid, onBack }) {
   });
   const sysConfig = useSystemConfigHook();
   const visionDisabled = !!sysConfig?.disableAiVision;
+  const [showImagePrompt, setShowImagePrompt] = useState(false);
+  const [imagePrompt, setImagePrompt] = useState("");
+  const [genError, setGenError] = useState("");
   const scrollRef = useRef(null);
   const imageInputRef = useRef(null);
   const pinchStartRef = useRef(null);
@@ -260,6 +263,40 @@ export default function AIChatScreen({ myUid, onBack }) {
         unreadCount: {},
       });
     }
+  };
+
+  // Generate an image from the "+" button (works even when Groq is the active
+  // chat provider — it always calls the Gemini image model directly).
+  const handleGenerateImage = async (explicit) => {
+    const prompt = (typeof explicit === "string" ? explicit : imagePrompt).trim();
+    if (!prompt || sending) return;
+    setShowImagePrompt(false);
+    setImagePrompt("");
+    setGenError("");
+    setSending(true);
+    setThinking(true);
+    try {
+      await ensureChatExists();
+      await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
+        senderId: myUid, type: "text", text: `🖼️ Generate: ${prompt}`,
+      }));
+      const url = await generateGeminiImage(myUid, prompt);
+      setThinking(false);
+      await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
+        senderId: AI_CONTACT_UID, type: "image", text: null,
+        mediaURL: url, mediaExpiresAt: null, mediaExpired: false,
+      }));
+      await updateDoc(doc(db, "chats", chatId), {
+        lastMessage: { text: "🖼️ Generated an image", senderId: AI_CONTACT_UID, sentAt: serverTimestamp(), type: "image" },
+      });
+    } catch (err) {
+      setThinking(false);
+      await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
+        senderId: AI_CONTACT_UID, type: "text", text: describeAIError(err),
+      }));
+    }
+    setReplyTo(null);
+    setSending(false);
   };
 
   const handleSend = async (overrideText) => {
@@ -979,6 +1016,11 @@ export default function AIChatScreen({ myUid, onBack }) {
             <ImageIcon size={15} color={t.primary} />
           </div>
         )}
+        {sysConfig?.enableAiImageGenButton && (
+          <div onClick={() => { setGenError(""); setShowImagePrompt(true); }} style={{ width: 30, height: 30, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }} title="Generate image">
+            <Plus size={15} color={t.primary} />
+          </div>
+        )}
         <div onClick={() => setShowEmojiPicker(!showEmojiPicker)} style={{ width: 30, height: 30, borderRadius: "50%", background: showEmojiPicker ? t.primaryLight : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
           <Smile size={15} color={showEmojiPicker ? t.primary : t.textMuted} />
         </div>
@@ -1012,6 +1054,32 @@ export default function AIChatScreen({ myUid, onBack }) {
           </>
         )}
       </div>
+
+      {/* Image generation prompt */}
+      {showImagePrompt && (
+        <div className="nextext-overlay-backdrop" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => { if (!sending) setShowImagePrompt(false); }}>
+          <div className="nextext-overlay-sheet" style={{ background: t.surface, width: "100%", maxWidth: 340, borderRadius: 16, padding: 18 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Generate image</span>
+              <X size={20} color={t.textMuted} onClick={() => setShowImagePrompt(false)} style={{ cursor: "pointer" }} />
+            </div>
+            <textarea
+              autoFocus
+              value={imagePrompt}
+              onChange={(e) => setImagePrompt(e.target.value)}
+              placeholder="Describe the image you want…"
+              rows={3}
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, background: t.bg, color: t.text, fontFamily: "inherit", boxSizing: "border-box", resize: "none" }}
+            />
+            {genError && <div style={{ color: "#FF3B30", fontSize: 12.5, marginTop: 8 }}>{genError}</div>}
+            <button
+              onClick={() => handleGenerateImage()}
+              disabled={!imagePrompt.trim() || sending}
+              style={{ marginTop: 12, width: "100%", padding: "11px", borderRadius: 10, border: "none", background: imagePrompt.trim() && !sending ? t.primary : t.border, color: "#fff", fontSize: 14.5, fontWeight: 700, cursor: imagePrompt.trim() && !sending ? "pointer" : "default" }}
+            >{sending ? "Generating…" : "Generate"}</button>
+          </div>
+        </div>
+      )}
 
       {/* External chat picker overlay */}
       {showChatPicker && (
