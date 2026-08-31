@@ -588,7 +588,7 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
 
 // Pinch-to-zoom + drag-to-pan media viewer is imported from ZoomableMedia.
 
-export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, recordingBarScale = 1, userDoc, emojiAnimations = true, emojiBigOn = true, onOpenAskAI }) {
+export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, recordingBarScale = 1, userDoc, emojiAnimations = true, emojiBigOn = true, onOpenAskAI, onOpenStatus }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth, composerButtonOrder, voiceSpacing } = useTheme();
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
@@ -3361,6 +3361,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               hasActiveStatus={!isGroup && hasOtherActiveStatus}
               statusViewed={otherStatusViewed}
               onViewProfile={onOpenProfile}
+              onStatusView={!isGroup && onOpenStatus && hasOtherActiveStatus ? () => { onOpenStatus(otherStatuses); } : undefined}
               onViewPicture={() => { const effective = getLocalPhotoOverride(otherUid) || contact?.profile?.photoURL || otherUserPhoto; if (effective) setFullscreenImage(effective); }}
             />
           )}

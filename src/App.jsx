@@ -4097,6 +4097,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           onOpenProfile={() => setScreen("contactProfile")}
           onOpenGroupInfo={openGroupInfo}
           onOpenChat={openChat}
+          onOpenStatus={(items) => {
+            setStatusOrigin("chat");
+            setInitialViewStatuses({ statuses: items, ownerUid: activeChat.otherUid });
+            setScreen("status");
+          }}
           showScrollDownSetting={showScrollDown}
           scrollDownSize={scrollDownSize}
           scrollDownPos={scrollDownPos}

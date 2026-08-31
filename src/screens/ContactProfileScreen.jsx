@@ -7,6 +7,7 @@ import { addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
 import Avatar from "../components/Avatar";
 import AvatarColorPicker from "../components/AvatarColorPicker";
+import { getProxyMediaUrl } from "../media/mediaProxy";
 import { getContactDisplayName, getContactRealName, setContactNickname } from "../firebase/contacts";
 import { previewNotificationFeedback, VIBRATION_PRESETS } from "../firebase/notifications";
 import { PING_SOUNDS } from "../utils/pingSounds";
@@ -323,7 +324,7 @@ export default function ContactProfileScreen({ myUid, otherUid, contact, onBack,
         ) : (
         <div style={{ padding: "28px 16px", textAlign: "center", borderBottom: `1px solid ${t.border}` }}>
           <div style={{ margin: "0 auto 12px", position: "relative", display: "inline-block" }}>
-            <Avatar key={avatarNonce} photoURL={effectivePhotoURL} name={displayName} uid={otherUid} size={88} verified={!!otherUserDoc?.verified && !otherUserDoc?.hideVerified} hasActiveStatus={hasOtherActiveStatus} statusViewed={otherStatusViewed} onViewPicture={() => { if (effectivePhotoURL) setFullscreenImage(effectivePhotoURL); }} />
+            <Avatar key={avatarNonce} photoURL={effectivePhotoURL} name={displayName} uid={otherUid} size={88} verified={!!otherUserDoc?.verified && !otherUserDoc?.hideVerified} hasActiveStatus={hasOtherActiveStatus} statusViewed={otherStatusViewed} onViewPicture={() => { if (effectivePhotoURL) setFullscreenImage(getProxyMediaUrl(effectivePhotoURL, "image")); }} />
             <input ref={localPhotoRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleLocalPhotoUpload} />
             <div onClick={() => localPhotoRef.current?.click()} style={{ position: "absolute", bottom: 0, right: 0, width: 28, height: 28, borderRadius: "50%", background: t.primary, border: `2px solid ${t.bg}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
               <Camera size={13} color="#fff" />

@@ -148,10 +148,6 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const initialAnimDoneRef = useRef(false);
   const durationRef = useRef(0);
   const startedIdxRef = useRef(-1);
-  // Keep durationRef in sync without making the playback effect re-run every
-  // time the video's real duration is discovered (onLoadedMetadata). Re-running
-  // would restart the video and reset the progress bar.
-  useEffect(() => { durationRef.current = duration; }, [duration]);
 
   const isOwner = myUid && ownerUid && myUid === ownerUid;
   const current = statuses[idx];
@@ -204,6 +200,10 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const [liveVideoDuration, setLiveVideoDuration] = useState(null);
   useEffect(() => { setLiveVideoDuration(null); }, [idx]);
   const duration = (current?.mediaType === "video" || current?.mediaType === "voice") && liveVideoDuration ? liveVideoDuration : getSlideDuration(current);
+  // Keep durationRef in sync without making the playback effect re-run every time
+  // the video's real duration is discovered (onLoadedMetadata). Re-running would
+  // restart the video and reset the progress bar.
+  useEffect(() => { durationRef.current = duration; }, [duration]);
 
   // Mark this slide as "viewed" (green circle) after the user has seen even a
   // second of it — matching WhatsApp behaviour, where a partially-watched story
