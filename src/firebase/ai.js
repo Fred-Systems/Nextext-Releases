@@ -17,7 +17,7 @@ export const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
 // Image generation model. The user requested gemini-3.1-flash-image, which is a
 // Gemini generative model that returns images as inline_data via generateContent
 // (responseModalities: ["IMAGE"]) — NOT the separate Imagen :predict endpoint.
-export const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image";
+export const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-lite-image";
 
 // Selectable Gemini models surfaced in the Admin dashboard (and, if the admin
 // enables it, inside AI chat). The image model is included so it can be picked

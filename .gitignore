@@ -45,3 +45,8 @@ android/app/.cxx/
 ios/App/Pods/
 ios/App/build/
 ios/App/DerivedData/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example

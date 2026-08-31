@@ -274,10 +274,8 @@ function LinkPreviewCard({ text, mine, t, textScale }) {
 function StatusTicks({ mine, deliveredTo = [], readBy = [], otherParticipants = [] }) {
   if (!mine) return null;
   const allRead = otherParticipants.length > 0 && otherParticipants.every((uid) => readBy.includes(uid));
-  const allDelivered = otherParticipants.length > 0 && otherParticipants.every((uid) => deliveredTo.includes(uid));
   if (allRead) return <CheckCheck size={15} style={{ color: "#4FC3E8" }} />;
-  if (allDelivered) return <CheckCheck size={15} style={{ opacity: 0.7 }} />;
-  return <Check size={15} style={{ opacity: 0.7 }} />;
+  return <CheckCheck size={15} style={{ opacity: 0.7 }} />;
 }
 
 function TypingDots({ color }) {
@@ -1498,7 +1496,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   // ── Long-press multi-select helpers ──────────────────────────────
-  const copyMessageText = (m) => { if (m?.text) navigator.clipboard?.writeText(m.text).catch(() => {}); };
+  const copyMessageText = (m) => { if (m?.text) copyWithToast(m.text); };
 
   const SWIPE_THRESHOLD = 60;
 
@@ -1524,31 +1522,33 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     });
   };
 
-  // Copy with a transient "Copied!" toast + clipboard fallback for insecure contexts.
+  // Copy with a transient "Copied!" toast + clipboard fallback for insecure/WebView contexts.
   const copyWithToast = async (text) => {
     if (!text) return;
+    let success = false;
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        throw new Error("no clipboard");
+        try { await navigator.clipboard.writeText(text); success = true; } catch { success = false; }
       }
-    } catch {
+    } catch { success = false; }
+    if (!success) {
       try {
         const ta = document.createElement("textarea");
         ta.value = text;
+        ta.setAttribute("readonly", "");
         ta.style.position = "fixed";
         ta.style.top = "-1000px";
         ta.style.opacity = "0";
         document.body.appendChild(ta);
         ta.focus();
         ta.select();
-        document.execCommand("copy");
+        ta.setSelectionRange(0, text.length);
+        success = document.execCommand("copy");
         document.body.removeChild(ta);
-      } catch {}
+      } catch { success = false; }
     }
-    setCopiedToast(true);
-    setTimeout(() => setCopiedToast(false), 1200);
+    if (success) { setCopiedToast(true); setTimeout(() => setCopiedToast(false), 1200); }
+    else setSendError("Couldn't copy text. Clipboard is unavailable on this device.");
   };
 
   // ── Swipe-right to reply ──────────────────────────────────────────
@@ -1609,11 +1609,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
 
   // Delete a specific message (used by the long-press action menu).
+  // Always deletes only for the current user — never for everyone.
   const deleteMessageById = async (msg) => {
     if (!chatId || !msg) return;
     try {
-      if (msg.senderId === myUid) await deleteMessageForEveryone(chatId, msg.id);
-      else await deleteMessageForSelf(chatId, msg.id, myUid);
+      await deleteMessageForSelf(chatId, msg.id, myUid);
     } catch (e) {
       setSendError("Couldn't delete: " + (e.message || "server rejected the write"));
     }
@@ -1681,7 +1681,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
   const handleSelectionCopy = () => {
     const text = getSelectedMsgs().map((m) => m.text || "").filter(Boolean).join("\n");
-    if (text) navigator.clipboard?.writeText(text).catch(() => {});
+    if (text) copyWithToast(text);
     exitSelectionMode();
   };
 
@@ -1696,8 +1696,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     const msgs = getSelectedMsgs();
     for (const m of msgs) {
       try {
-        if (m.senderId === myUid) await deleteMessageForEveryone(chatId, m.id);
-        else await deleteMessageForSelf(chatId, m.id, myUid);
+        await deleteMessageForSelf(chatId, m.id, myUid);
       } catch { /* best-effort per message */ }
     }
     exitSelectionMode();
@@ -3962,7 +3961,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               )}
               {lpConfig.includes("delete") && !deny && (
                 <div onClick={() => { setActionMenu(null); deleteMessageById(m); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
-                  <Trash2 size={17} color="#FF3B30" /><span style={{ fontSize: 15, color: "#FF3B30" }}>{m.senderId === myUid ? "Delete for everyone" : "Delete for me"}</span>
+                  <Trash2 size={17} color="#FF3B30" /><span style={{ fontSize: 15, color: "#FF3B30" }}>Delete for me</span>
                 </div>
               )}
               {lpConfig.includes("askai") && aiApproved && m.text && (

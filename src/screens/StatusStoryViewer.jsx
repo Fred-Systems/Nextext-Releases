@@ -406,7 +406,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       el.style.transition = "none";
       el.style.width = completedIndices.has(i) ? "100%" : "0%";
     });
-    const isWaitVideo = current?.mediaType === "video" && current?.waitForVideo;
+    const isWaitVideo = current?.mediaType === "video";
     if (!isWaitVideo) {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -450,7 +450,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       barRef.current.style.width = `${progressRef.current}%`;
       clearTimeout(timerRef.current);
     } else {
-      const isWaitVideo = current?.mediaType === "video" && current?.waitForVideo;
+      const isWaitVideo = current?.mediaType === "video";
       if (!isWaitVideo) {
         const remainingMs = ((100 - progressRef.current) / 100) * duration;
         barRef.current.style.transition = `width ${remainingMs}ms linear`;
@@ -668,7 +668,6 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                 loop: false,
                 onLoadedMetadata: (e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); },
                 onTimeUpdate: (e) => {
-                  if (!current?.waitForVideo) return;
                   const v = e.target;
                   if (v.duration && v.currentTime != null) {
                     progressRef.current = (v.currentTime / v.duration) * 100;

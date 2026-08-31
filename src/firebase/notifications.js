@@ -2,7 +2,7 @@ import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 import { app } from "./config";
-import { doc, updateDoc, arrayRemove } from "firebase/firestore";
+import { doc, setDoc, updateDoc, arrayRemove } from "firebase/firestore";
 import { db } from "./config";
 import { playChime, isChimeId } from "../utils/pingSounds";
 import NextextNative from "../native/nextextNative";
@@ -265,7 +265,7 @@ export async function initNotifications(myUid) {
 
       PushNotifications.addListener("registration", ({ value }) => {
         if (value) {
-          updateDoc(doc(db, "users", myUid), { fcmTokens: [value] }).catch(() => {});
+          setDoc(doc(db, "users", myUid), { fcmTokens: [value] }, { merge: true }).catch(() => {});
         }
       }).catch(() => {});
       PushNotifications.addListener("registrationError", ({ err }) => {
@@ -303,9 +303,9 @@ export async function initNotifications(myUid) {
     if (permission !== "granted") return null;
     const token = await getToken(messaging, { vapidKey: VAPID_KEY }).catch(() => null);
     if (token) {
-      await updateDoc(doc(db, "users", myUid), {
+      await setDoc(doc(db, "users", myUid), {
         fcmTokens: [token],
-      });
+      }, { merge: true });
     }
     onMessage(messaging, (payload) => {
       const { notification, data } = payload;

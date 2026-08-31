@@ -224,7 +224,7 @@ export function useAuth() {
           displayName: profileUser.displayName || extra?.displayName || "New User",
           photoURL: profileUser.photoURL || extra?.photoUrl || extra?.photoURL || null,
         });
-        if (markProfileComplete) await updateDoc(ref, { profileComplete: true });
+        if (markProfileComplete) await setDoc(ref, { profileComplete: true }, { merge: true });
       }
       return profileUser;
     };

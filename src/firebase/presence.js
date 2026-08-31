@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { doc, onSnapshot, updateDoc, serverTimestamp, increment } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, setDoc, serverTimestamp, increment } from "firebase/firestore";
 import { db } from "./config";
 
 const ONLINE_THRESHOLD_MS = 60 * 1000; // treat "online" as lastSeen within the last 60s
@@ -9,13 +9,13 @@ const ONLINE_THRESHOLD_MS = 60 * 1000; // treat "online" as lastSeen within the 
 export function usePresenceHeartbeat(myUid) {
   useEffect(() => {
     if (!myUid) return;
-    const beat = () => updateDoc(doc(db, "users", myUid), { lastSeen: serverTimestamp(), isOnline: true });
+    const beat = () => setDoc(doc(db, "users", myUid), { lastSeen: serverTimestamp(), isOnline: true }, { merge: true });
     beat();
     const interval = setInterval(beat, 25000);
 
     const handleVisibility = () => {
       if (document.visibilityState === "visible") beat();
-      else updateDoc(doc(db, "users", myUid), { isOnline: false });
+      else setDoc(doc(db, "users", myUid), { isOnline: false }, { merge: true });
     };
     document.addEventListener("visibilitychange", handleVisibility);
 
@@ -23,7 +23,7 @@ export function usePresenceHeartbeat(myUid) {
     // an honest, known limitation of heartbeat-based presence without a
     // dedicated realtime-disconnect service (e.g. Realtime Database's
     // onDisconnect(), which Firestore doesn't have an equivalent of).
-    const handleUnload = () => updateDoc(doc(db, "users", myUid), { isOnline: false });
+    const handleUnload = () => setDoc(doc(db, "users", myUid), { isOnline: false }, { merge: true });
     window.addEventListener("beforeunload", handleUnload);
 
     return () => {
@@ -60,7 +60,7 @@ export function useAppUsageTracker(myUid) {
       wasVisible = isVisible;
       if (pending >= FLUSH_MS || (force && pending >= 500)) {
         const toCommit = Math.floor(pending);
-        updateDoc(doc(db, "users", myUid), { activeTimeMs: increment(toCommit) }).catch(() => {});
+        setDoc(doc(db, "users", myUid), { activeTimeMs: increment(toCommit) }, { merge: true }).catch(() => {});
         pending -= toCommit;
       }
     };

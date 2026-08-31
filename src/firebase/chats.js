@@ -302,31 +302,38 @@ export function useMessages(chatId, myUid) {
 
   useEffect(() => {
     if (!chatId) return;
-    const q = query(collection(db, "chats", chatId, "messages"), orderBy("sentAt", "asc"));
-    const unsub = onSnapshot(q, (snap) => {
+    let active = true;
+    let unsub = null;
+    const apply = (rows) => {
+      if (!active) return;
       const now = Date.now();
-      const rows = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((m) => {
-          if (m.deletedForSelf?.includes(myUid)) return false;
-          if (m.isScheduled && m.scheduledFor?.toMillis && m.scheduledFor.toMillis() > now) {
-            // Only the sender can see their own not-yet-due scheduled message
-            // (as a pending/preview state) -- everyone else simply doesn't
-            // see it until it's due.
-            return m.senderId === myUid;
-          }
-          return true;
-        });
-      setMessages(rows);
+      setMessages(rows.filter((m) => {
+        if (m.deletedForSelf?.includes(myUid)) return false;
+        if (m.isScheduled && m.scheduledFor?.toMillis && m.scheduledFor.toMillis() > now) {
+          return m.senderId === myUid;
+        }
+        return true;
+      }));
       setLoading(false);
-    }, (err) => {
-      // A denied read (e.g. a chat the user deleted for themselves, or a
-      // participant-only rule edge case) must not surface as an unhandled
-      // rejection that blanks the screen. Log it and stop the loading state.
-      console.warn("[useMessages] snapshot error:", err);
-      setLoading(false);
-    });
-    return unsub;
+    };
+    const subscribe = (ordered) => {
+      const q = ordered
+        ? query(collection(db, "chats", chatId, "messages"), orderBy("sentAt", "asc"))
+        : query(collection(db, "chats", chatId, "messages"));
+      unsub = onSnapshot(q, (snap) => {
+        apply(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      }, (err) => {
+        // A denied read, OR a corrupt message missing the `sentAt` field (which
+        // makes an orderBy query fail wholesale), must not blank the chat. If
+        // the ordered query errors, retry unordered so messages still appear.
+        console.warn("[useMessages] snapshot error (retrying unordered):", err);
+        if (unsub) { try { unsub(); } catch {} unsub = null; }
+        if (ordered) subscribe(false);
+        else if (active) setLoading(false);
+      });
+    };
+    subscribe(true);
+    return () => { active = false; if (unsub) { try { unsub(); } catch {} } };
   }, [chatId, myUid]);
 
   return { messages, loading };
@@ -981,8 +988,8 @@ export async function getUsersByUids(uids) {
 // Save a per-user override nickname for a specific group. Stored on the
 // user document so it only affects that user's own view.
 export async function setGroupNickname(myUid, chatId, nickname) {
-  await updateDoc(doc(db, "users", myUid), {
+  await setDoc(doc(db, "users", myUid), {
     [`groupNicknames.${chatId}`]: nickname || deleteField(),
-  });
+  }, { merge: true });
 }
 

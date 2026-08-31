@@ -1714,7 +1714,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
               </div>
             )}
 
-            {/* Duration slider */}
+            {/* Duration slider — hidden for video statuses, which play the full
+                video (bar follows the video's real length instead). */}
+            {!(postMode === "media" && postMediaType === "video") && (
             <div style={{ marginBottom: 12, padding: "14px 16px", boxSizing: "border-box", width: "100%", overflowX: "auto", whiteSpace: "nowrap", borderRadius: 12, background: t.bg, border: `1px solid ${t.border}` }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                 <span style={{ fontSize: 14, fontWeight: 700, color: t.text, whiteSpace: "nowrap" }}>Status lifespan duration</span>
@@ -1725,6 +1727,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                 <span>1s</span><span>15s</span>
               </div>
             </div>
+            )}
 
             {/* Movable, colored text stickers for media mode */}
             {postMode === "media" && (postMedia || postImages.length > 0) && (

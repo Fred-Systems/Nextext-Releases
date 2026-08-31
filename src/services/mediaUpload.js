@@ -226,10 +226,13 @@ async function uploadToSupabase(chatId, senderUid, file, { thumbnailBlob = null 
   return { url: data.publicUrl, path: mediaPath, thumbnailURL, thumbnailPath, provider: "supabase" };
 }
 
-export async function uploadToCloudinary(file, { resourceType = "auto" } = {}) {
+export async function uploadToCloudinary(file, { resourceType = "auto", preset } = {}) {
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  // Use the per-type preset when supplied (chat_image / chat_video), otherwise
+  // fall back to the generic unsigned preset.
+  const resolvedPreset = preset || CLOUDINARY_UPLOAD_PRESET;
+  formData.append("upload_preset", resolvedPreset);
   // resource_type must be "image", "video", "raw", or "auto" — NOT arbitrary strings.
   const safeResourceType = ["image", "video", "raw", "auto"].includes(resourceType) ? resourceType : "auto";
   formData.append("resource_type", safeResourceType);
@@ -294,10 +297,11 @@ export async function uploadMediaFile(chatId, senderUid, file, options = {}) {
   const provider = options.provider || (await getActiveStorageProvider());
   let result;
   if (provider === "cloudinary") {
-    const resourceType = file.type.startsWith("video/") ? "video"
-      : file.type.startsWith("image/") ? "image"
-      : "auto";
-    result = await uploadToCloudinary(uploadFile, { resourceType });
+    const isVideo = file.type.startsWith("video/");
+    const isImage = file.type.startsWith("image/");
+    const resourceType = isVideo ? "video" : isImage ? "image" : "auto";
+    const preset = isImage ? "chat_image" : isVideo ? "chat_video" : undefined;
+    result = await uploadToCloudinary(uploadFile, { resourceType, preset });
   } else {
     result = await uploadToSupabase(chatId, senderUid, uploadFile, { thumbnailBlob });
   }
