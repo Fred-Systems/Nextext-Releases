@@ -145,6 +145,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const videoRef = useRef(null);
   const voiceRef = useRef(null);
   const bgAudioRef = useRef(null);
+  const replyInputRef = useRef(null);
   const initialAnimDoneRef = useRef(false);
   const durationRef = useRef(0);
   const startedIdxRef = useRef(-1);
@@ -525,6 +526,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       await sendTextMessage(chatId, myUid, text.trim(), [ownerUid], { statusRef });
       setReplySent(true);
       setReplyText("");
+      setPaused(false);
       setTimeout(() => setReplySent(false), 2000);
     } catch { /* silent */ }
     setSending(false);
@@ -808,7 +810,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       )}
 
       {!isOwner && !showViewers && (
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 12px 16px", background: "linear-gradient(transparent, rgba(0,0,0,0.6))", zIndex: 20 }} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 12px 16px", background: "linear-gradient(transparent, rgba(0,0,0,0.6))", zIndex: 20 }} onTouchStart={(e) => { e.stopPropagation(); setPaused(true); setTimeout(() => { try { if (replyInputRef.current) replyInputRef.current.focus(); } catch {} }, 300); }} onPointerDown={(e) => { e.stopPropagation(); setPaused(true); }} onTouchEnd={(e) => e.stopPropagation()}>
           {replySent ? (
             <div style={{ textAlign: "center", color: "#00A884", fontSize: 13, fontWeight: 600, padding: "10px 0" }}>Reply sent!</div>
           ) : (
@@ -820,6 +822,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
               </div>
               <div style={{ flex: 1, display: "flex", alignItems: "center", background: "rgba(255,255,255,0.15)", borderRadius: 20, padding: "6px 10px 6px 14px", gap: 6 }}>
                 <input
+                  ref={replyInputRef}
                   value={replyText}
                   onChange={(e) => { setReplyText(e.target.value); setPaused(true); }}
                   onFocus={() => setPaused(true)}

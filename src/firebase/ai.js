@@ -368,6 +368,12 @@ export function describeAIError(error) {
   if (lower.includes("empty response")) {
     return "The AI didn't send a reply. Please try again.";
   }
+  if (lower.includes("image generation") && (lower.includes("tried models") || lower.includes("last error"))) {
+    // Detailed image-generation failure — surface the real cause so the user can
+    // report it (e.g. HTTP 403/429 from a free-tier key, or a bad model ID).
+    const detail = String(error?.message || error || "").slice(0, 300);
+    return `Image generation failed. ${detail}`;
+  }
   if (lower.includes("image generation") || lower.includes("returned no image")) {
     return "Image generation failed. Try a different or more specific prompt.";
   }
