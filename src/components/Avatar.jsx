@@ -49,7 +49,7 @@ function broadcastAvatarMenu(openUid) {
   avatarMenuListeners.forEach((fn) => fn(openUid));
 }
 
-export default React.memo(function Avatar({ photoURL, name, uid, size = 52, style = {}, hasActiveStatus = false, statusViewed = false, onStatusView, onViewProfile, onViewPicture, onViewGroupInfo, hideLocalOverride = false, blockStatus = false, aiStyleOverride = null, verified = false }) {
+export default React.memo(function Avatar({ photoURL, name, uid, size = 52, style = {}, hasActiveStatus = false, statusViewed = false, onStatusView, onViewProfile, onViewPicture, onViewGroupInfo, hideLocalOverride = false, blockStatus = false, aiStyleOverride = null, verified = false, instantFullscreen = false }) {
   const [showMenu, setShowMenu] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const avatarRef = useRef(null);
@@ -107,6 +107,12 @@ export default React.memo(function Avatar({ photoURL, name, uid, size = 52, styl
 
   const handleClick = (e) => {
     e.stopPropagation();
+    // On the "View Profile" page, tapping the photo opens it fullscreen
+    // immediately instead of showing the 3-button menu first.
+    if (instantFullscreen) {
+      if (hasPhoto && onViewPicture) { onViewPicture(); return; }
+      if (hasPhoto) { setFullscreen(true); return; }
+    }
     broadcastAvatarMenu(uid);
     setShowMenu(true);
   };

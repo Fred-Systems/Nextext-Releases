@@ -554,24 +554,28 @@ async function callGeminiVision(apiKey, base64, mimeType, prompt, systemInstruct
 // inline_data bytes, then uploads them to Cloudinary (optimized/CDN) with a
 // Supabase fallback so the chat can display the result as a normal image bubble.
 export async function generateGeminiImage(userUid, prompt) {
-  const config = await getSystemConfigForCall();
-  if (config.provider !== "gemini") {
-    throw new Error("Image generation is only available when the AI provider is set to Gemini.");
+  // Read the Gemini key directly from the config doc (independent of the active
+  // chat provider) so image generation works even when Groq is the chat model.
+  const cfg = await getSystemConfig();
+  if (cfg?.aiGloballyDisabled || cfg?.hideAiEverywhere) {
+    throw new Error("AI is currently disabled by the administrator.");
   }
-  // Prefer the admin-selected text model (the one that already works for chat).
-  // Only fall back to a separately-configured image model when the admin has set
-  // one explicitly AND it differs from the legacy default. This avoids calling the
-  // deprecated `gemini-3.1-flash-image` model, which returns 429s on new keys.
-  const explicitImageModel = (config.geminiImageModel && config.geminiImageModel !== GEMINI_IMAGE_MODEL) ? config.geminiImageModel : null;
-  // Try dedicated image-generation models first (the text chat model often can't
-  // emit images), then fall back to the configured chat model as a last resort.
-  const candidates = [explicitImageModel, "gemini-3.6-flash-image", "gemini-3.5-flash-image", "gemini-3.1-flash-image", config.model].filter(Boolean);
+  const key = (cfg?.geminiApiKey || "").trim();
+  if (!key) {
+    throw new Error("Image generation is unavailable. An admin must set a valid Gemini API key in the Admin Dashboard.");
+  }
+  // Prefer the admin-selected image model; otherwise use Nano Banana 2 Lite
+  // (gemini-3.1-flash-lite-image) — the model that works on the user's key.
+  // Fall back to other contemporary image models, then the text chat model.
+  const explicitImageModel = (cfg?.geminiImageModel && cfg.geminiImageModel !== GEMINI_IMAGE_MODEL) ? cfg.geminiImageModel : null;
+  const chatModel = cfg?.geminiModel || DEFAULT_GEMINI_MODEL;
+  const candidates = [explicitImageModel, GEMINI_IMAGE_MODEL, "gemini-3.6-flash-image", "gemini-3.5-flash-image", chatModel].filter(Boolean);
   const tried = [];
   let lastErr;
   for (const model of candidates) {
     tried.push(model);
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(config.key)}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
       const body = {
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: { responseModalities: ["IMAGE", "TEXT"] },

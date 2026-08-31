@@ -658,6 +658,16 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                   style={{ width: "100%", height: "100%", objectFit: "contain" }}
                   controls={false}
                   onLoadedMetadata={(e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); }}
+                  onTimeUpdate={(e) => {
+                    const v = e.target;
+                    if (v && v.duration && v.currentTime != null) {
+                      progressRef.current = (v.currentTime / v.duration) * 100;
+                      if (barRef.current) {
+                        barRef.current.style.transition = "none";
+                        barRef.current.style.width = `${progressRef.current}%`;
+                      }
+                    }
+                  }}
                   onEnded={() => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); }}
                 />
               )}
@@ -811,7 +821,9 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
               <div style={{ flex: 1, display: "flex", alignItems: "center", background: "rgba(255,255,255,0.15)", borderRadius: 20, padding: "6px 10px 6px 14px", gap: 6 }}>
                 <input
                   value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
+                  onChange={(e) => { setReplyText(e.target.value); setPaused(true); }}
+                  onFocus={() => setPaused(true)}
+                  onBlur={() => { if (!replyText.trim()) setPaused(false); }}
                   onKeyDown={(e) => { if (e.key === "Enter") handleSendReply(replyText); }}
                   placeholder="Reply…"
                   disabled={sending}
