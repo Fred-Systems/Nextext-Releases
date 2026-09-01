@@ -163,7 +163,16 @@ export default function CameraCapture({
     if (!streamRef.current || recording) return;
     chunksRef.current = [];
     let recorder;
-    try { recorder = new MediaRecorder(streamRef.current, { mimeType: "video/webm" }); }
+    const videoMimeCandidates = [
+      "video/webm;codecs=vp8,opus",
+      "video/webm;codecs=vp9,opus",
+      "video/mp4",
+      "video/webm",
+    ];
+    const videoMime = videoMimeCandidates.find(
+      (m) => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)
+    ) || "";
+    try { recorder = videoMime ? new MediaRecorder(streamRef.current, { mimeType: videoMime }) : new MediaRecorder(streamRef.current); }
     catch { try { recorder = new MediaRecorder(streamRef.current); } catch { return; } }
     recorderRef.current = recorder;
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };

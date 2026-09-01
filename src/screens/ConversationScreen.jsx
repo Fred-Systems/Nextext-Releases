@@ -17,6 +17,7 @@ import { getWallpaperForChat, setWallpaperForChat, fileToWallpaperDataUrl } from
 import { usePresence, formatLastSeen } from "../firebase/presence";
 import { uploadChatFile, deleteChatFile } from "../supabase/media";
 import { checkMediaAllowed, recordMediaUsage } from "../firebase/limits";
+import { getAvailableVoices } from "../firebase/tts";
 import { uploadMediaFile, RawFileTooLargeError } from "../services/mediaUpload";
 import { FileTooLargeError } from "../media/mediaCompression";
 import { cacheMedia, getLocalMediaUrl, hasCachedMedia } from "../media/localMediaCache";
@@ -594,6 +595,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
+  const availableVoices = getAvailableVoices(sysConfig);
   const aiApproved = userDoc?.aiApproved && !sysConfig?.aiGloballyDisabled && !sysConfig?.hideAiEverywhere && userDoc?.restrictions?.blockAI !== true;
   const isGroup = !!contact?.isGroup;
   // Local (device-resident) media URLs for the WhatsApp-style auto-delete mode.
@@ -658,6 +660,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [attachClosing, setAttachClosing] = useState(false);
   const [showYNote, setShowYNote] = useState(false);
   const [yNoteText, setYNoteText] = useState("");
+  const [yVoiceId, setYVoiceId] = useState("y-mizrachi");
   const [yNoteSending, setYNoteSending] = useState(false);
   const [galleryActive, setGalleryActive] = useState(false);
   const [showLocationSheet, setShowLocationSheet] = useState(false);
@@ -1873,8 +1876,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setSendError("");
     try {
       const { synthesizeSpeechBytes } = await import("../firebase/tts");
-      const blob = await synthesizeSpeechBytes(text);
-      const file = new File([blob], "y-mizrachi.mp3", { type: "audio/mpeg" });
+      const voice = availableVoices.find((v) => v.id === yVoiceId) || availableVoices[0];
+      const blob = await synthesizeSpeechBytes(text, voice?.referenceId);
+      const file = new File([blob], `ai-voice-${voice?.id || "note"}.mp3`, { type: "audio/mpeg" });
       const result = await uploadChatFile(chatId, myUid, file);
       await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: 0 });
       setYNoteText("");
@@ -3661,13 +3665,22 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               <div onClick={() => { if (!yNoteSending) setShowYNote(false); }} style={{ position: "fixed", inset: 0, zIndex: 2147481300, background: "rgba(0,0,0,0.45)" }} />
               <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(330px, 90vw)", background: t.surface, borderRadius: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", zIndex: 2147481301, padding: 18 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                  <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>🎙️ Y Mizrachi Voice Note</span>
+                  <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>🎙️ AI Voice Note</span>
                   <X size={18} color={t.textMuted} onClick={() => { if (!yNoteSending) setShowYNote(false); }} style={{ cursor: "pointer" }} />
                 </div>
+                <select
+                  value={yVoiceId}
+                  onChange={(e) => setYVoiceId(e.target.value)}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, outline: "none", color: t.text, background: t.bg, marginBottom: 10 }}
+                >
+                  {availableVoices.map((v) => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
                 <textarea
                   value={yNoteText}
                   onChange={(e) => setYNoteText(e.target.value)}
-                  placeholder="Type what you want Y Mizrachi to say:"
+                  placeholder="Type what you want the voice to say:"
                   rows={3}
                   style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, resize: "none", outline: "none", color: t.text, background: t.bg }}
                 />

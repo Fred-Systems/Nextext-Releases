@@ -218,6 +218,10 @@ const SYSTEM_CONFIG_DEFAULTS = {
   // Daily usage limits (0 = unlimited). Enforced client-side per user.
   dailyMediaLimitMB: 0,
   dailyStatusLimit: 0,
+  // Voice system: admin can hide the Rosh voice and add custom Fish Audio
+  // voices (each { id, name, referenceId }) that appear in the voice pickers.
+  hideRoshVoice: false,
+  customVoices: [],
 };
 
 export async function ensureSystemConfig() {

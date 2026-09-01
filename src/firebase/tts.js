@@ -13,6 +13,30 @@ import { db } from "./config";
 export const FISH_MODEL = "s2.1-pro-free";
 export const Y_MIZRACHI_VOICE_ID = "9cc36d13d091468fa9c4cab838a6ecdf";
 
+// Built-in Fish Audio voices. Admins can add more via the dashboard
+// (stored as config/system.customVoices = [{ id, name, referenceId }]).
+export const VOICE_PRESETS = [
+  { id: "y-mizrachi", name: "Y Mizrachi", referenceId: "9cc36d13d091468fa9c4cab838a6ecdf" },
+  { id: "rosh", name: "Rosh", referenceId: "afe83a515f954ba281f0631e8b414f56" },
+  { id: "trump", name: "Trump", referenceId: "ee45da2963c047a6a07cd21fa3259ae0" },
+  { id: "magnus", name: "Magnus", referenceId: "913b80e159c045bea5025943a44f7670" },
+];
+
+// All voices available to a user given the current system config (honours the
+// admin "hide Rosh" switch and appends admin-created custom voices).
+export function getAvailableVoices(sysConfig) {
+  const presets = VOICE_PRESETS.filter((v) => !(sysConfig?.hideRoshVoice === true && v.id === "rosh"));
+  const custom = (sysConfig?.customVoices || [])
+    .filter((v) => v && v.id && v.name && v.referenceId)
+    .map((v) => ({ id: v.id, name: v.name, referenceId: v.referenceId, custom: true }));
+  return [...presets, ...custom];
+}
+
+export function resolveVoice(sysConfig, voiceId) {
+  const voices = getAvailableVoices(sysConfig);
+  return voices.find((v) => v.id === voiceId) || voices[0];
+}
+
 // Absolute Worker URL — works from both the Android WebView (origin
 // https://localhost) and the web build (same origin), thanks to `Access-Control-Allow-Origin: *`.
 export const VOICE_API = "https://nextext.nextext-app.workers.dev/api/generate-voice";
@@ -104,17 +128,19 @@ export async function getFishAudioKey() {
 }
 
 // Core: turn text into raw MP3 bytes via the Worker proxy (primary) or the
-// native Android bridge (fallback). Throws a readable error on failure.
-async function fetchVoiceBytes(text) {
+// native Android bridge (fallback). `referenceId` selects the Fish Audio voice
+// (defaults to Y Mizrachi). Throws a readable error on failure.
+async function fetchVoiceBytes(text, referenceId) {
   const clean = String(text || "").slice(0, 800).trim();
   if (!clean) throw new Error("Nothing to speak.");
+  const ref = referenceId || Y_MIZRACHI_VOICE_ID;
 
   // 1) Cloudflare Worker proxy — key stays server-side.
   try {
     const resp = await fetch(VOICE_API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: clean, referenceId: Y_MIZRACHI_VOICE_ID, model: FISH_MODEL }),
+      body: JSON.stringify({ text: clean, referenceId: ref, model: FISH_MODEL }),
     });
     if (resp.ok) return await resp.arrayBuffer();
     let msg = `Voice service error (${resp.status}).`;
@@ -130,7 +156,7 @@ async function fetchVoiceBytes(text) {
     const native = getNativeTTS();
     if (native && typeof native.tts === "function") {
       try {
-        const res = await native.tts({ text: clean, referenceId: Y_MIZRACHI_VOICE_ID, model: FISH_MODEL });
+        const res = await native.tts({ text: clean, referenceId: ref, model: FISH_MODEL });
         const b64 = res?.base64;
         if (!b64) throw new Error("Voice service returned no audio.");
         const bin = atob(b64);
@@ -146,13 +172,13 @@ async function fetchVoiceBytes(text) {
 }
 
 // POST to Fish Audio (via Worker) and return a playable Blob URL of the MP3.
-export async function synthesizeSpeech(text) {
-  const buf = await fetchVoiceBytes(text);
+export async function synthesizeSpeech(text, referenceId) {
+  const buf = await fetchVoiceBytes(text, referenceId);
   return URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
 }
 
 // Synthesize and fetch the raw MP3 as a Blob (for uploading a custom voice note).
-export async function synthesizeSpeechBytes(text) {
-  const buf = await fetchVoiceBytes(text);
+export async function synthesizeSpeechBytes(text, referenceId) {
+  const buf = await fetchVoiceBytes(text, referenceId);
   return new Blob([buf], { type: "audio/mpeg" });
 }

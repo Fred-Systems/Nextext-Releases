@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { ChevronLeft, Send, Plus, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive, Copy, Forward, MessageSquare } from "lucide-react";
 import VoiceToTextButton from "../components/VoiceToTextButton";
 import VoiceWaveform from "../components/VoiceWaveform";
+import { getAvailableVoices, resolveVoice } from "../firebase/tts";
 import { useTheme } from "../theme/ThemeContext";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
@@ -297,6 +298,16 @@ export default function AIChatScreen({ myUid, onBack }) {
     if (userDoc?.user_tts_enabled != null) setVoiceEnabled(userDoc.user_tts_enabled === true);
   }, [userDoc?.user_tts_enabled]);
 
+  // Per-user chosen voice (Y Mizrachi / Rosh / Trump / Magnus / custom).
+  const [voiceMode, setVoiceModeState] = useState("y-mizrachi");
+  useEffect(() => {
+    if (userDoc?.ai_voice_mode) setVoiceModeState(userDoc.ai_voice_mode);
+  }, [userDoc?.ai_voice_mode]);
+  const setVoiceMode = async (id) => {
+    setVoiceModeState(id);
+    try { await setDoc(doc(db, "users", myUid), { ai_voice_mode: id }, { merge: true }); } catch {}
+  };
+
   const toggleVoiceReplies = async () => {
     const next = !voiceEnabled;
     setVoiceEnabled(next);
@@ -320,7 +331,8 @@ export default function AIChatScreen({ myUid, onBack }) {
       (async () => {
         try {
           const { synthesizeSpeech } = await import("../firebase/tts");
-          const url = await synthesizeSpeech(candidate.text);
+          const voice = resolveVoice(sysConfig, voiceMode);
+          const url = await synthesizeSpeech(candidate.text, voice?.referenceId);
           setVoiceAudios((prev) => ({ ...prev, [msgId]: url }));
         } catch (err) {
           // Keep msgId in syncedMsgRef so a permanent failure (e.g. CORS on the
@@ -887,6 +899,20 @@ export default function AIChatScreen({ myUid, onBack }) {
                 <span style={{ marginLeft: "auto", width: 40, height: 22, borderRadius: 11, background: voiceEnabled ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
                   <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: voiceEnabled ? 20 : 2, transition: "left 0.15s" }} />
                 </span>
+              </div>
+            )}
+            {voiceMasterOn && voiceEnabled && (
+              <div style={{ padding: "10px 16px", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 6 }}>Voice</div>
+                <select
+                  value={voiceMode}
+                  onChange={(e) => setVoiceMode(e.target.value)}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "9px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 13, outline: "none", color: t.text, background: t.bg }}
+                >
+                  {getAvailableVoices(sysConfig).map((v) => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
               </div>
             )}
             {isGemini && sysConfig?.allowUserGeminiModel && (

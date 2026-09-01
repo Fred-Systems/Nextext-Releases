@@ -767,10 +767,19 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
         setCameraFacing(facing);
         setCameraMode(captureMode);
         setShowCamera(true);
-        if (captureMode === "video") {
-          let recorder;
-          try { recorder = new MediaRecorder(stream, { mimeType: "video/webm" }); }
-          catch { recorder = new MediaRecorder(stream); }
+         if (captureMode === "video") {
+           let recorder;
+           const videoMimeCandidates = [
+             "video/webm;codecs=vp8,opus",
+             "video/webm;codecs=vp9,opus",
+             "video/mp4",
+             "video/webm",
+           ];
+           const videoMime = videoMimeCandidates.find(
+             (m) => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)
+           ) || "";
+           try { recorder = videoMime ? new MediaRecorder(stream, { mimeType: videoMime }) : new MediaRecorder(stream); }
+           catch { recorder = new MediaRecorder(stream); }
           cameraRecordingRef.current = recorder;
           const chunks = [];
           cameraRecordingRef.current.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };

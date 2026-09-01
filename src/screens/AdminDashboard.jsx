@@ -62,22 +62,6 @@ function AnalyticsTab() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
-  const [fishKey, setFishKey] = useState("");
-  const [fishKeySaved, setFishKeySaved] = useState(false);
-  const [mediaLimitMB, setMediaLimitMB] = useState("0");
-  const [statusLimit, setStatusLimit] = useState("0");
-  const [limitsSaved, setLimitsSaved] = useState(false);
-
-  useEffect(() => {
-    getFishAudioKey().then((k) => { if (k) setFishKey(k); }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (sysConfig) {
-      setMediaLimitMB(sysConfig.dailyMediaLimitMB != null ? String(sysConfig.dailyMediaLimitMB) : "0");
-      setStatusLimit(sysConfig.dailyStatusLimit != null ? String(sysConfig.dailyStatusLimit) : "0");
-    }
-  }, [sysConfig]);
 
   useEffect(() => {
     let active = true;
@@ -190,6 +174,24 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [allUsers, setAllUsers] = useState([]);
   const [allUsersLoading, setAllUsersLoading] = useState(false);
   const [directorySearch, setDirectorySearch] = useState("");
+  const [fishKey, setFishKey] = useState("");
+  const [fishKeySaved, setFishKeySaved] = useState(false);
+  const [mediaLimitMB, setMediaLimitMB] = useState("0");
+  const [statusLimit, setStatusLimit] = useState("0");
+  const [customVoiceName, setCustomVoiceName] = useState("");
+  const [customVoiceId, setCustomVoiceId] = useState("");
+  const [limitsSaved, setLimitsSaved] = useState(false);
+
+  useEffect(() => {
+    getFishAudioKey().then((k) => { if (k) setFishKey(k); }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (sysConfig) {
+      setMediaLimitMB(sysConfig.dailyMediaLimitMB != null ? String(sysConfig.dailyMediaLimitMB) : "0");
+      setStatusLimit(sysConfig.dailyStatusLimit != null ? String(sysConfig.dailyStatusLimit) : "0");
+    }
+  }, [sysConfig]);
 
   // Smart filter across display name, @username, email, and phone number.
   const filteredDirectory = useMemo(() => {
@@ -1663,6 +1665,56 @@ export default function AdminDashboard({ myUid, onBack }) {
                 >
                   {limitsSaved ? "Saved ✓" : "Save Usage Limits"}
                 </button>
+              </div>
+
+              <div style={{ fontWeight: 700, fontSize: 14, color: t.text, margin: "4px 0 6px" }}>Voice Options</div>
+
+              <div onClick={() => { setSystemConfig({ hideRoshVoice: !sysConfig?.hideRoshVoice }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideRoshVoice ? t.border : t.primaryLight, cursor: "pointer", marginBottom: 10 }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.hideRoshVoice ? t.border : t.primary, position: "relative" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.hideRoshVoice ? 3 : 23, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{sysConfig?.hideRoshVoice ? "The Rosh voice: HIDDEN" : "The Rosh voice: visible"}</span>
+              </div>
+
+              <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: t.text, marginBottom: 8 }}>Custom Voices (model IDs)</div>
+                {(sysConfig?.customVoices || []).length === 0 && (
+                  <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 8 }}>No custom voices added.</div>
+                )}
+                {(sysConfig?.customVoices || []).map((cv, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, color: t.text, flex: 1 }}><b>{cv.name}</b> <span style={{ color: t.textMuted }}>{cv.referenceId}</span></span>
+                    <span style={{ color: "#FF3B30", fontSize: 13, cursor: "pointer" }} onClick={() => { const arr = (sysConfig?.customVoices || []).filter((_, j) => j !== i); setSystemConfig({ customVoices: arr }, myUid); }}>Remove</span>
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                  <input
+                    value={customVoiceName}
+                    onChange={(e) => setCustomVoiceName(e.target.value)}
+                    placeholder="Display name"
+                    style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, outline: "none", color: t.text, background: t.bg }}
+                  />
+                  <input
+                    value={customVoiceId}
+                    onChange={(e) => setCustomVoiceId(e.target.value)}
+                    placeholder="Fish Audio model ID"
+                    style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, outline: "none", color: t.text, background: t.bg }}
+                  />
+                  <button
+                    onClick={() => {
+                      const id = customVoiceId.trim();
+                      const name = customVoiceName.trim();
+                      if (!id || !name) return;
+                      const arr = [...(sysConfig?.customVoices || [])];
+                      if (arr.some((c) => c.referenceId === id)) { setCustomVoiceName(""); setCustomVoiceId(""); return; }
+                      arr.push({ name, referenceId: id });
+                      setSystemConfig({ customVoices: arr }, myUid);
+                      setCustomVoiceName("");
+                      setCustomVoiceId("");
+                    }}
+                    style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: t.primary, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+                  >Add</button>
+                </div>
               </div>
 
               <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
