@@ -113,6 +113,77 @@ public class NextextNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void tts(PluginCall call) {
+        final String text = call.getString("text", "");
+        final String referenceId = call.getString("referenceId", "9cc36d13d091468fa9c4cab838a6ecdf");
+        final String model = call.getString("model", "s2.1-pro-free");
+        final String apiKey = call.getString("apiKey", "");
+        if (text.trim().isEmpty()) { call.reject("Nothing to speak"); return; }
+        // Network calls must run off the main thread.
+        new Thread(() -> {
+            try {
+                URL url = new URL("https://api.fish.audio/v1/tts");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(30000);
+                conn.setReadTimeout(60000);
+                conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setRequestProperty("model", model);
+                String payload = "{\"text\":" + jsonEscape(text) + ",\"reference_id\":\"" + referenceId + "\",\"model\":\"" + model + "\",\"format\":\"mp3\"}";
+                java.io.OutputStream os = conn.getOutputStream();
+                os.write(payload.getBytes("UTF-8"));
+                os.flush();
+                os.close();
+                int code = conn.getResponseCode();
+                if (code != 200) {
+                    java.io.InputStream es = conn.getErrorStream();
+                    String errBody = es != null ? readAll(es) : "";
+                    call.reject("Fish TTS error " + code + " " + errBody);
+                    conn.disconnect();
+                    return;
+                }
+                java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                try (java.io.InputStream is = conn.getInputStream()) {
+                    while ((n = is.read(buf)) != -1) baos.write(buf, 0, n);
+                }
+                conn.disconnect();
+                byte[] bytes = baos.toByteArray();
+                String b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
+                JSObject ret = new JSObject();
+                ret.put("base64", b64);
+                ret.put("mimeType", "audio/mpeg");
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("Fish TTS failed: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            }
+        }).start();
+    }
+
+    private static String jsonEscape(String s) {
+        StringBuilder sb = new StringBuilder();
+        for (char c : s.toCharArray()) {
+            switch (c) {
+                case '"': sb.append("\\\""); break;
+                case '\\': sb.append("\\\\"); break;
+                case '\n': sb.append("\\n"); break;
+                case '\r': sb.append("\\r"); break;
+                case '\t': sb.append("\\t"); break;
+                default: sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String readAll(java.io.InputStream is) {
+        java.util.Scanner s = new java.util.Scanner(is, "UTF-8").useDelimiter("\\A");
+        return s.hasNext() ? s.next() : "";
+    }
+
+    @PluginMethod
     public void requestLocationPermission(PluginCall call) {
         // Android 10+ (API 29) requires ACCESS_FINE_LOCATION or ACCESS_COARSE_LOCATION.
         // We request ACCESS_FINE_LOCATION for best accuracy.

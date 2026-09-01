@@ -157,6 +157,24 @@ function formatAIDateDivider(date) {
   return `${weekday}, ${month} ${dayNum}${ordinal}`;
 }
 
+// Auto-playing audio player for AI voice replies. Chrome 83's WebView can block
+// the `autoplay` attribute until a user gesture, so we also attempt an explicit
+// play() once the media is ready (the reply that triggered it came from a user
+// message, so a gesture has typically happened).
+function AutoAudio({ src }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const tryPlay = () => { try { el.play().catch(() => {}); } catch {} };
+    tryPlay();
+    if (el.readyState >= 3) return;
+    const t = setTimeout(tryPlay, 600);
+    return () => clearTimeout(t);
+  }, [src]);
+  return <audio ref={ref} src={src} controls autoPlay playsInline style={{ width: "100%", maxWidth: 240, marginTop: 8, display: "block", borderRadius: 8 }} />;
+}
+
 export default function AIChatScreen({ myUid, onBack }) {
   const { t, composerButtonOrder, voiceSpacing } = useTheme();
   const globalSettings = useGlobalSettings();
@@ -1019,7 +1037,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                       )}
                       {renderAIBold(m.text, (url) => setFullscreenImage(url))}
                       {voiceAudios[m.id] && (
-                        <audio controls autoPlay src={voiceAudios[m.id]} style={{ width: "100%", maxWidth: 240, marginTop: 8, display: "block", borderRadius: 8 }} />
+                        <AutoAudio src={voiceAudios[m.id]} />
                       )}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                         <span style={{ fontSize: 10.5, opacity: 0.55 }}>

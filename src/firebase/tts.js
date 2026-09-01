@@ -9,6 +9,9 @@ export const FISH_MODEL = "s2.1-pro-free";
 export const Y_MIZRACHI_VOICE_ID = "9cc36d13d091468fa9c4cab838a6ecdf";
 export const FISH_API_KEY = "sk-fish-hPD2no9ly6H8nXJcK4iryrfXO_aRNXCKHviwvfAOUW8";
 
+const nativeTTS = (typeof window !== "undefined" && window.Capacitor?.Plugins?.NextextNative) ? window.Capacitor.Plugins.NextextNative : null;
+const isNativePlatform = () => !!(typeof window !== "undefined" && window.Capacitor?.isNativePlatform && window.Capacitor.isNativePlatform());
+
 // Global "socket" for voice: AppSettings.global_voice_enabled (stored in the AI
 // system config doc which acts as the app-wide settings object).
 export const VOICE_SYSTEM_REF = ["config", "system"];
@@ -72,12 +75,24 @@ export async function shouldPlayVoiceReply(userUid) {
 }
 
 // POST to Fish Audio TTS and return a playable Blob URL of the MP3.
-// Throws a readable error if the global switch or request fails.
+// Prefers the native Android HTTP layer (CORS-free); falls back to a direct
+// fetch (web / debug). Throws a readable error on failure.
 export async function synthesizeSpeech(text) {
-  const prompt = String(text || "").trim();
-  if (!prompt) throw new Error("Nothing to speak.");
-
-  const clean = prompt.length > 500 ? prompt.slice(0, 500) : prompt;
+  const clean = cleanPrompt(text);
+  try {
+    if (isNativePlatform() && nativeTTS && typeof nativeTTS.tts === "function") {
+      const res = await nativeTTS.tts({ text: clean, referenceId: Y_MIZRACHI_VOICE_ID, model: FISH_MODEL, apiKey: FISH_API_KEY });
+      const b64 = res?.base64;
+      if (!b64) throw new Error("Voice service returned no audio.");
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return URL.createObjectURL(new Blob([bytes], { type: res?.mimeType || "audio/mpeg" }));
+    }
+  } catch (e) {
+    console.error("[tts] native synthesis failed, falling back to fetch:", e?.message);
+  }
+  // Direct fetch fallback.
   let resp;
   try {
     resp = await fetch(FISH_AUDIO_API, {
@@ -87,33 +102,38 @@ export async function synthesizeSpeech(text) {
         "Content-Type": "application/json",
         model: FISH_MODEL,
       },
-      body: JSON.stringify({
-        text: clean,
-        reference_id: Y_MIZRACHI_VOICE_ID,
-        format: "mp3",
-      }),
+      body: JSON.stringify({ text: clean, reference_id: Y_MIZRACHI_VOICE_ID, model: FISH_MODEL, format: "mp3" }),
     });
-  } catch {
+  } catch (e) {
+    console.error("[tts] fetch failed (likely CORS/network):", e?.message);
     throw new Error("Couldn't reach the voice service. Check your connection.");
   }
   if (!resp.ok) {
     let detail = "";
     try { detail = (await resp.text()) || ""; } catch {}
-    if (resp.status === 401) throw new Error("Voice service rejected the API key.");
-    if (resp.status === 402) throw new Error("Voice service has no credits left.");
-    if (resp.status === 429) throw new Error("Voice service is rate-limited. Try again shortly.");
+    console.error("[tts] HTTP", resp.status, detail);
     throw new Error(`Voice service error (${resp.status}). ${detail}`);
   }
   const blob = await resp.blob();
   return URL.createObjectURL(blob);
 }
 
-// Synthesize and fetch raw MP3 bytes (array buffer) — used when uploading a
-// user's custom voice note into a chat as a stored media file.
+// Synthesize and fetch the raw MP3 as a Blob (for uploading a custom voice note).
 export async function synthesizeSpeechBytes(text) {
-  const prompt = String(text || "").trim();
-  if (!prompt) throw new Error("Nothing to speak.");
-  const clean = prompt.length > 500 ? prompt.slice(0, 500) : prompt;
+  const clean = cleanPrompt(text);
+  try {
+    if (isNativePlatform() && nativeTTS && typeof nativeTTS.tts === "function") {
+      const res = await nativeTTS.tts({ text: clean, referenceId: Y_MIZRACHI_VOICE_ID, model: FISH_MODEL, apiKey: FISH_API_KEY });
+      const b64 = res?.base64;
+      if (!b64) throw new Error("Voice service returned no audio.");
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: res?.mimeType || "audio/mpeg" });
+    }
+  } catch (e) {
+    console.error("[tts] native synthesis failed, falling back to fetch:", e?.message);
+  }
   const resp = await fetch(FISH_AUDIO_API, {
     method: "POST",
     headers: {
@@ -121,16 +141,18 @@ export async function synthesizeSpeechBytes(text) {
       "Content-Type": "application/json",
       model: FISH_MODEL,
     },
-    body: JSON.stringify({
-      text: clean,
-      reference_id: Y_MIZRACHI_VOICE_ID,
-      format: "mp3",
-    }),
+    body: JSON.stringify({ text: clean, reference_id: Y_MIZRACHI_VOICE_ID, model: FISH_MODEL, format: "mp3" }),
   });
   if (!resp.ok) {
     const detail = (await resp.text().catch(() => "")) || "";
+    console.error("[tts] HTTP", resp.status, detail);
     throw new Error(`Voice service error (${resp.status}). ${detail}`);
   }
-  const buffer = await resp.arrayBuffer();
-  return new Blob([buffer], { type: "audio/mpeg" });
+  return new Blob([await resp.arrayBuffer()], { type: "audio/mpeg" });
+}
+
+function cleanPrompt(text) {
+  const prompt = String(text || "").trim();
+  if (!prompt) throw new Error("Nothing to speak.");
+  return prompt.length > 500 ? prompt.slice(0, 500) : prompt;
 }

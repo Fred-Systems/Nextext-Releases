@@ -3612,7 +3612,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 <div onClick={() => { closeAttach(); setShowPoll(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer" }}>
                   <BarChart2 size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Poll</span>
                 </div>
-                {userDoc?.has_ai_access === true && sysConfig?.global_voice_enabled !== false && (
+                {sysConfig?.global_voice_enabled !== false && (
                   <div onClick={() => { closeAttach(); setShowYNote(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                     <Mic size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Send Y Mizrachi Voice Note</span>
                   </div>
