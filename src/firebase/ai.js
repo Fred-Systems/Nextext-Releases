@@ -428,7 +428,7 @@ export async function sendAIMessage(userUid, messageText, chatHistory = [], cust
     "IMAGE GENERATION CAPABILITY: You can instantly draw or generate images for users.",
     "If a user asks you to \"draw\", \"generate\", or \"create an image\" of something, do NOT write a generic text description or tell them you cannot do it.",
     "Instead, output a brief chat confirmation message and append an image embedded using EXACTLY this markdown syntax on a new line:",
-    `![AI Image](https://gen.pollinations.ai/image/{PROMPT}?model=${activeImageModel}&width=1024&height=1024&enhance=true)`,
+    `![AI Image](https://image.pollinations.ai/prompt/{PROMPT}?model=flux&width=1024&height=1024)`,
     "Formatting Execution Rules:",
     "1. Replace {PROMPT} with a descriptive, visually rich, English prompt describing what the user asked for.",
     "2. You must URL-encode the prompt string dynamically. Replace spaces with %20 and strip out illegal punctuation characters like commas, question marks, and quotation marks.",
@@ -589,7 +589,7 @@ async function callGeminiVision(apiKey, base64, mimeType, prompt, systemInstruct
 // Reads the global `active_image_model` (default "flux") from the AI system
 // config and returns the image URL. The chat client then renders it as a normal
 // image bubble (and/or via the ![AI Image](url) markdown renderer).
-const POLLINATIONS_API = "https://gen.pollinations.ai/image/";
+const POLLINATIONS_API = "https://image.pollinations.ai/prompt/";
 const POLLINATIONS_MODELS = { flux: "flux", dreamshaper: "dreamshaper", turbovisionxl: "turbovisionxl" };
 
 export async function generateGeminiImage(userUid, prompt) {
@@ -606,8 +606,8 @@ export async function generateGeminiImage(userUid, prompt) {
   const active = (cfg?.active_image_model || "flux");
   const model = POLLINATIONS_MODELS[active] ? active : "flux";
 
-  // URL-encode the prompt (spaces -> %20, strip illegal punctuation like
-  // commas / question marks / quotes).
+  // URL-encode the prompt (strip illegal punctuation like
+  // commas / question marks / quotes so Pollinations parses cleanly).
   let encoded = encodeURIComponent(cleanPrompt)
     .replace(/%2C/gi, "")
     .replace(/%3F/gi, "")
@@ -615,33 +615,10 @@ export async function generateGeminiImage(userUid, prompt) {
     .replace(/%27/gi, "")
     .replace(/%20/gi, "%20");
 
-  const imageUrl = `${POLLINATIONS_API}${encoded}?model=${encodeURIComponent(model)}&width=1024&height=1024&enhance=true`;
-
-  // Pollinations returns the raw image binary at that URL once ready. We probe
-  // it (with a hard timeout so we never hang the spinner forever) just to
-  // confirm the endpoint is reachable; the <img> tag will load the real image.
-  try {
-    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
-    const t = ctrl ? setTimeout(() => ctrl.abort(), 20000) : null;
-    try {
-      const resp = await fetch(imageUrl, { method: "GET", signal: ctrl ? ctrl.signal : undefined });
-      if (!resp.ok) {
-        throw new Error(`Image could not be generated (HTTP ${resp.status}). Please try again.`);
-      }
-    } catch (e) {
-      if (ctrl && e && e.name === "AbortError") {
-        // Generation is slow — don't fail, just return the URL and let the
-        // <img> element show a graceful spinner until the image is ready.
-        return imageUrl;
-      }
-      throw e;
-    } finally {
-      if (t) clearTimeout(t);
-    }
-  } catch (e) {
-    if (/Image could not/.test(String(e?.message || ""))) throw e;
-    throw new Error("Couldn't reach the image generator. Check your connection and try again.");
-  }
+  // The image is returned directly by Pollinations at this URL. We return it and
+  // let the <img> element load it (image display is NOT CORS-restricted, so no
+  // preflight probe is needed — and a probe would actually fail under CORS).
+  const imageUrl = `${POLLINATIONS_API}${encoded}?model=${encodeURIComponent(model)}&width=1024&height=1024&nologo=true`;
   return imageUrl;
 }
 

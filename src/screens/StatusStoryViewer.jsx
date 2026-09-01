@@ -523,11 +523,18 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     let raf;
     const tick = () => {
       const v = videoRef.current;
-      if (v && v.duration && isFinite(v.duration) && v.duration > 0 && v.currentTime != null) {
-        progressRef.current = (v.currentTime / v.duration) * 100;
-        if (barRef.current) {
-          barRef.current.style.transition = "none";
-          barRef.current.style.width = `${progressRef.current}%`;
+      if (v && v.currentTime != null) {
+        // Real duration can be Infinity for HLS/live streams; fall back to the
+        // seekable range, then to the configured estimate.
+        let dur = (v.duration && isFinite(v.duration) && v.duration > 0) ? v.duration : 0;
+        if (!dur && v.seekable && v.seekable.length) dur = v.seekable.end(v.seekable.length - 1);
+        if (!dur) dur = durationRef.current || 0;
+        if (dur > 0) {
+          progressRef.current = Math.min(100, (v.currentTime / dur) * 100);
+          if (barRef.current) {
+            barRef.current.style.transition = "none";
+            barRef.current.style.width = `${progressRef.current}%`;
+          }
         }
       }
       raf = requestAnimationFrame(tick);
@@ -791,6 +798,13 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
               <span style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>{speed}x</span>
             </div>
           )}
+          <div onClick={(e) => { e.stopPropagation(); setPaused((p) => !p); }} title={paused ? "Play" : "Pause"} style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            {paused ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z" /></svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M6 5h4v14H6zM14 5h4v14h-4z" /></svg>
+            )}
+          </div>
           {current?.mediaType === "video" && (
             <div onClick={(e) => { e.stopPropagation(); setMuted((m) => !m); }} title={muted ? "Unmute" : "Mute"} style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
               {muted ? <VolumeX size={18} color="#fff" /> : <Volume2 size={18} color="#fff" />}

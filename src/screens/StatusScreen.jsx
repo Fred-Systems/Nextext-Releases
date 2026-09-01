@@ -736,7 +736,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: facing, width: { ideal: 720 }, height: { ideal: 1280 } },
-            audio: captureMode === "video",
+            audio: true,
           });
         } catch (err) {
           // Mic may be unavailable/denied — fall back to video-only so the
