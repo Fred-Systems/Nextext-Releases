@@ -655,6 +655,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [viewedDisappearing, setViewedDisappearing] = useState(() => new Set());
   const [attachRendered, setAttachRendered] = useState(false);
   const [attachClosing, setAttachClosing] = useState(false);
+  const [showYNote, setShowYNote] = useState(false);
+  const [yNoteText, setYNoteText] = useState("");
+  const [yNoteSending, setYNoteSending] = useState(false);
   const [galleryActive, setGalleryActive] = useState(false);
   const [showLocationSheet, setShowLocationSheet] = useState(false);
   const [showLiveDurations, setShowLiveDurations] = useState(false);
@@ -1853,6 +1856,26 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     if (blocked) { setSendError(blocked); return; }
     const result = await uploadMediaFile(chatId, myUid, file);
     await sendMediaMessage(chatId, myUid, isImage ? "image" : "video", result, otherParticipants, { replyTo: replyingTo, disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
+  };
+
+  const sendYVoiceNote = async () => {
+    const text = yNoteText.trim();
+    if (!text || !chatId || yNoteSending) return;
+    if (sysConfig?.global_voice_enabled === false) { setSendError("Voice features are disabled."); setShowYNote(false); return; }
+    setYNoteSending(true);
+    setSendError("");
+    try {
+      const { synthesizeSpeechBytes } = await import("../firebase/tts");
+      const blob = await synthesizeSpeechBytes(text);
+      const file = new File([blob], "y-mizrachi.mp3", { type: "audio/mpeg" });
+      const result = await uploadChatFile(chatId, myUid, file);
+      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: 0 });
+      setYNoteText("");
+      setShowYNote(false);
+    } catch (err) {
+      setSendError(err?.message || "Couldn't generate the voice note.");
+    }
+    setYNoteSending(false);
   };
 
   const handleFilePick = async (e) => {    const file = e.target.files?.[0];
@@ -3589,6 +3612,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 <div onClick={() => { closeAttach(); setShowPoll(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer" }}>
                   <BarChart2 size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Poll</span>
                 </div>
+                {userDoc?.has_ai_access === true && sysConfig?.global_voice_enabled !== false && (
+                  <div onClick={() => { closeAttach(); setShowYNote(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                    <Mic size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Send Y Mizrachi Voice Note</span>
+                  </div>
+                )}
                 {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
                   <div onClick={() => { closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                     <ImageIcon size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Photo or video</span>
@@ -3610,6 +3638,33 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 )}
                 <div onClick={() => { setDisappearingViews(1); closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <EyeOff size={17} color="#FF3B30" /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Disappearing media (view once)</span>
+                </div>
+              </div>
+              </>,
+              document.body
+            )}
+            {showYNote && createPortal(
+              <>
+              <div onClick={() => { if (!yNoteSending) setShowYNote(false); }} style={{ position: "fixed", inset: 0, zIndex: 2147481300, background: "rgba(0,0,0,0.45)" }} />
+              <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(330px, 90vw)", background: t.surface, borderRadius: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", zIndex: 2147481301, padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>🎙️ Y Mizrachi Voice Note</span>
+                  <X size={18} color={t.textMuted} onClick={() => { if (!yNoteSending) setShowYNote(false); }} style={{ cursor: "pointer" }} />
+                </div>
+                <textarea
+                  value={yNoteText}
+                  onChange={(e) => setYNoteText(e.target.value)}
+                  placeholder="Type what you want Y Mizrachi to say:"
+                  rows={3}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, resize: "none", outline: "none", color: t.text, background: t.bg }}
+                />
+                <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                  <div onClick={() => { if (!yNoteSending) setShowYNote(false); }} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, fontWeight: 700, fontSize: 14, color: t.textMuted, cursor: "pointer" }}>
+                    Cancel
+                  </div>
+                  <div onClick={sendYVoiceNote} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: yNoteSending ? "wait" : "pointer", opacity: yNoteSending ? 0.6 : 1 }}>
+                    {yNoteSending ? "Generating…" : "Send"}
+                  </div>
                 </div>
               </div>
               </>,

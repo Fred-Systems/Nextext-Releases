@@ -201,6 +201,8 @@ const SYSTEM_CONFIG_DEFAULTS = {
   // generate an image (even if Groq is the active chat provider) by opening a
   // prompt box and calling the Gemini image model.
   enableAiImageGenButton: false,
+  // Master switch for ALL app audio (AI voice replies + custom voice notes).
+  global_voice_enabled: true,
   // Global AI image model used for the FREE Pollinations image generator.
   // Choices: flux | dreamshaper | turbovisionxl. Injected into the chat model's
   // system context and used to build the Pollinations image URL.
@@ -613,18 +615,28 @@ export async function generateGeminiImage(userUid, prompt) {
   const imageUrl = `${POLLINATIONS_API}${encoded}?model=${encodeURIComponent(model)}&width=1024&height=1024&enhance=true`;
 
   // Pollinations returns the raw image binary at that URL once ready. We probe
-  // it so we surface an error (and confirm it will load) rather than letting the
-  // chat show a broken image. A generous timeout is used because image gen is slow.
+  // it (with a hard timeout so we never hang the spinner forever) just to
+  // confirm the endpoint is reachable; the <img> tag will load the real image.
   try {
-    const resp = await fetch(imageUrl, { method: "GET" });
-    if (!resp.ok) {
-      throw new Error(`Image could not be generated (HTTP ${resp.status}). Please try again.`);
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const t = ctrl ? setTimeout(() => ctrl.abort(), 20000) : null;
+    try {
+      const resp = await fetch(imageUrl, { method: "GET", signal: ctrl ? ctrl.signal : undefined });
+      if (!resp.ok) {
+        throw new Error(`Image could not be generated (HTTP ${resp.status}). Please try again.`);
+      }
+    } catch (e) {
+      if (ctrl && e && e.name === "AbortError") {
+        // Generation is slow — don't fail, just return the URL and let the
+        // <img> element show a graceful spinner until the image is ready.
+        return imageUrl;
+      }
+      throw e;
+    } finally {
+      if (t) clearTimeout(t);
     }
-    // Consume the body (the <img> tag will fetch it again from the cache) so we
-    // prove it resolves before returning.
-    await resp.arrayBuffer();
   } catch (e) {
-    if (/HTTP|Image could not/.test(String(e?.message || ""))) throw e;
+    if (/Image could not/.test(String(e?.message || ""))) throw e;
     throw new Error("Couldn't reach the image generator. Check your connection and try again.");
   }
   return imageUrl;

@@ -206,6 +206,50 @@ export default function AIChatScreen({ myUid, onBack }) {
   const pinchStartRef = useRef(null);
   const chatId = `${AI_CHAT_PREFIX}${myUid}`;
 
+  // ── Voice replies (Fish Audio / Y Mizrachi) ──
+  const voiceMasterOn = sysConfig?.global_voice_enabled !== false;
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voiceAudios, setVoiceAudios] = useState({}); // { messageId: blobUrl }
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const syncedMsgRef = useRef(new Set());
+
+  // Sync the toggle from the user's stored flag.
+  useEffect(() => {
+    if (userDoc?.user_tts_enabled != null) setVoiceEnabled(userDoc.user_tts_enabled === true);
+  }, [userDoc?.user_tts_enabled]);
+
+  const toggleVoiceReplies = async () => {
+    const next = !voiceEnabled;
+    setVoiceEnabled(next);
+    try {
+      const { setUserTtsEnabled } = await import("../firebase/tts");
+      await setUserTtsEnabled(myUid, next);
+    } catch {}
+  };
+
+  // When a NEW assistant text message arrives, and the global + user voice
+  // switches are both ON, synthesize the reply with the Y Mizrachi voice and
+  // render an autoplaying <audio> player inside that bubble.
+  useEffect(() => {
+    if (!voiceMasterOn || !voiceEnabled) return;
+    if (voiceBusy) return;
+    const candidate = (messages || []).find((m) => m.senderId === AI_CONTACT_UID && m.type !== "image" && (m.text || "").trim() && !syncedMsgRef.current.has(m.id) && !voiceAudios[m.id]);
+    if (!candidate) return;
+    const msgId = candidate.id;
+    setVoiceBusy(true);
+    syncedMsgRef.current.add(msgId);
+    (async () => {
+      try {
+        const { synthesizeSpeech } = await import("../firebase/tts");
+        const url = await synthesizeSpeech(candidate.text);
+        setVoiceAudios((prev) => ({ ...prev, [msgId]: url }));
+      } catch {
+        syncedMsgRef.current.delete(msgId);
+      }
+      setVoiceBusy(false);
+    })();
+  }, [messages, voiceMasterOn, voiceEnabled, voiceBusy, voiceAudios]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const pinchEnabled = () => {
     try { return localStorage.getItem("nextext_pinch_zoom") !== "false"; } catch { return true; }
   };
@@ -752,6 +796,18 @@ export default function AIChatScreen({ myUid, onBack }) {
               <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>AI Assistant Persona</span>
               <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
             </div>
+            {voiceMasterOn && (
+              <div
+                onClick={toggleVoiceReplies}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
+              >
+                <span style={{ fontSize: 16 }}>{voiceEnabled ? "🔊" : "🔇"}</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Enable Voice Replies</span>
+                <span style={{ marginLeft: "auto", width: 40, height: 22, borderRadius: 11, background: voiceEnabled ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
+                  <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: voiceEnabled ? 20 : 2, transition: "left 0.15s" }} />
+                </span>
+              </div>
+            )}
             {isGemini && sysConfig?.allowUserGeminiModel && (
               <div
                 onClick={() => { setShowSettings(false); setShowModelTray(true); }}
@@ -962,6 +1018,9 @@ export default function AIChatScreen({ myUid, onBack }) {
                         </div>
                       )}
                       {renderAIBold(m.text, (url) => setFullscreenImage(url))}
+                      {voiceAudios[m.id] && (
+                        <audio controls autoPlay src={voiceAudios[m.id]} style={{ width: "100%", maxWidth: 240, marginTop: 8, display: "block", borderRadius: 8 }} />
+                      )}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                         <span style={{ fontSize: 10.5, opacity: 0.55 }}>
                           {m.sentAt?.toDate ? m.sentAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
