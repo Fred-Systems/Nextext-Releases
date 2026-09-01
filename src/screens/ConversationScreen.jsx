@@ -16,6 +16,7 @@ import { Download } from "lucide-react";
 import { getWallpaperForChat, setWallpaperForChat, fileToWallpaperDataUrl } from "../theme/wallpaper";
 import { usePresence, formatLastSeen } from "../firebase/presence";
 import { uploadChatFile, deleteChatFile } from "../supabase/media";
+import { checkMediaAllowed, recordMediaUsage } from "../firebase/limits";
 import { uploadMediaFile, RawFileTooLargeError } from "../services/mediaUpload";
 import { FileTooLargeError } from "../media/mediaCompression";
 import { cacheMedia, getLocalMediaUrl, hasCachedMedia } from "../media/localMediaCache";
@@ -1854,8 +1855,14 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     const isImage = (file.type || "").startsWith("image/");
     const blocked = parentalBlockedType(isImage ? "image" : "video");
     if (blocked) { setSendError(blocked); return; }
+    const lim = await checkMediaAllowed(myUid, file.size, sysConfig?.dailyMediaLimitMB);
+    if (!lim.allowed) {
+      setSendError(`Daily media limit reached (${lim.limitMB} MB). ${Math.max(0, lim.remainingMB).toFixed(1)} MB left today.`);
+      return;
+    }
     const result = await uploadMediaFile(chatId, myUid, file);
     await sendMediaMessage(chatId, myUid, isImage ? "image" : "video", result, otherParticipants, { replyTo: replyingTo, disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
+    await recordMediaUsage(myUid, file.size);
   };
 
   const sendYVoiceNote = async () => {
@@ -1882,10 +1889,16 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     e.target.value = "";
     if (!file || !chatId) return;
     setSendError("");
+    const lim = await checkMediaAllowed(myUid, file.size, sysConfig?.dailyMediaLimitMB);
+    if (!lim.allowed) {
+      setSendError(`Daily media limit reached (${lim.limitMB} MB). ${Math.max(0, lim.remainingMB).toFixed(1)} MB left today.`);
+      return;
+    }
     setUploading(true);
     try {
        const result = await uploadMediaFile(chatId, myUid, file);
        await sendMediaMessage(chatId, myUid, "file", result, otherParticipants, { replyTo: replyingTo, disappearing: disappearingViews ? { viewsAllowed: disappearingViews } : null });
+       await recordMediaUsage(myUid, file.size);
        setDisappearingViews(0);
        setReplyingTo(null);
     } catch (err) {

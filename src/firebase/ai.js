@@ -215,6 +215,9 @@ const SYSTEM_CONFIG_DEFAULTS = {
     dreamshaper: "dreamshaper",
     turbovisionxl: "turbovisionxl",
   },
+  // Daily usage limits (0 = unlimited). Enforced client-side per user.
+  dailyMediaLimitMB: 0,
+  dailyStatusLimit: 0,
 };
 
 export async function ensureSystemConfig() {

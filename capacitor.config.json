@@ -1,7 +1,7 @@
 {
   "appId": "com.nextext.app",
   "appName": "NexText",
-  "webDir": "dist",
+  "webDir": "dist/client",
   "androidBackgroundColor": "#121212",
   "plugins": {
     "SocialLogin": {

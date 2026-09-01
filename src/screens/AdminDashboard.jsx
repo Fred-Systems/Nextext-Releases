@@ -64,10 +64,20 @@ function AnalyticsTab() {
   const [err, setErr] = useState("");
   const [fishKey, setFishKey] = useState("");
   const [fishKeySaved, setFishKeySaved] = useState(false);
+  const [mediaLimitMB, setMediaLimitMB] = useState("0");
+  const [statusLimit, setStatusLimit] = useState("0");
+  const [limitsSaved, setLimitsSaved] = useState(false);
 
   useEffect(() => {
     getFishAudioKey().then((k) => { if (k) setFishKey(k); }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (sysConfig) {
+      setMediaLimitMB(sysConfig.dailyMediaLimitMB != null ? String(sysConfig.dailyMediaLimitMB) : "0");
+      setStatusLimit(sysConfig.dailyStatusLimit != null ? String(sysConfig.dailyStatusLimit) : "0");
+    }
+  }, [sysConfig]);
 
   useEffect(() => {
     let active = true;
@@ -1603,12 +1613,59 @@ export default function AdminDashboard({ myUid, onBack }) {
                    } catch {}
                  }}
                  style={{ marginTop: 8, width: "100%", padding: 10, borderRadius: 10, border: "none", background: t.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}
-               >
-                 {fishKeySaved ? "Saved ✓" : "Save Fish Audio Key"}
-               </button>
-             </div>
+                >
+                  {fishKeySaved ? "Saved ✓" : "Save Fish Audio Key"}
+                </button>
+              </div>
 
-             <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
+              {/* Daily usage limits — 0 means unlimited */}
+              <div style={{ padding: "12px 14px", borderRadius: 10, border: `1px solid ${t.border}`, marginBottom: 14, background: t.bg }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Daily Usage Limits</div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.4 }}>
+                  Caps how much media/files a user can post and how many status updates they can create per day. Set to 0 for unlimited.
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 45%" }}>
+                    <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 4 }}>Media limit (MB / day)</div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={mediaLimitMB}
+                      onChange={(e) => { setMediaLimitMB(e.target.value); setLimitsSaved(false); }}
+                      placeholder="0 = unlimited"
+                      style={{ width: "100%", boxSizing: "border-box", padding: "9px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 13, outline: "none", color: t.text, background: t.surface }}
+                    />
+                  </div>
+                  <div style={{ flex: "1 1 45%" }}>
+                    <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 4 }}>Status limit (count / day)</div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={statusLimit}
+                      onChange={(e) => { setStatusLimit(e.target.value); setLimitsSaved(false); }}
+                      placeholder="0 = unlimited"
+                      style={{ width: "100%", boxSizing: "border-box", padding: "9px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 13, outline: "none", color: t.text, background: t.surface }}
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      await setSystemConfig({
+                        dailyMediaLimitMB: Math.max(0, parseInt(mediaLimitMB || "0", 10) || 0),
+                        dailyStatusLimit: Math.max(0, parseInt(statusLimit || "0", 10) || 0),
+                      }, myUid);
+                      setLimitsSaved(true);
+                      setTimeout(() => setLimitsSaved(false), 2500);
+                    } catch {}
+                  }}
+                  style={{ marginTop: 10, width: "100%", padding: 10, borderRadius: 10, border: "none", background: t.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}
+                >
+                  {limitsSaved ? "Saved ✓" : "Save Usage Limits"}
+                </button>
+              </div>
+
+              <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
             <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.border, position: "relative" }}>
               <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.hideMizrachiMode ? 23 : 3, transition: "left 0.15s" }} />
             </div>

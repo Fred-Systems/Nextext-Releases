@@ -59,6 +59,7 @@ import DownloadApkButton from "./components/DownloadApkButton";
 import UserStatsCard from "./components/UserStatsCard";
 import PageErrorBoundary from "./components/PageErrorBoundary";
 import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, openDownloadUrl, saveApkToDevice, setLastSeenRelease } from "./updater/updateChecker";
+import { APP_VERSION } from "./version";
 import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
 import { updateGlobalSettings, useGlobalSettings, subscribe as subscribeGlobalSettings, getQuotaSnapshot } from "./firebase/config-settings";
 import { BUBBLE_STYLE_ORDER, BUBBLE_STYLE_LABELS, getBubbleStyle, setBubbleStyle, resolveBubble } from "./theme/bubbleStyles";
@@ -808,7 +809,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         <div style={{ display: "flex", alignItems: "center", padding: "calc(16px + var(--safe-top)) 16px 16px", gap: 12, background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
           <ChevronLeft size={22} color={t.text} onClick={onBack} style={{ cursor: "pointer" }} />
           <span style={{ color: t.text, fontWeight: 700, fontSize: 18 }}>Settings</span>
-          {!hideVersion && <span style={{ marginLeft: "auto", fontSize: 12.5, fontWeight: 700, color: t.primary }}>v{getCurrentVersion()}</span>}
+          {!hideVersion && <span style={{ marginLeft: "auto", fontSize: 12.5, fontWeight: 700, color: t.primary }}>v{APP_VERSION}</span>}
         </div>
       <div className="nx-scroll" style={{ padding: "12px 16px", paddingBottom: 100 }}>
 
@@ -1904,7 +1905,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               <Toggle on={autoUpdateCheckOn} onClick={() => { const next = !autoUpdateCheckOn; setAutoUpdateCheckOn(next); localStorage.setItem("nextext_auto_update_check", next ? "on" : "off"); }} />
             </div>
             <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Automatically check for a new version each time you open the app.</div>
-            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 8, textAlign: "center" }}>NexText v{getCurrentVersion()}</div>
+            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 8, textAlign: "center" }}>NexText v{APP_VERSION}</div>
           </div>
 
           <div style={{ padding: "13px 0" }}>
@@ -4230,7 +4231,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
         >
            <img src={activeProfile.iconPath} alt="" style={{ width: 180, height: 180, objectFit: "contain" }} />
            <div style={{ fontSize: 24, fontWeight: 800, color: "#fff", marginTop: -10, letterSpacing: 0.3 }}>{activeProfile.label}</div>
-           <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.65)" }}>v{getCurrentVersion()}</div>
+           <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.65)" }}>v{APP_VERSION}</div>
             {activeProfile?.special && (
               <div className="nx-splash-words" style={{ marginTop: 18, maxWidth: 300, fontSize: 19, padding: "0 16px", textAlign: "center" }}>
                 <div style={{ fontWeight: 700, color: "#10B981", animation: "nx-splash-pop 0.5s ease-out both" }}>{globalSettings?.specialIconSplashLine1 || "If you will not use this app...."}</div>

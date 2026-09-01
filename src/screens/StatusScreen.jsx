@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic, MessageCircle, Download } from "lucide-react";
 import { useTheme, FONTS } from "../theme/ThemeContext";
 import { postStatus, useStatuses, viewStatus, useStatusViewers, deleteStatus } from "../firebase/status";
+import { useSystemConfigHook } from "../firebase/ai";
+import { checkStatusAllowed, recordStatusUsage } from "../firebase/limits";
 import { useContacts } from "../firebase/contacts";
 import { useChats, getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
 import { uploadChatFile, getSignedUrl } from "../supabase/media";
@@ -208,6 +210,7 @@ function StatusViewerModal({ statusId, contacts, onClose, t }) {
 export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryViewerChange, initialViewStatuses, statusOrigin, onConsumeInitialView }) {
   const { t } = useTheme();
   const { contacts } = useContacts(myUid);
+  const sysConfig = useSystemConfigHook();
   const globalSettings = useGlobalSettings();
   const hideStatusCamera = globalSettings?.hideStatusCamera === true;
   const hideStatusVoiceNote = globalSettings?.hideStatusVoiceNote === true;
@@ -464,10 +467,16 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     setShowPost(true);
   };
 
-   const handlePost = async () => {
+    const handlePost = async () => {
     if (postMode === "text" && !postText.trim() && !voiceBlob) return;
     if (postMode === "media" && !postMedia && postImages.length === 0 && !voiceBlob) {
       setPostError("Please select an image, video, or record something.");
+      return;
+    }
+    // Daily status-limit check (0 = unlimited).
+    const statusLim = await checkStatusAllowed(myUid, sysConfig?.dailyStatusLimit);
+    if (!statusLim.allowed) {
+      setPostError(`Daily status limit reached (${statusLim.limit} per day). Try again tomorrow.`);
       return;
     }
     // Snapshot and close UI immediately so upload continues in background even if user leaves
@@ -694,6 +703,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           commentsHidden: snapHideComments,
         });
       }
+
+      // Record one status against the daily limit (per post action).
+      try { await recordStatusUsage(myUid); } catch {}
 
       // UI already closed at snapshot time; this is just final cleanup (idempotent)
       setPostError("");
