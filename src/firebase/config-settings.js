@@ -119,6 +119,7 @@ export async function ensureGlobalSettingsExist() {
       mediaAutoDeleteUserVisible: true,
       mediaAutoDeleteFallback: "expiry",
       statusVideoPipelineEnabled: false,
+      show_video_thumbnails: true,
       updatedBy: null,
       updatedAt: null,
     });

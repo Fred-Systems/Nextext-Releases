@@ -35,21 +35,30 @@ function statusPosterSrc(item) {
 // "static_picture" (the default), or a looping video preview when it is
 // "video_loop". Without this, pipeline statuses (which have no mediaURL) showed
 // a blank tile or fell back to the video for non-owners.
-function StatusThumb({ item, forceStaticPreview, style = {} }) {
+function StatusThumb({ item, forceStaticPreview, showThumbs = true, style = {} }) {
   const [poster, setPoster] = useState(null);
   const [preview, setPreview] = useState(null);
   useEffect(() => {
     let live = true;
     (async () => {
+      if (!showThumbs) { setPoster(null); setPreview(null); return; }
       if (item?.posterURL) { live && setPoster(getProxyMediaUrl(item.posterURL, "image")); }
       else if (item?.posterPath) { try { live && setPoster(await getSignedUrl(item.posterPath, item.expiresAt)); } catch {} }
+      // Prefer the already-uploaded static client-side thumbnail — this avoids
+      // minting a fresh Cloudinary fetch transform (credit cost) on every render.
+      else if (item?.thumbnailURL) { live && setPoster(getProxyMediaUrl(item.thumbnailURL, "image")); }
       else if (item?.mediaURL) { live && setPoster(getVideoPosterUrl(item.mediaURL)); }
       if (item?.previewURL) { live && setPreview(getProxyMediaUrl(item.previewURL, "video")); }
       else if (item?.previewPath) { try { live && setPreview(await getSignedUrl(item.previewPath, item.expiresAt)); } catch {} }
     })();
     return () => { live = false; };
-  }, [item?.id, item?.posterURL, item?.posterPath, item?.mediaURL, item?.expiresAt, item?.previewURL, item?.previewPath]);
+  }, [item?.id, item?.posterURL, item?.posterPath, item?.thumbnailURL, item?.mediaURL, item?.expiresAt, item?.previewURL, item?.previewPath, showThumbs]);
 
+  // Admin turned off video thumbnails: render a blank placeholder, never the
+  // heavy video stream.
+  if (!showThumbs) {
+    return <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg,#2a2a2e,#1a1a1d)", ...style }} />;
+  }
   if (forceStaticPreview) {
     return <img src={poster || undefined} alt="" style={style} />;
   }
@@ -218,6 +227,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   // 'video_loop' shows lightweight animated preview clips.
   const statusPreviewMode = globalSettings?.status_preview_mode || "static_picture";
   const forceStaticPreview = statusPreviewMode !== "video_loop";
+  // Admin can globally disable video thumbnails in the feed (shows a blank
+  // placeholder instead of the heavy video stream). Defaults to ON.
+  const showVideoThumbs = globalSettings?.show_video_thumbnails !== false;
   const [blockStatus, setBlockStatus] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [myDisplayName, setMyDisplayName] = useState(myName);
@@ -675,6 +687,10 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             commentsHidden: snapHideComments,
             previewURL: previewURL || null,
             posterURL: posterURL || null,
+            // Static client-side thumbnail (already uploaded). When present the
+            // feed uses this instead of re-deriving a Cloudinary fetch poster,
+            // avoiding per-view transformation-credit costs.
+            thumbnailURL: result.thumbnailURL || null,
           });
         }
       }
@@ -1171,7 +1187,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                   <div style={{ position: "relative", paddingBottom: "120%", background: "#000" }}>
                     {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
-                        <StatusThumb item={latest} forceStaticPreview={forceStaticPreview} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        <StatusThumb item={latest} forceStaticPreview={forceStaticPreview} showThumbs={showVideoThumbs} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : (
                         <img src={getProxyMediaUrl(latest.mediaURL, "image")} alt="" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       )
@@ -1207,7 +1223,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
                     {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
-                        <StatusThumb item={latest} forceStaticPreview={forceStaticPreview} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        <StatusThumb item={latest} forceStaticPreview={forceStaticPreview} showThumbs={showVideoThumbs} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : <img src={getProxyMediaUrl(latest.mediaURL, "image")} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text, textAlign: "center" }}>{(latest.text || "").slice(0, 12) || "Text"}</span></div>
@@ -1237,7 +1253,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
                     {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
-                        <StatusThumb item={latest} forceStaticPreview={forceStaticPreview} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        <StatusThumb item={latest} forceStaticPreview={forceStaticPreview} showThumbs={showVideoThumbs} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : <img src={getProxyMediaUrl(latest.mediaURL, "image")} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text }}>{(latest.text || "").slice(0, 12)}</span></div>
@@ -1262,7 +1278,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                   >
                      {latest.mediaURL ? (
                       latest.mediaType === "video" ? (
-                        <StatusThumb item={latest} forceStaticPreview={forceStaticPreview} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        <StatusThumb item={latest} forceStaticPreview={forceStaticPreview} showThumbs={showVideoThumbs} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : (
                         <img src={getProxyMediaUrl(latest.mediaURL, "image")} alt="" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                       )
@@ -1308,7 +1324,11 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                 >
                   {latest.mediaURL ? (
                     latest.mediaType === "video" ? (
+                      showVideoThumbs ? (
                         <video src={getProxyMediaUrl(latest.previewURL || latest.mediaURL, "video")} poster={latest.posterURL || undefined} muted autoPlay loop playsInline preload="metadata" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : (
+                        <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "linear-gradient(135deg,#2a2a2e,#1a1a1d)" }} />
+                      )
 
                     ) : (
                       <img src={getProxyMediaUrl(latest.mediaURL, "image")} alt="" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: "100%", height: "100%", objectFit: "cover" }} />

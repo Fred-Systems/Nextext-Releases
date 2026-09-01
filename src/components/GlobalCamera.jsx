@@ -44,7 +44,11 @@ export default function GlobalCamera({ t, myUid, chats, contacts, hideNav, onClo
     try {
       const wantsVideo = mode === "video";
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facing },
+        video: {
+          facingMode: facing,
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 },
+        },
         audio: wantsVideo,
       });
       streamRef.current = stream;

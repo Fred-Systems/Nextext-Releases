@@ -7,10 +7,21 @@ export default defineConfig({
   base: './',
   build: {
     target: 'es2015',
-    rollupOptions: {
-      output: {
-        format: 'iife',
-        entryFileNames: 'assets/[name]-[hash].js',
+  },
+  // The Android WebView (Chrome 83) can only load a classic IIFE script, so the
+  // client SPA MUST be bundled as `iife`. Scope this to the `client` environment
+  // ONLY — applying it globally also forced the Cloudflare Worker build into an
+  // IIFE, which stripped its `export default { fetch }` handler and caused
+  // deploy error 10021 ("No event handlers were registered").
+  environments: {
+    client: {
+      build: {
+        rollupOptions: {
+          output: {
+            format: 'iife',
+            entryFileNames: 'assets/[name]-[hash].js',
+          },
+        },
       },
     },
   },

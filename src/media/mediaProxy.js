@@ -49,6 +49,6 @@ function cloudinaryVideoPoster(url) {
 export function getVideoPosterUrl(url) {
   if (!url || typeof url !== "string") return url;
   if (url.includes("res.cloudinary.com")) return cloudinaryVideoPoster(url);
-  const base = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/fetch/so_0,f_jpg,w_480,q_auto/`;
+  const base = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/fetch/so_0,f_jpg,w_480/`;
   return base + encodeURIComponent(url);
 }

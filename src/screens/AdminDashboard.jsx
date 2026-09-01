@@ -1130,6 +1130,22 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
             </div>
 
+            {/* Display video thumbnails in status previews */}
+            <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 4 }}>Display Video Thumbnails in Previews</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                When ON, status feed cards show a static poster frame for videos. When OFF, the feed shows a blank placeholder instead of loading the video stream (saves bandwidth and Cloudinary transforms).
+              </div>
+              <div onClick={() => updateGlobalSettings({ show_video_thumbnails: !(settings?.show_video_thumbnails !== false) }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.show_video_thumbnails !== false ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.show_video_thumbnails !== false ? "#34C759" : t.border, position: "relative" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.show_video_thumbnails !== false ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: settings?.show_video_thumbnails !== false ? "#fff" : t.text }}>
+                  {settings?.show_video_thumbnails !== false ? "THUMBNAILS ON" : "THUMBNAILS OFF"}
+                </span>
+              </div>
+            </div>
+
            </div>
           )}
           <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>

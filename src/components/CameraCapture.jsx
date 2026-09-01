@@ -68,12 +68,20 @@ export default function CameraCapture({
       let stream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: useFacing },
+          video: {
+            facingMode: useFacing,
+            width: { ideal: 1920, max: 1920 },
+            height: { ideal: 1080, max: 1080 },
+          },
           audio: true,
         });
       } catch {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: useFacing },
+          video: {
+            facingMode: useFacing,
+            width: { ideal: 1920, max: 1920 },
+            height: { ideal: 1080, max: 1080 },
+          },
           audio: false,
         });
       }
