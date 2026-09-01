@@ -1527,6 +1527,24 @@ export default function AdminDashboard({ myUid, onBack }) {
                 </div>
               </div>
             </div>
+            <div style={{ marginTop: 12, padding: "12px 14px", borderRadius: 10, background: t.bg, border: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 8 }}>Global AI Image Model</div>
+              <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.4 }}>
+                Free image generation (Pollinations). Applied globally to every session.
+              </div>
+              {[
+                { id: "flux", label: "Flux.1 - Photorealistic & Best Quality" },
+                { id: "dreamshaper", label: "Dreamshaper - Artistic & Digital Art" },
+                { id: "turbovisionxl", label: "TurboVision - Ultra-Fast Generation" },
+              ].map((o) => (
+                <div key={o.id} onClick={() => setSystemConfig({ active_image_model: o.id }, myUid)} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, cursor: "pointer", border: `1px solid ${t.border}`, marginBottom: 6, background: (sysConfig?.active_image_model || "flux") === o.id ? t.primaryLight : "transparent" }}>
+                  <div style={{ width: 18, height: 18, borderRadius: "50%", border: `2px solid ${(sysConfig?.active_image_model || "flux") === o.id ? t.primary : t.border}`, flexShrink: 0, marginTop: 1 }}>
+                    {(sysConfig?.active_image_model || "flux") === o.id && <div style={{ width: 10, height: 10, borderRadius: "50%", background: t.primary, margin: 2 }} />}
+                  </div>
+                  <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>{o.label}</div>
+                </div>
+              ))}
+            </div>
             <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
             <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.border, position: "relative" }}>
               <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.hideMizrachiMode ? 23 : 3, transition: "left 0.15s" }} />

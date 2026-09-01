@@ -201,6 +201,15 @@ const SYSTEM_CONFIG_DEFAULTS = {
   // generate an image (even if Groq is the active chat provider) by opening a
   // prompt box and calling the Gemini image model.
   enableAiImageGenButton: false,
+  // Global AI image model used for the FREE Pollinations image generator.
+  // Choices: flux | dreamshaper | turbovisionxl. Injected into the chat model's
+  // system context and used to build the Pollinations image URL.
+  active_image_model: "flux",
+  POLLINATIONS_IMAGE_MODELS: {
+    flux: "flux",
+    dreamshaper: "dreamshaper",
+    turbovisionxl: "turbovisionxl",
+  },
 };
 
 export async function ensureSystemConfig() {
@@ -404,7 +413,23 @@ export async function sendAIMessage(userUid, messageText, chatHistory = [], cust
   // even for a one-word message (Groq then returns 413). Cap them so a short
   // question never fails just because the system prompt is huge.
   const safeCustom = truncate((customInstructions || ""), MAX_SYS_CHARS - 500);
-  const systemPrompt = truncate(safeCustom ? `${safeCustom}\n\n${getSystemPrompt(personalityKey, config)}` : getSystemPrompt(personalityKey, config), MAX_SYS_CHARS);
+
+  // Inject the IMAGE GENERATION CAPABILITY block into the model's system context,
+  // including the globally-selected active_image_model (default "flux"). Tells the
+  // chat model to emit an embedded ![AI Image](...) Pollinations URL when a user
+  // asks to draw / generate / create an image, instead of describing it in text.
+  const activeImageModel = (config?.active_image_model && POLLINATIONS_MODELS[config.active_image_model]) ? config.active_image_model : "flux";
+  const IMAGE_GEN_CONTEXT = [
+    "IMAGE GENERATION CAPABILITY: You can instantly draw or generate images for users.",
+    "If a user asks you to \"draw\", \"generate\", or \"create an image\" of something, do NOT write a generic text description or tell them you cannot do it.",
+    "Instead, output a brief chat confirmation message and append an image embedded using EXACTLY this markdown syntax on a new line:",
+    `![AI Image](https://gen.pollinations.ai/image/{PROMPT}?model=${activeImageModel}&width=1024&height=1024&enhance=true)`,
+    "Formatting Execution Rules:",
+    "1. Replace {PROMPT} with a descriptive, visually rich, English prompt describing what the user asked for.",
+    "2. You must URL-encode the prompt string dynamically. Replace spaces with %20 and strip out illegal punctuation characters like commas, question marks, and quotation marks.",
+  ].join("\n");
+
+  const systemPrompt = truncate(safeCustom ? `${safeCustom}\n\n${getSystemPrompt(personalityKey, config)}\n\n${IMAGE_GEN_CONTEXT}` : `${getSystemPrompt(personalityKey, config)}\n\n${IMAGE_GEN_CONTEXT}`, MAX_SYS_CHARS + 700);
 
   // ── Gemini provider path ──
   if (config.provider === "gemini") {
@@ -555,79 +580,54 @@ async function callGeminiVision(apiKey, base64, mimeType, prompt, systemInstruct
   return callGemini(apiKey, systemInstruction, contents, DEFAULT_GEMINI_MODEL, 0.5);
 }
 
-// Text → image. Uses the Gemini image model (gemini-3.1-flash-image) via
-// generateContent with responseModalities: ["IMAGE"], reads the returned
-// inline_data bytes, then uploads them to Cloudinary (optimized/CDN) with a
-// Supabase fallback so the chat can display the result as a normal image bubble.
+// Text → image using the FREE Pollinations generator (no paid API key needed).
+// Reads the global `active_image_model` (default "flux") from the AI system
+// config and returns the image URL. The chat client then renders it as a normal
+// image bubble (and/or via the ![AI Image](url) markdown renderer).
+const POLLINATIONS_API = "https://gen.pollinations.ai/image/";
+const POLLINATIONS_MODELS = { flux: "flux", dreamshaper: "dreamshaper", turbovisionxl: "turbovisionxl" };
+
 export async function generateGeminiImage(userUid, prompt) {
-  // Read the Gemini key directly from the config doc (independent of the active
-  // chat provider) so image generation works even when Groq is the chat model.
+  // Read global config directly (independent of the active chat provider) so
+  // image generation works even when Groq is the chat model.
   const cfg = await getSystemConfig();
   if (cfg?.aiGloballyDisabled || cfg?.hideAiEverywhere) {
     throw new Error("AI is currently disabled by the administrator.");
   }
-  const key = (cfg?.geminiApiKey || "").trim();
-  if (!key) {
-    throw new Error("Image generation is unavailable. An admin must set a valid Gemini API key in the Admin Dashboard.");
-  }
-  // Prefer the admin-selected image model; otherwise use Nano Banana 2 Lite
-  // (gemini-3.1-flash-lite-image) — the model that works on the user's key.
-  // Fall back to other contemporary image models, then the text chat model.
-  const explicitImageModel = (cfg?.geminiImageModel && cfg.geminiImageModel !== GEMINI_IMAGE_MODEL) ? cfg.geminiImageModel : null;
-  const chatModel = cfg?.geminiModel || DEFAULT_GEMINI_MODEL;
-  const candidates = [explicitImageModel, GEMINI_IMAGE_MODEL, "gemini-3.6-flash-image", "gemini-3.5-flash-image", chatModel].filter(Boolean);
-  const tried = [];
-  let lastErr;
-  for (const model of candidates) {
-    tried.push(model);
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-      const body = {
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
-      };
-      let response;
-      try {
-        response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      } catch {
-        lastErr = new Error("Couldn't reach the image service. Check your connection and try again.");
-        continue;
-      }
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "Unknown error");
-        if (response.status === 400 && /API_KEY|key/i.test(errText)) {
-          throw new Error("The Gemini API key is invalid. An admin must set a valid key in the Admin Dashboard.");
-        }
-        // Try the next candidate model instead of failing immediately.
-        lastErr = new Error(`Image model ${model} failed (${response.status}): ${errText}`);
-        continue;
-      }
-      const data = await response.json().catch(() => null);
-      const parts = data?.candidates?.[0]?.content?.parts || [];
-      const imgPart = parts.find((p) => p.inlineData && p.inlineData.data);
-      if (!imgPart?.inlineData?.data) { lastErr = new Error("Image generation returned no image. Try a different prompt."); continue; }
-      const mime = imgPart.inlineData.mimeType || "image/png";
-      const byteChars = atob(imgPart.inlineData.data);
-      const len = byteChars.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) bytes[i] = byteChars.charCodeAt(i);
-      const blob = new Blob([bytes], { type: mime });
-      try {
-        const up = await uploadToCloudinary(blob, { resourceType: "image" });
-        return up.url;
-      } catch {
-        const chatId = getAIChatId(userUid);
-        const up = await uploadMediaFile(chatId, userUid, blob, { skipThumbnail: true });
-        return up.url;
-      }
-    } catch (e) {
-      lastErr = e;
-      // A hard error (bad key, network) should surface immediately.
-      if (/API key is invalid|reach the image service/i.test(e.message)) throw e;
-      continue;
+  const cleanPrompt = String(prompt || "").trim();
+  if (!cleanPrompt) throw new Error("Please provide a description for the image.");
+
+  // Active image model, defaulting to "flux" if unset or unknown.
+  const active = (cfg?.active_image_model || "flux");
+  const model = POLLINATIONS_MODELS[active] ? active : "flux";
+
+  // URL-encode the prompt (spaces -> %20, strip illegal punctuation like
+  // commas / question marks / quotes).
+  let encoded = encodeURIComponent(cleanPrompt)
+    .replace(/%2C/gi, "")
+    .replace(/%3F/gi, "")
+    .replace(/%22/gi, "")
+    .replace(/%27/gi, "")
+    .replace(/%20/gi, "%20");
+
+  const imageUrl = `${POLLINATIONS_API}${encoded}?model=${encodeURIComponent(model)}&width=1024&height=1024&enhance=true`;
+
+  // Pollinations returns the raw image binary at that URL once ready. We probe
+  // it so we surface an error (and confirm it will load) rather than letting the
+  // chat show a broken image. A generous timeout is used because image gen is slow.
+  try {
+    const resp = await fetch(imageUrl, { method: "GET" });
+    if (!resp.ok) {
+      throw new Error(`Image could not be generated (HTTP ${resp.status}). Please try again.`);
     }
+    // Consume the body (the <img> tag will fetch it again from the cache) so we
+    // prove it resolves before returning.
+    await resp.arrayBuffer();
+  } catch (e) {
+    if (/HTTP|Image could not/.test(String(e?.message || ""))) throw e;
+    throw new Error("Couldn't reach the image generator. Check your connection and try again.");
   }
-  throw new Error(`Image generation failed — tried models: ${tried.join(", ")}. None returned an image. Set the correct image model in Admin Dashboard → AI Provider → "Gemini Image Model" (the text model often can't emit images). Last error: ${lastErr?.message || "no image part returned"}`);
+  return imageUrl;
 }
 
 // Detects whether a user message is asking to generate an image, and extracts the

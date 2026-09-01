@@ -73,14 +73,55 @@ function cleanAIText(text) {
 // Renders AI message text with *single* and **double** asterisks converted to
 // bold (asterisks stripped), so model-emitted emphasis actually shows up bold
 // instead of as raw characters.
-function renderAIBold(text) {
+function renderAIBold(text, onOpenImage) {
   if (!text) return text;
-  const parts = String(text).split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+  const str = String(text);
+  // Extract embedded ![AI Image](url) markdown and render it as a real <img>
+  // with a skeleton/loading state, instead of showing raw markdown text.
+  const imgRe = /!\[([^\]]*)\]\(([^)\s]+)\)/;
+  if (imgRe.test(str)) {
+    const m = imgRe.exec(str);
+    const url = m[2];
+    const before = str.slice(0, m.index);
+    const after = str.slice(m.index + m[0].length);
+    return (
+      <div key={url}>
+        {before ? <div>{renderAIBold(before, onOpenImage)}</div> : null}
+        <AIImage src={url} onOpen={onOpenImage} />
+        {after ? <div style={{ marginTop: 6 }}>{renderAIBold(after, onOpenImage)}</div> : null}
+      </div>
+    );
+  }
+  const parts = str.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
   return parts.map((p, i) => {
     if (/^\*\*[^*]+\*\*$/.test(p)) return <strong key={i}>{p.slice(2, -2)}</strong>;
     if (/^\*[^*]+\*$/.test(p)) return <strong key={i}>{p.slice(1, -1)}</strong>;
     return p;
   });
+}
+
+// Renders an AI image with a skeleton spinner while the (often slow) Pollinations
+// endpoint finishes generating the raw image binary.
+function AIImage({ src, onOpen, style = {} }) {
+  const [loaded, setLoaded] = useState(false);
+  const { t } = useTheme();
+  return (
+    <div style={{ position: "relative", margin: "6px 0", borderRadius: 8, overflow: "hidden", background: t.bubbleThem, ...style }}>
+      {!loaded && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8, padding: "22px 30px", color: t.textMuted }}>
+          <div style={{ width: 22, height: 22, borderRadius: "50%", border: `3px solid ${t.border}`, borderTopColor: t.primary, animation: "nextext-spin 0.8s linear infinite" }} />
+          <span style={{ fontSize: 12, fontWeight: 600 }}>Generating image…</span>
+        </div>
+      )}
+      <img
+        src={src}
+        alt="AI Image"
+        onLoad={() => setLoaded(true)}
+        onClick={() => onOpen && onOpen(src)}
+        style={{ display: "block", maxWidth: 220, maxHeight: 280, borderRadius: 8, cursor: "pointer", background: "#000", visibility: loaded ? "visible" : "hidden", width: "100%", height: "auto", objectFit: "cover" }}
+      />
+    </div>
+  );
 }
 
 // Ordinal suffix (1st, 2nd, 3rd, 4th, …) for date divider labels.
@@ -881,12 +922,14 @@ export default function AIChatScreen({ myUid, onBack }) {
                     <div style={{ display: "flex", justifyContent: isMine ? "flex-end" : "flex-start", marginTop: 8 }}>
                       <div style={{ position: "relative", maxWidth: "78%" }}>
                         {!expired && m.mediaURL ? (
-                          <img
-                            src={m.mediaURL}
-                            alt="Sent photo"
-                            style={{ maxWidth: 220, maxHeight: 280, borderRadius: 8, display: "block", cursor: "pointer" }}
-                            onClick={() => setFullscreenImage(m.mediaURL)}
-                          />
+                          <div style={{ background: "#000", borderRadius: 8 }}>
+                            <img
+                              src={m.mediaURL}
+                              alt="AI image"
+                              style={{ maxWidth: 220, maxHeight: 280, borderRadius: 8, display: "block", cursor: "pointer" }}
+                              onClick={() => setFullscreenImage(m.mediaURL)}
+                            />
+                          </div>
                         ) : (
                           <div style={{ padding: "18px 22px", borderRadius: 10, background: t.bubbleThem, color: t.bubbleThemText, fontSize: 13, opacity: 0.8 }}>📷 Media expired</div>
                         )}
@@ -918,7 +961,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                           <div style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200 }}>{m.replyTo.previewText}</div>
                         </div>
                       )}
-                      {renderAIBold(m.text)}
+                      {renderAIBold(m.text, (url) => setFullscreenImage(url))}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                         <span style={{ fontSize: 10.5, opacity: 0.55 }}>
                           {m.sentAt?.toDate ? m.sentAt.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}

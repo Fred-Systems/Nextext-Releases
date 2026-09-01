@@ -500,9 +500,31 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     }
   }, [paused, current?.mediaType]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Robust video progress ticker: reads the live <video> element's currentTime
+  // every frame and drives the status bar with it. This keeps the bar moving in
+  // lockstep with the actual video even when the browser's onTimeUpdate events
+  // are sparse/unreliable (common with HLS m3u8 / Blob-preview statuses) and
+  // prevents the "bar jumps straight to 100%" symptom.
   useEffect(() => {
-    if (!current?.bgAudioURL || !bgAudioRef.current) return;
-    const audio = bgAudioRef.current;
+    if (statuses[idx]?.mediaType !== "video" || paused) return;
+    let raf;
+    const tick = () => {
+      const v = videoRef.current;
+      if (v && v.duration && isFinite(v.duration) && v.duration > 0 && v.currentTime != null) {
+        progressRef.current = (v.currentTime / v.duration) * 100;
+        if (barRef.current) {
+          barRef.current.style.transition = "none";
+          barRef.current.style.width = `${progressRef.current}%`;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [idx, statuses, paused]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!current?.bgAudioURL || !bgAudioRef.current) return;    const audio = bgAudioRef.current;
     audio.volume = (current.bgAudioVolume || 70) / 100;
     if (!paused) audio.play().catch(() => {});
     return () => { audio.pause(); audio.currentTime = 0; };
