@@ -11,7 +11,6 @@
     "not_found_handling": "single-page-application"
   },
   "vars": {
-    "FIREBASE_WEB_API_KEY": "AIzaSyCAYHwJ9UyUDyhPVU0Bj32N2fCTuMXXAG0",
-    "FISH_AUDIO_API_KEY": "sk-fish-hPD2no9ly6H8nXJcK4iryrfXO_aRNXCKHviwvfAOUW8"
+    "FIREBASE_WEB_API_KEY": "AIzaSyCAYHwJ9UyUDyhPVU0Bj32N2fCTuMXXAG0"
   }
 }

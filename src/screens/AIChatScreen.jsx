@@ -105,7 +105,24 @@ function renderAIBold(text, onOpenImage) {
 // endpoint finishes generating the raw image binary.
 function AIImage({ src, onOpen, style = {} }) {
   const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
   const { t } = useTheme();
+  // Safety: if the image never fires onLoad/onError (e.g. the generator stalls),
+  // stop spinning after a while and surface a fallback.
+  useEffect(() => {
+    const to = setTimeout(() => { if (!loaded && !errored) setErrored(true); }, 45000);
+    return () => clearTimeout(to);
+  }, [src, loaded, errored]);
+  if (errored) {
+    return (
+      <div style={{ position: "relative", margin: "6px 0", borderRadius: 8, overflow: "hidden", background: t.bubbleThem, padding: "14px 16px", ...style }}>
+        <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.4 }}>
+          Image couldn't be generated.
+          <a href={src} target="_blank" rel="noreferrer" style={{ color: t.primary, marginLeft: 6, textDecoration: "underline" }}>Open in browser</a>
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ position: "relative", margin: "6px 0", borderRadius: 8, overflow: "hidden", background: t.bubbleThem, ...style }}>
       {!loaded && (
@@ -118,7 +135,8 @@ function AIImage({ src, onOpen, style = {} }) {
         src={src}
         alt="AI Image"
         onLoad={() => setLoaded(true)}
-        onClick={() => onOpen && onOpen(src)}
+        onError={() => setErrored(true)}
+        onClick={() => loaded && onOpen && onOpen(src)}
         style={{ display: "block", maxWidth: 220, maxHeight: 280, borderRadius: 8, cursor: "pointer", background: "#000", visibility: loaded ? "visible" : "hidden", width: "100%", height: "auto", objectFit: "cover" }}
       />
     </div>

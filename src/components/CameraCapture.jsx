@@ -62,10 +62,21 @@ export default function CameraCapture({
         streamRef.current = null;
       }
       const wantsVideo = mode === "video";
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: useFacing },
-        audio: wantsVideo,
-      });
+      // Always request an audio track so recorded videos carry sound regardless
+      // of the current mode (recording can start from either mode). If the mic
+      // is unavailable, fall back to a video-only stream.
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: useFacing },
+          audio: true,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: useFacing },
+          audio: false,
+        });
+      }
       streamRef.current = stream;
       setTimeout(() => {
         if (videoRef.current) {

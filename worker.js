@@ -50,16 +50,12 @@ async function generateVoice(request, env) {
   const referenceId = body.referenceId || "9cc36d13d091468fa9c4cab838a6ecdf";
   const model = body.model || "s2.1-pro-free";
 
-  let apiKey = env.FISH_AUDIO_API_KEY || "";
-  try {
-    const stored = await getFishKeyFromFirestore(env);
-    if (stored) apiKey = stored;
-  } catch {
-    /* fall back to env key */
-  }
-
+  // The Fish Audio key is NEVER hardcoded here — it is managed entirely from the
+  // Admin Dashboard (stored in Firestore config/fishAudioKey) so it stays secret
+  // and rotatable without a deploy. The Worker reads it server-side.
+  const apiKey = await getFishKeyFromFirestore(env);
   if (!apiKey) {
-    return json({ error: "Voice service is not configured." }, 503);
+    return json({ error: "Voice service is not configured. Set the Fish Audio API key in the Admin Dashboard." }, 503);
   }
 
   let upstream;

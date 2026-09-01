@@ -457,7 +457,18 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
   useEffect(() => {
     if (!barRef.current || !initialAnimDoneRef.current) return;
+    const captureProgress = () => {
+      const parent = barRef.current.parentElement;
+      if (!parent) return progressRef.current;
+      const w = barRef.current.offsetWidth;
+      const pW = parent.offsetWidth || 1;
+      return Math.min(100, Math.max(0, (w / pW) * 100));
+    };
     if (paused) {
+      // Freeze the bar at its ACTUAL current visual width (the CSS transition
+      // advanced it beyond progressRef, which stays at 0). Capture from the DOM
+      // so image slides pause exactly where they are, not jumping to 0.
+      progressRef.current = captureProgress();
       barRef.current.style.transition = "none";
       barRef.current.style.width = `${progressRef.current}%`;
       clearTimeout(timerRef.current);
@@ -469,6 +480,8 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
         barRef.current.style.width = "100%";
         clearTimeout(timerRef.current);
         timerRef.current = setTimeout(() => advanceRef.current?.(), Math.max(remainingMs, 50));
+      } else {
+        clearTimeout(timerRef.current);
       }
     }
   }, [paused, duration]);
