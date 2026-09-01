@@ -9,7 +9,13 @@ export const FISH_MODEL = "s2.1-pro-free";
 export const Y_MIZRACHI_VOICE_ID = "9cc36d13d091468fa9c4cab838a6ecdf";
 export const FISH_API_KEY = "sk-fish-hPD2no9ly6H8nXJcK4iryrfXO_aRNXCKHviwvfAOUW8";
 
-const nativeTTS = (typeof window !== "undefined" && window.Capacitor?.Plugins?.NextextNative) ? window.Capacitor.Plugins.NextextNative : null;
+const getNativeTTS = () => {
+  try {
+    return (typeof window !== "undefined" && window.Capacitor?.Plugins?.NextextNative) || null;
+  } catch {
+    return null;
+  }
+};
 const isNativePlatform = () => !!(typeof window !== "undefined" && window.Capacitor?.isNativePlatform && window.Capacitor.isNativePlatform());
 
 // Global "socket" for voice: AppSettings.global_voice_enabled (stored in the AI
@@ -80,8 +86,8 @@ export async function shouldPlayVoiceReply(userUid) {
 export async function synthesizeSpeech(text) {
   const clean = cleanPrompt(text);
   try {
-    if (isNativePlatform() && nativeTTS && typeof nativeTTS.tts === "function") {
-      const res = await nativeTTS.tts({ text: clean, referenceId: Y_MIZRACHI_VOICE_ID, model: FISH_MODEL, apiKey: FISH_API_KEY });
+    if (isNativePlatform() && getNativeTTS() && typeof getNativeTTS().tts === "function") {
+      const res = await getNativeTTS().tts({ text: clean, referenceId: Y_MIZRACHI_VOICE_ID, model: FISH_MODEL, apiKey: FISH_API_KEY });
       const b64 = res?.base64;
       if (!b64) throw new Error("Voice service returned no audio.");
       const bin = atob(b64);
@@ -122,8 +128,8 @@ export async function synthesizeSpeech(text) {
 export async function synthesizeSpeechBytes(text) {
   const clean = cleanPrompt(text);
   try {
-    if (isNativePlatform() && nativeTTS && typeof nativeTTS.tts === "function") {
-      const res = await nativeTTS.tts({ text: clean, referenceId: Y_MIZRACHI_VOICE_ID, model: FISH_MODEL, apiKey: FISH_API_KEY });
+    if (isNativePlatform() && getNativeTTS() && typeof getNativeTTS().tts === "function") {
+      const res = await getNativeTTS().tts({ text: clean, referenceId: Y_MIZRACHI_VOICE_ID, model: FISH_MODEL, apiKey: FISH_API_KEY });
       const b64 = res?.base64;
       if (!b64) throw new Error("Voice service returned no audio.");
       const bin = atob(b64);

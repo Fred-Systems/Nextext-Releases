@@ -256,16 +256,18 @@ export default function AIChatScreen({ myUid, onBack }) {
     const msgId = candidate.id;
     setVoiceBusy(true);
     syncedMsgRef.current.add(msgId);
-    (async () => {
-      try {
-        const { synthesizeSpeech } = await import("../firebase/tts");
-        const url = await synthesizeSpeech(candidate.text);
-        setVoiceAudios((prev) => ({ ...prev, [msgId]: url }));
-      } catch {
-        syncedMsgRef.current.delete(msgId);
-      }
-      setVoiceBusy(false);
-    })();
+      (async () => {
+        try {
+          const { synthesizeSpeech } = await import("../firebase/tts");
+          const url = await synthesizeSpeech(candidate.text);
+          setVoiceAudios((prev) => ({ ...prev, [msgId]: url }));
+        } catch (err) {
+          // Keep msgId in syncedMsgRef so a permanent failure (e.g. CORS on the
+          // web build, where there is no native bridge) is not retried forever.
+          console.error("[tts] voice synthesis failed for", msgId, err?.message);
+        }
+        setVoiceBusy(false);
+      })();
   }, [messages, voiceMasterOn, voiceEnabled, voiceBusy, voiceAudios]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pinchEnabled = () => {
