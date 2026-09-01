@@ -4,6 +4,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { AI_CONTACT_UID, PERSONALITIES } from "../firebase/ai";
+import { setFishAudioKey, getFishAudioKey } from "../firebase/tts";
 import { getOrCreateDirectChat } from "../firebase/chats";
 import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings } from "../firebase/config-settings";
 import { getPreWarmConfig, setPreWarmEnabled } from "../firebase/prewarm";
@@ -61,6 +62,12 @@ function AnalyticsTab() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  const [fishKey, setFishKey] = useState("");
+  const [fishKeySaved, setFishKeySaved] = useState(false);
+
+  useEffect(() => {
+    getFishAudioKey().then((k) => { if (k) setFishKey(k); }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -1557,8 +1564,51 @@ export default function AdminDashboard({ myUid, onBack }) {
                   Controls the entire app audio network — AI voice replies and custom voice notes. When OFF, all voice UI is hidden for every user.
                 </div>
               </div>
-            </div>
-            <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
+             </div>
+
+             {/* Allow all users to download AI voice replies as .mp3 voice notes */}
+             <div onClick={() => { setSystemConfig({ allowVoiceDownload: !(sysConfig?.allowVoiceDownload === true) }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.allowVoiceDownload === true ? t.primaryLight : "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginBottom: 12 }}>
+               <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.allowVoiceDownload === true ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
+                 <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.allowVoiceDownload === true ? 23 : 3, transition: "left 0.15s" }} />
+               </div>
+               <div>
+                 <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+                   {sysConfig?.allowVoiceDownload === true ? "Users can download AI voice: ON" : "Users can download AI voice: OFF"}
+                 </div>
+                 <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>
+                   When ON, every user gets a "Save" button on AI voice replies. Admins can always download regardless of this switch.
+                 </div>
+               </div>
+             </div>
+
+             {/* Fish Audio API key — stored server-side (Worker reads it from Firestore), never shipped to clients */}
+             <div style={{ padding: "12px 14px", borderRadius: 10, border: `1px solid ${t.border}`, marginBottom: 14, background: t.bg }}>
+               <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Fish Audio API Key</div>
+               <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 8, lineHeight: 1.4 }}>
+                 Saved to Firestore and used by the Cloudflare Worker (<code style={{ fontSize: 11 }}>/api/generate-voice</code>) so the key is never exposed in the app. Leave blank to keep the current key.
+               </div>
+               <input
+                 type="password"
+                 value={fishKey}
+                 onChange={(e) => { setFishKey(e.target.value); setFishKeySaved(false); }}
+                 placeholder="sk-fish-..."
+                 style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 13, outline: "none", color: t.text, background: t.surface }}
+               />
+               <button
+                 onClick={async () => {
+                   try {
+                     await setFishAudioKey(fishKey);
+                     setFishKeySaved(true);
+                     setTimeout(() => setFishKeySaved(false), 2500);
+                   } catch {}
+                 }}
+                 style={{ marginTop: 8, width: "100%", padding: 10, borderRadius: 10, border: "none", background: t.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}
+               >
+                 {fishKeySaved ? "Saved ✓" : "Save Fish Audio Key"}
+               </button>
+             </div>
+
+             <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
             <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.border, position: "relative" }}>
               <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.hideMizrachiMode ? 23 : 3, transition: "left 0.15s" }} />
             </div>

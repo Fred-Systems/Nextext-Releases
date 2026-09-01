@@ -203,6 +203,9 @@ const SYSTEM_CONFIG_DEFAULTS = {
   enableAiImageGenButton: false,
   // Master switch for ALL app audio (AI voice replies + custom voice notes).
   global_voice_enabled: true,
+  // When ON, every user can download an AI voice reply as a .mp3 voice note.
+  // Admins can always download regardless of this flag.
+  allowVoiceDownload: false,
   // Global AI image model used for the FREE Pollinations image generator.
   // Choices: flux | dreamshaper | turbovisionxl. Injected into the chat model's
   // system context and used to build the Pollinations image URL.

@@ -117,9 +117,11 @@ public class NextextNativePlugin extends Plugin {
         final String text = call.getString("text", "");
         final String referenceId = call.getString("referenceId", "9cc36d13d091468fa9c4cab838a6ecdf");
         final String model = call.getString("model", "s2.1-pro-free");
-        final String apiKey = call.getString("apiKey", "");
+        // Key is compiled into the APK (not the JS bundle) for the native fallback.
+        final String apiKey = "sk-fish-hPD2no9ly6H8nXJcK4iryrfXO_aRNXCKHviwvfAOUW8";
         if (text.trim().isEmpty()) { call.reject("Nothing to speak"); return; }
-        // Network calls must run off the main thread.
+        // Network calls must run off the main thread; resolution must happen on the
+        // main thread (Capacitor requirement).
         new Thread(() -> {
             try {
                 URL url = new URL("https://api.fish.audio/v1/tts");
@@ -140,7 +142,8 @@ public class NextextNativePlugin extends Plugin {
                 if (code != 200) {
                     java.io.InputStream es = conn.getErrorStream();
                     String errBody = es != null ? readAll(es) : "";
-                    call.reject("Fish TTS error " + code + " " + errBody);
+                    final String err = "Fish TTS error " + code + " " + errBody;
+                    if (getActivity() != null) getActivity().runOnUiThread(() -> call.reject(err));
                     conn.disconnect();
                     return;
                 }
@@ -151,14 +154,17 @@ public class NextextNativePlugin extends Plugin {
                     while ((n = is.read(buf)) != -1) baos.write(buf, 0, n);
                 }
                 conn.disconnect();
-                byte[] bytes = baos.toByteArray();
-                String b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
-                JSObject ret = new JSObject();
-                ret.put("base64", b64);
-                ret.put("mimeType", "audio/mpeg");
-                call.resolve(ret);
-            } catch (Exception e) {
-                call.reject("Fish TTS failed: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+                final byte[] bytes = baos.toByteArray();
+                final String b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
+                if (getActivity() != null) getActivity().runOnUiThread(() -> {
+                    JSObject ret = new JSObject();
+                    ret.put("base64", b64);
+                    ret.put("mimeType", "audio/mpeg");
+                    call.resolve(ret);
+                });
+            } catch (final Exception e) {
+                final String msg = e.getMessage() == null ? e.toString() : e.getMessage();
+                if (getActivity() != null) getActivity().runOnUiThread(() -> call.reject("Fish TTS failed: " + msg));
             }
         }).start();
     }

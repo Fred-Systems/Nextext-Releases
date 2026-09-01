@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { ChevronLeft, Send, Plus, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive, Copy, Forward, MessageSquare } from "lucide-react";
 import VoiceToTextButton from "../components/VoiceToTextButton";
+import VoiceWaveform from "../components/VoiceWaveform";
 import { useTheme } from "../theme/ThemeContext";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
@@ -160,19 +161,59 @@ function formatAIDateDivider(date) {
 // Auto-playing audio player for AI voice replies. Chrome 83's WebView can block
 // the `autoplay` attribute until a user gesture, so we also attempt an explicit
 // play() once the media is ready (the reply that triggered it came from a user
-// message, so a gesture has typically happened).
-function AutoAudio({ src }) {
+// message, so a gesture has typically happened). Shows an animated sound-wave
+// while speaking, and a download action when permitted.
+function AutoAudio({ src, canDownload }) {
+  const { t } = useTheme();
   const ref = useRef(null);
+  const [playing, setPlaying] = useState(false);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const tryPlay = () => { try { el.play().catch(() => {}); } catch {} };
     tryPlay();
     if (el.readyState >= 3) return;
-    const t = setTimeout(tryPlay, 600);
-    return () => clearTimeout(t);
+    const to = setTimeout(tryPlay, 600);
+    return () => clearTimeout(to);
   }, [src]);
-  return <audio ref={ref} src={src} controls autoPlay playsInline style={{ width: "100%", maxWidth: 240, marginTop: 8, display: "block", borderRadius: 8 }} />;
+  const download = () => {
+    try {
+      const a = document.createElement("a");
+      a.href = src;
+      a.download = "y-mizrachi-voice.mp3";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch {}
+  };
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+        <VoiceWaveform playing={playing} color={t.primary} size={22} />
+        {canDownload && (
+          <div
+            onClick={download}
+            title="Download voice note"
+            style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: t.primary, cursor: "pointer", padding: "3px 8px", borderRadius: 8, border: `1px solid ${t.border}` }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+            Save
+          </div>
+        )}
+      </div>
+      <audio
+        ref={ref}
+        src={src}
+        controls
+        autoPlay
+        playsInline
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        style={{ width: "100%", maxWidth: 240, display: "block", borderRadius: 8 }}
+      />
+    </div>
+  );
 }
 
 export default function AIChatScreen({ myUid, onBack }) {
@@ -226,6 +267,8 @@ export default function AIChatScreen({ myUid, onBack }) {
 
   // ── Voice replies (Fish Audio / Y Mizrachi) ──
   const voiceMasterOn = sysConfig?.global_voice_enabled !== false;
+  const isAdmin = userDoc?.role === "admin";
+  const canDownloadVoice = isAdmin || sysConfig?.allowVoiceDownload === true;
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [voiceAudios, setVoiceAudios] = useState({}); // { messageId: blobUrl }
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -1039,7 +1082,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                       )}
                       {renderAIBold(m.text, (url) => setFullscreenImage(url))}
                       {voiceAudios[m.id] && (
-                        <AutoAudio src={voiceAudios[m.id]} />
+                        <AutoAudio src={voiceAudios[m.id]} canDownload={canDownloadVoice} />
                       )}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                         <span style={{ fontSize: 10.5, opacity: 0.55 }}>
