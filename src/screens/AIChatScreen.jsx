@@ -107,7 +107,28 @@ function renderAIBold(text, onOpenImage) {
 function AIImage({ src, onOpen, style = {} }) {
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
+  const [saving, setSaving] = useState(false);
   const { t } = useTheme();
+  const download = async () => {
+    if (!src || saving) return;
+    setSaving(true);
+    try {
+      const res = await fetch(src);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `nextext-ai-image-${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch {
+      // Fallback: open in a new tab so the user can long-press to save.
+      window.open(src, "_blank", "noopener");
+    }
+    setSaving(false);
+  };
   // Safety: if the image never fires onLoad/onError (e.g. the generator stalls),
   // stop spinning after a while and surface a fallback.
   useEffect(() => {
@@ -140,6 +161,19 @@ function AIImage({ src, onOpen, style = {} }) {
         onClick={() => loaded && onOpen && onOpen(src)}
         style={{ display: "block", maxWidth: 220, maxHeight: 280, borderRadius: 8, cursor: "pointer", background: "#000", visibility: loaded ? "visible" : "hidden", width: "100%", height: "auto", objectFit: "cover" }}
       />
+      {loaded && (
+        <div
+          onClick={(e) => { e.stopPropagation(); download(); }}
+          title="Download image"
+          style={{ position: "absolute", top: 6, right: 6, width: 30, height: 30, borderRadius: "50%", background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+        >
+          {saving ? (
+            <span style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.4)", borderTopColor: "#fff", borderRadius: "50%", animation: "nextext-spin 0.8s linear infinite", display: "inline-block" }} />
+          ) : (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -322,6 +356,9 @@ export default function AIChatScreen({ myUid, onBack }) {
   // render an autoplaying <audio> player inside that bubble.
   useEffect(() => {
     if (!voiceMasterOn || !voiceEnabled) return;
+    // Admin can globally silence AI voice replies for everyone except admins
+    // (the Y Mizrachi voice-note composer is unaffected by this flag).
+    if (sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin) return;
     if (voiceBusy) return;
     const candidate = (messages || []).find((m) => m.senderId === AI_CONTACT_UID && m.type !== "image" && (m.text || "").trim() && !syncedMsgRef.current.has(m.id) && !voiceAudios[m.id]);
     if (!candidate) return;
@@ -891,11 +928,11 @@ export default function AIChatScreen({ myUid, onBack }) {
             </div>
             {voiceMasterOn && (
               <div
-                onClick={toggleVoiceReplies}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
+                onClick={sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin ? undefined : toggleVoiceReplies}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin ? "not-allowed" : "pointer", borderTop: `1px solid ${t.border}`, opacity: sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin ? 0.5 : 1 }}
               >
                 <span style={{ fontSize: 16 }}>{voiceEnabled ? "🔊" : "🔇"}</span>
-                <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Enable Voice Replies</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Enable Voice Replies{sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin ? " (disabled by admin)" : ""}</span>
                 <span style={{ marginLeft: "auto", width: 40, height: 22, borderRadius: 11, background: voiceEnabled ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
                   <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: voiceEnabled ? 20 : 2, transition: "left 0.15s" }} />
                 </span>

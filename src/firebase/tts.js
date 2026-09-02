@@ -27,8 +27,8 @@ export const VOICE_PRESETS = [
 export function getAvailableVoices(sysConfig) {
   const presets = VOICE_PRESETS.filter((v) => !(sysConfig?.hideRoshVoice === true && v.id === "rosh"));
   const custom = (sysConfig?.customVoices || [])
-    .filter((v) => v && v.id && v.name && v.referenceId)
-    .map((v) => ({ id: v.id, name: v.name, referenceId: v.referenceId, custom: true }));
+    .filter((v) => v && v.name && v.referenceId)
+    .map((v) => ({ id: v.id || v.referenceId, name: v.name, referenceId: v.referenceId, custom: true }));
   return [...presets, ...custom];
 }
 
@@ -40,6 +40,9 @@ export function resolveVoice(sysConfig, voiceId) {
 // Absolute Worker URL — works from both the Android WebView (origin
 // https://localhost) and the web build (same origin), thanks to `Access-Control-Allow-Origin: *`.
 export const VOICE_API = "https://nextext.nextext-app.workers.dev/api/generate-voice";
+// Voice-conversion proxy: user records their own voice, we forward it (with the
+// target reference_id) to Fish Audio and stream the converted audio back.
+export const VOICE_CONVERT_API = "https://nextext.nextext-app.workers.dev/api/convert-voice";
 
 const getNativeTTS = () => {
   try {

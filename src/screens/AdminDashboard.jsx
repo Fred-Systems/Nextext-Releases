@@ -1692,6 +1692,13 @@ export default function AdminDashboard({ myUid, onBack }) {
                 <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{sysConfig?.hideRoshVoice ? "The Rosh voice: HIDDEN" : "The Rosh voice: visible"}</span>
               </div>
 
+              <div onClick={() => { setSystemConfig({ aiVoiceReplyGloballyDisabled: !sysConfig?.aiVoiceReplyGloballyDisabled }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.aiVoiceReplyGloballyDisabled ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 10 }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.aiVoiceReplyGloballyDisabled ? "#FF3B30" : t.border, position: "relative" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.aiVoiceReplyGloballyDisabled ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: sysConfig?.aiVoiceReplyGloballyDisabled ? "#fff" : t.text }}>{sysConfig?.aiVoiceReplyGloballyDisabled ? "AI Voice Replies: DISABLED (admins only)" : "AI Voice Replies: enabled"}</span>
+              </div>
+
               <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: t.text, marginBottom: 8 }}>Custom Voices (model IDs)</div>
                 {(sysConfig?.customVoices || []).length === 0 && (
@@ -1723,7 +1730,7 @@ export default function AdminDashboard({ myUid, onBack }) {
                       if (!id || !name) return;
                       const arr = [...(sysConfig?.customVoices || [])];
                       if (arr.some((c) => c.referenceId === id)) { setCustomVoiceName(""); setCustomVoiceId(""); return; }
-                      arr.push({ name, referenceId: id });
+                      arr.push({ id, name, referenceId: id });
                       setSystemConfig({ customVoices: arr }, myUid);
                       setCustomVoiceName("");
                       setCustomVoiceId("");

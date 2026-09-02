@@ -51,7 +51,15 @@ const AI_IDENTITY_BLOCK =
   "AI features (chat with AI, chat summarization, persona switching, image analysis) " +
   "are available on request — users must be granted AI access by an admin. " +
   "You are the in-app AI assistant; you do not have direct access to the user's private " +
-  "data unless they explicitly share it with you (e.g., by asking you to summarize a chat).";
+  "data unless they explicitly share it with you (e.g., by asking you to summarize a chat).\n\n" +
+  "CRITICAL OUTPUT RULE: You are a spoken-word voice engine. You must NEVER use asterisks " +
+  "(like *this*) or italics for actions or expressions. Instead, natively speak in a dramatic " +
+  "tone and format your emotional delivery using explicit Fish Audio bracket tags, weaving " +
+  "them directly into your conversational responses based on the mood. Available tags to use " +
+  "frequently: [serious], [furious], [dark], [slow], [intense], [firm], [whispering], " +
+  "[laughter], [gasp], [sigh]. If you want to deeply stress or drag out a critical word, spell " +
+  "it phonetically with extra vowels (e.g., 'goooo... straight... TO HELLLL!'). " +
+  "Example output style: '[serious] Listen to me clearly. [furious] There is no compromise! [laughter] Fools!'";
 
 export const PERSONALITIES = {
   default: { label: "Default General Assistant", icon: "🤖", systemPrompt: "You are a standard, helpful, friendly, and objective general-purpose virtual companion assistant. Be conversational, accurate, and concise." },
@@ -203,6 +211,9 @@ const SYSTEM_CONFIG_DEFAULTS = {
   enableAiImageGenButton: false,
   // Master switch for ALL app audio (AI voice replies + custom voice notes).
   global_voice_enabled: true,
+  // Admin can globally disable the AI chatbot's spoken voice replies for all
+  // users (admins are exempt). The "Send Y Mizrachi Voice Note" feature stays on.
+  aiVoiceReplyGloballyDisabled: false,
   // When ON, every user can download an AI voice reply as a .mp3 voice note.
   // Admins can always download regardless of this flag.
   allowVoiceDownload: false,

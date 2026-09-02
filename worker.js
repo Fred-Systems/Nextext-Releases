@@ -31,6 +31,13 @@ export default {
       return generateVoice(request, env);
     }
 
+    if (url.pathname === "/api/convert-voice") {
+      if (request.method !== "POST") {
+        return json({ error: "Method not allowed" }, 405);
+      }
+      return convertVoice(request, env);
+    }
+
     // Everything else falls through to the static SPA assets.
     return env.ASSETS.fetch(request);
   },
@@ -53,7 +60,7 @@ async function generateVoice(request, env) {
   // The Fish Audio key is NEVER hardcoded here — it is managed entirely from the
   // Admin Dashboard (stored in Firestore config/fishAudioKey) so it stays secret
   // and rotatable without a deploy. The Worker reads it server-side.
-  const apiKey = await getFishKeyFromFirestore(env);
+  const apiKey = (await getFishKeyFromFirestore(env)) || env.FISH_AUDIO_API_KEY;
   if (!apiKey) {
     return json({ error: "Voice service is not configured. Set the Fish Audio API key in the Admin Dashboard." }, 503);
   }
@@ -88,22 +95,91 @@ async function generateVoice(request, env) {
   });
 }
 
+// Voice conversion: the user records their own voice, we forward it (plus the
+// target reference_id) to Fish Audio's /v1/convert endpoint and stream the
+// converted audio back. Nothing is persisted — it's a pass-through proxy.
+async function convertVoice(request, env) {
+  let form;
+  try {
+    form = await request.formData();
+  } catch {
+    return json({ error: "Invalid form data" }, 400);
+  }
+  const file = form.get("file");
+  const referenceId = String(form.get("reference_id") || "").trim() ||
+    "9cc36d13d091468fa9c4cab838a6ecdf";
+  if (!file || typeof file === "string") {
+    return json({ error: "No audio file provided" }, 400);
+  }
+
+  const apiKey = (await getFishKeyFromFirestore(env)) || env.FISH_AUDIO_API_KEY;
+  if (!apiKey) {
+    return json({ error: "Voice service is not configured. Set the Fish Audio API key in the Admin Dashboard." }, 503);
+  }
+
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("reference_id", referenceId);
+
+  let upstream;
+  try {
+    upstream = await fetch("https://api.fish.audio/v1/convert", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: fd,
+    });
+  } catch {
+    return json({ error: "Could not reach the voice service." }, 502);
+  }
+
+  if (!upstream.ok) {
+    const detail = await safeText(upstream);
+    return json({ error: `Voice conversion error (${upstream.status}). ${detail}` }, 502);
+  }
+
+  const audio = await upstream.arrayBuffer();
+  return new Response(audio, {
+    headers: {
+      "Content-Type": "audio/mpeg",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
 // Read the admin-managed Fish Audio key from Firestore (config/fishAudioKey).
 // Uses the public web API key so this works from the edge without a service
 // account. That document is intentionally world-readable so the Worker can read
 // it, but the frontend never fetches it (getSystemConfig reads config/system).
+//
+// The key is cached in-memory for 10 minutes so we don't hammer the Firestore
+// public REST API on every voice request (it is rate-limited and would otherwise
+// return 429 and break voice generation).
+let _fishKeyCache = null;
+let _fishKeyCacheAt = 0;
+const FISH_KEY_TTL = 10 * 60 * 1000;
 async function getFishKeyFromFirestore(env) {
+  const now = Date.now();
+  if (_fishKeyCache && now - _fishKeyCacheAt < FISH_KEY_TTL) return _fishKeyCache;
   const webApiKey = env.FIREBASE_WEB_API_KEY;
   if (!webApiKey) return null;
   const docUrl =
     `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}` +
     `/databases/(default)/documents/config/fishAudioKey?key=` +
     encodeURIComponent(webApiKey);
-  const res = await fetch(docUrl);
-  if (!res.ok) return null;
-  const data = await res.json();
-  const key = data?.fields?.key?.stringValue;
-  return key || null;
+  try {
+    const res = await fetch(docUrl);
+    if (!res.ok) return _fishKeyCache || null;
+    const data = await res.json();
+    const key = data?.fields?.key?.stringValue;
+    if (key) {
+      _fishKeyCache = key;
+      _fishKeyCacheAt = now;
+    }
+    return key || null;
+  } catch {
+    return _fishKeyCache || null;
+  }
 }
 
 function json(obj, status = 200) {

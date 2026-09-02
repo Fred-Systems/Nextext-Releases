@@ -17,7 +17,7 @@ import { getWallpaperForChat, setWallpaperForChat, fileToWallpaperDataUrl } from
 import { usePresence, formatLastSeen } from "../firebase/presence";
 import { uploadChatFile, deleteChatFile } from "../supabase/media";
 import { checkMediaAllowed, recordMediaUsage } from "../firebase/limits";
-import { getAvailableVoices } from "../firebase/tts";
+import { getAvailableVoices, VOICE_CONVERT_API, synthesizeSpeechBytes, Y_MIZRACHI_VOICE_ID } from "../firebase/tts";
 import { uploadMediaFile, RawFileTooLargeError } from "../services/mediaUpload";
 import { FileTooLargeError } from "../media/mediaCompression";
 import { cacheMedia, getLocalMediaUrl, hasCachedMedia } from "../media/localMediaCache";
@@ -95,7 +95,7 @@ async function saveToNexTextFolder(fileName, blob, mimeType) {
 }
 
 import { useStatuses } from "../firebase/status";
-import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote, useSystemConfigHook, translateMessage, LANGUAGES, getLanguageLabel } from "../firebase/ai";
+import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote, useSystemConfigHook, translateMessage, LANGUAGES, getLanguageLabel, sendAIMessage } from "../firebase/ai";
 import { getProxyMediaUrl, getVideoPosterUrl } from "../media/mediaProxy";
 import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
 import ContactSharePicker from "../components/ContactSharePicker";
@@ -660,7 +660,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [attachClosing, setAttachClosing] = useState(false);
   const [showYNote, setShowYNote] = useState(false);
   const [yNoteText, setYNoteText] = useState("");
+  const [yNoteIdea, setYNoteIdea] = useState("");
+  const [yNoteFormatting, setYNoteFormatting] = useState(false);
   const [yVoiceId, setYVoiceId] = useState("y-mizrachi");
+  // Voice-to-voice changer (Record AI Voice Note)
+  const [showVoiceConvert, setShowVoiceConvert] = useState(false);
+  const [vcSending, setVcSending] = useState(false);
+  const [vcError, setVcError] = useState("");
   const [yNoteSending, setYNoteSending] = useState(false);
   const [galleryActive, setGalleryActive] = useState(false);
   const [showLocationSheet, setShowLocationSheet] = useState(false);
@@ -1882,11 +1888,34 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       const result = await uploadChatFile(chatId, myUid, file);
       await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: 0 });
       setYNoteText("");
+      setYNoteIdea("");
       setShowYNote(false);
     } catch (err) {
       setSendError(err?.message || "Couldn't generate the voice note.");
     }
     setYNoteSending(false);
+  };
+
+  // Step B of the voice-note composer: ask the LLM to turn the user's rough idea
+  // into a dramatic, bracket-tagged script optimized for the spoken voice engine.
+  const formatVoiceScript = async () => {
+    const idea = yNoteIdea.trim();
+    if (!idea || yNoteFormatting) return;
+    setYNoteFormatting(true);
+    setSendError("");
+    try {
+      const instruction =
+        "Take this raw user idea and rewrite it into a dramatic script under 500 characters " +
+        "optimized for a fiery speaker. Strip all asterisks, and dynamically insert Fish Audio " +
+        "emotion tags like [serious], [furious], [whispering], [laughter], [slow] to maximize the " +
+        "delivery impact. Extend critical word vowels for heavy stress (e.g., HELLLL!). Return ONLY the formatted text.";
+      const out = await sendAIMessage(myUid, idea, [], instruction);
+      const formatted = (out || "").replace(/^["']|["']$/g, "").trim();
+      if (formatted) setYNoteText(formatted);
+    } catch (err) {
+      setSendError("Couldn't auto-format the script: " + (err?.message || "unknown error"));
+    }
+    setYNoteFormatting(false);
   };
 
   const handleFilePick = async (e) => {    const file = e.target.files?.[0];
@@ -2409,6 +2438,74 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       else setSendError("Couldn't send voice note: " + err.message);
     }
     setUploading(false);
+  };
+
+  // Send an arbitrary audio blob as a voice note (used by the voice-to-voice
+  // changer after the Worker returns converted audio).
+  const sendVoiceBlob = async (blob, duration) => {
+    if (!blob || blob.size === 0) { setSendError("Voice note failed — no audio was captured."); return; }
+    const blocked = parentalBlockedType("voice");
+    if (blocked) { setSendError(blocked); return; }
+    setUploading(true);
+    try {
+      const file = new File([blob], `voice-${Date.now()}.mp3`, { type: "audio/mpeg" });
+      const result = await uploadChatFile(chatId, myUid, file);
+      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: Math.max(1, Math.round(duration || 0)) });
+    } catch (err) {
+      if (err instanceof FileTooLargeError) setSendError("Voice note too large (over 50MB).");
+      else setSendError("Couldn't send voice note: " + err.message);
+    }
+    setUploading(false);
+  };
+
+  // ── Voice-to-voice changer (Record AI Voice Note) ──
+  // Fish Audio has no free audio→audio conversion endpoint, so we capture the
+  // user's SPOKEN WORDS on-device via the Web Speech API and re-synthesize them
+  // in the chosen Fish Audio voice (Y Mizrachi by default). This is the working
+  // free-tier equivalent of "your voice → target voice".
+  const [vcTranscript, setVcTranscript] = useState("");
+  const [vcListening, setVcListening] = useState(false);
+  const [vcVoiceId, setVcVoiceId] = useState("y-mizrachi");
+  const vcSrRef = useRef(null);
+  const vcStartListening = () => {
+    const SR = (typeof window !== "undefined") && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!SR) { setVcError("Speech recognition isn't supported on this device."); return; }
+    try {
+      const rec = new SR();
+      rec.lang = "en-US";
+      rec.interimResults = true;
+      rec.continuous = false;
+      rec.onresult = (e) => {
+        let txt = "";
+        for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+        setVcTranscript(txt);
+      };
+      rec.onerror = (e) => { setVcError("Speech recognition error: " + (e?.error || "unknown")); setVcListening(false); };
+      rec.onend = () => setVcListening(false);
+      vcSrRef.current = rec;
+      setVcError("");
+      rec.start();
+      setVcListening(true);
+    } catch { setVcError("Couldn't start speech recognition."); }
+  };
+  const vcStopListening = () => { try { vcSrRef.current?.stop?.(); } catch {} setVcListening(false); };
+  const vcSend = async () => {
+    const text = vcTranscript.trim();
+    if (!text || vcSending) return;
+    if (sysConfig?.global_voice_enabled === false) { setVcError("Voice features are disabled."); return; }
+    setVcSending(true); setVcError("");
+    try {
+      const voice = availableVoices.find((v) => v.id === vcVoiceId) || availableVoices[0];
+      const blob = await synthesizeSpeechBytes(text, voice?.referenceId || Y_MIZRACHI_VOICE_ID);
+      const file = new File([blob], `ai-voice-${voice?.id || "note"}.mp3`, { type: "audio/mpeg" });
+      const result = await uploadChatFile(chatId, myUid, file);
+      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: 0 });
+      setVcTranscript("");
+      setShowVoiceConvert(false);
+    } catch (err) {
+      setVcError(err?.message || "Voice conversion failed.");
+    }
+    setVcSending(false);
   };
 
   const discardRecordedPreview = (stopPlayback = true) => {
@@ -3634,6 +3731,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     <Mic size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Send Y Mizrachi Voice Note</span>
                   </div>
                 )}
+                {sysConfig?.global_voice_enabled !== false && (
+                  <div onClick={() => { closeAttach(); setShowVoiceConvert(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                    <Mic size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Record AI Voice Note</span>
+                  </div>
+                )}
                 {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
                   <div onClick={() => { closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                     <ImageIcon size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Photo or video</span>
@@ -3677,10 +3779,22 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     <option key={v.id} value={v.id}>{v.name}</option>
                   ))}
                 </select>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textMuted, marginBottom: 4 }}>Tell the AI what you want to hear:</div>
+                <textarea
+                  value={yNoteIdea}
+                  onChange={(e) => setYNoteIdea(e.target.value)}
+                  placeholder="e.g. Tell Moshe Dovid to clean his room or he goes to hell"
+                  rows={2}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, resize: "none", outline: "none", color: t.text, background: t.bg, marginBottom: 8 }}
+                />
+                <div onClick={formatVoiceScript} style={{ alignSelf: "flex-end", textAlign: "center", padding: "9px 14px", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 13, color: t.bubbleMeText, cursor: yNoteFormatting ? "wait" : "pointer", opacity: yNoteFormatting ? 0.6 : 1, marginBottom: 10 }}>
+                  {yNoteFormatting ? "Formatting…" : "Auto-Format for Voice"}
+                </div>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textMuted, marginBottom: 4 }}>Generated Voice Script:</div>
                 <textarea
                   value={yNoteText}
                   onChange={(e) => setYNoteText(e.target.value)}
-                  placeholder="Type what you want the voice to say:"
+                  placeholder="Your formatted script will appear here — edit it before sending."
                   rows={3}
                   style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, resize: "none", outline: "none", color: t.text, background: t.bg }}
                 />
@@ -3689,7 +3803,50 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     Cancel
                   </div>
                   <div onClick={sendYVoiceNote} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: yNoteSending ? "wait" : "pointer", opacity: yNoteSending ? 0.6 : 1 }}>
-                    {yNoteSending ? "Generating…" : "Send"}
+                    {yNoteSending ? "Generating…" : "Generate Audio"}
+                  </div>
+                </div>
+              </div>
+              </>,
+              document.body
+            )}
+            {showVoiceConvert && createPortal(
+              <>
+              <div onClick={() => { if (!vcSending) setShowVoiceConvert(false); }} style={{ position: "fixed", inset: 0, zIndex: 2147481302, background: "rgba(0,0,0,0.45)" }} />
+              <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(340px, 92vw)", background: t.surface, borderRadius: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", zIndex: 2147481303, padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>🎙️ Record AI Voice Note</span>
+                  <X size={18} color={t.textMuted} onClick={() => { if (!vcSending) setShowVoiceConvert(false); }} style={{ cursor: "pointer" }} />
+                </div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 12 }}>
+                  Tap the mic and speak. Your words are re-voiced into the selected Fish Audio voice and posted to the chat.
+                </div>
+                <select
+                  value={vcVoiceId}
+                  onChange={(e) => setVcVoiceId(e.target.value)}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, outline: "none", color: t.text, background: t.bg, marginBottom: 10 }}
+                >
+                  {availableVoices.map((v) => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
+                <div onClick={vcListening ? vcStopListening : vcStartListening} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "16px 0", borderRadius: 12, background: vcListening ? t.primary : t.primaryLight, color: vcListening ? t.bubbleMeText : t.primary, fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 10 }}>
+                  <Mic size={18} color={vcListening ? t.bubbleMeText : t.primary} /> {vcListening ? "Listening… tap to stop" : "Tap to speak"}
+                </div>
+                <textarea
+                  value={vcTranscript}
+                  onChange={(e) => setVcTranscript(e.target.value)}
+                  placeholder="Your spoken words will appear here — edit before sending."
+                  rows={3}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, resize: "none", outline: "none", color: t.text, background: t.bg }}
+                />
+                {vcError && <div style={{ color: "#FF3B30", fontSize: 12.5, margin: "10px 0 0" }}>{vcError}</div>}
+                <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                  <div onClick={() => { if (!vcSending) { setVcTranscript(""); setShowVoiceConvert(false); } }} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, fontWeight: 700, fontSize: 14, color: t.textMuted, cursor: "pointer" }}>
+                    Cancel
+                  </div>
+                  <div onClick={vcSend} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcTranscript.trim() && !vcSending ? "pointer" : "not-allowed", opacity: vcTranscript.trim() && !vcSending ? 1 : 0.5 }}>
+                    {vcSending ? "Converting…" : "Send AI Voice Note"}
                   </div>
                 </div>
               </div>
