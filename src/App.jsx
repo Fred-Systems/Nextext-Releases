@@ -752,18 +752,26 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const SectionCard = useMemo(() => ({ title, emoji, children, sectionKey }) => {
     const ctx = React.useContext(SettingsSearchContext) || { query: "", revamped: false };
     const q = (ctx.query || "").trim().toLowerCase();
+    const bodyRef = React.useRef(null);
+    const [bodyText, setBodyText] = React.useState("");
+    React.useLayoutEffect(() => {
+      setBodyText(bodyRef.current ? (bodyRef.current.textContent || "") : "");
+    });
+    let matched = true;
     if (q) {
       const titleHit = title && title.toLowerCase().includes(q);
       const kw = SETTINGS_SEARCH_KEYWORDS[sectionKey] || [];
       const kwHit = kw.some((k) => k.includes(q) || q.includes(k));
-      if (!titleHit && !kwHit) return null;
+      const bodyHit = (bodyText || "").toLowerCase().includes(q);
+      matched = titleHit || kwHit || bodyHit;
     }
+    const hide = q && !matched;
     const isOpen = sectionKey ? (q ? true : (openSections?.[sectionKey] ?? false)) : true;
     if (ctx.revamped) {
       // Revamped: flat, airy, icon-led categories with hairline dividers — a
       // deliberately different look from the boxed classic cards.
       return (
-        <div style={{ marginBottom: 22 }}>
+        <div style={{ marginBottom: 22, ...(hide ? { display: "none" } : null) }}>
           <div onClick={sectionKey ? () => toggleSection(sectionKey) : undefined} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, cursor: sectionKey ? "pointer" : "default", padding: "6px 4px" }}>
             <span style={{ fontSize: 18, width: 26, textAlign: "center" }}>{emoji}</span>
             <span style={{ fontWeight: 800, fontSize: 16, color: t.text, flex: 1, letterSpacing: 0.2 }}>{title}</span>
@@ -771,7 +779,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           </div>
           {isOpen && (
             <div style={{ background: t.surface, borderRadius: 16, border: `1px solid ${t.border}`, overflow: "hidden" }}>
-              <div style={{ padding: "4px 14px" }}>{children}</div>
+              <div ref={bodyRef} style={{ padding: "4px 14px" }}>{children}</div>
             </div>
           )}
         </div>
@@ -783,7 +791,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     const bgFirstHex = String(t.bg || "").slice(1, 2);
     const headerColor = (bgFirstHex && bgFirstHex > "7") ? "#1E1E1E" : t.text;
     return (
-      <div style={{ marginBottom: 18 }}>
+      <div style={{ marginBottom: 18, ...(hide ? { display: "none" } : null) }}>
         <div onClick={sectionKey ? () => toggleSection(sectionKey) : undefined} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, cursor: sectionKey ? "pointer" : "default" }}>
           <span style={{ fontSize: 14 }}>{emoji}</span>
           <span style={{ fontWeight: 700, fontSize: 14, color: headerColor, flex: 1 }}>{title}</span>
@@ -791,7 +799,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         </div>
         {isOpen && (
           <div style={{ background: t.surface, borderRadius: 14, padding: "4px 14px", border: `1px solid ${t.border}` }}>
-            {children}
+            <div ref={bodyRef}>{children}</div>
           </div>
         )}
       </div>
@@ -3030,17 +3038,6 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     return () => { setNotificationTapHandler(null); setNotificationMarkReadHandler(null); setNotificationReplyHandler(null); setNotificationMuteHandler(null); clearTimeout(retry); clearTimeout(retryMarkRead); clearTimeout(retryReply); clearTimeout(retryMute); };
   }, []);
 
-  // Apply a buffered notification "Reply" once its chat is available in the list.
-  useEffect(() => {
-    if (!pendingNotifReply || !myChats) return;
-    const chat = myChats.find((c) => c.id === pendingNotifReply.chatId);
-    if (chat) {
-      const otherUid = (chat.participants || []).find((p) => p !== myUid);
-      openChat(chat, otherUid, (contacts || []).find((c) => c.uid === otherUid), { replyPrefill: pendingNotifReply.text || "" });
-      setPendingNotifReply(null);
-    }
-  }, [pendingNotifReply, myChats, contacts, openChat]);
-
   useEffect(() => {
     if (!myUid) return;
     // Ask for notification permission once per user (a short delay after login
@@ -3643,6 +3640,19 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       return () => clearTimeout(t);
     }
   }, [pendingNotifChatId, myChats, myUid, contacts, coldStartComplete]);
+
+  // Apply a buffered notification "Reply" once its chat is available in the list.
+  // Placed AFTER `myChats`/`contacts`/`openChat` are declared so the dependency
+  // array can reference them without hitting a temporal-dead-zone error.
+  useEffect(() => {
+    if (!pendingNotifReply || !myChats) return;
+    const chat = myChats.find((c) => c.id === pendingNotifReply.chatId);
+    if (chat) {
+      const otherUid = (chat.participants || []).find((p) => p !== myUid);
+      openChat(chat, otherUid, (contacts || []).find((c) => c.uid === otherUid), { replyPrefill: pendingNotifReply.text || "" });
+      setPendingNotifReply(null);
+    }
+  }, [pendingNotifReply, myChats, contacts, openChat]);
 
   const openGroupInfo = (chat) => {
     setActiveGroup({ chatId: chat?.id, groupName: chat?.groupName });

@@ -1103,10 +1103,12 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg }}>
       {topBarVisible && <div style={{ padding: "calc(12px + var(--safe-top)) 16px 6px", background: t.surface, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, position: "relative", zIndex: 1 }}>
         <span style={{ color: t.text, fontWeight: 800, fontSize: 20, flexShrink: 0 }}>NexText</span>
-        <div style={{ display: "flex", gap: 18, alignItems: "center", flexShrink: 0 }}>
-          <Camera size={20} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => (showGlobalCamera ? closeGlobalCamera() : openGlobalCamera())} />
-          {searchMode !== "visible" && <Search size={20} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => setShowSearch(!showSearch)} />}
-          <Settings size={20} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={onOpenSettings} />
+        <div style={{ display: "flex", gap: 22, alignItems: "center", flexShrink: 0 }}>
+          <Camera size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => (showGlobalCamera ? closeGlobalCamera() : openGlobalCamera())} />
+          <div style={{ width: 1, height: 22, background: t.divider, flexShrink: 0 }} />
+          {searchMode !== "visible" && <Search size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => setShowSearch(!showSearch)} />}
+          <div style={{ width: 1, height: 22, background: t.divider, flexShrink: 0 }} />
+          <Settings size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={onOpenSettings} />
         </div>
       </div>}
 
