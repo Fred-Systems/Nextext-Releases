@@ -25,11 +25,18 @@ export const VOICE_PRESETS = [
 // All voices available to a user given the current system config (honours the
 // admin "hide Rosh" switch and appends admin-created custom voices).
 export function getAvailableVoices(sysConfig) {
+  const profiles = sysConfig?.voiceProfiles || {};
   const presets = VOICE_PRESETS.filter((v) => !(sysConfig?.hideRoshVoice === true && v.id === "rosh"));
   const custom = (sysConfig?.customVoices || [])
     .filter((v) => v && v.name && v.referenceId)
     .map((v) => ({ id: v.id || v.referenceId, name: v.name, referenceId: v.referenceId, custom: true }));
-  return [...presets, ...custom];
+  const all = [...presets, ...custom];
+  // Merge admin director metadata (fullName + prompt) onto each voice.
+  return all.map((v) => {
+    const p = profiles[v.id];
+    if (!p) return v;
+    return { ...v, fullName: p.fullName || v.fullName, prompt: p.prompt || v.prompt };
+  });
 }
 
 export function resolveVoice(sysConfig, voiceId) {

@@ -233,6 +233,12 @@ const SYSTEM_CONFIG_DEFAULTS = {
   // voices (each { id, name, referenceId }) that appear in the voice pickers.
   hideRoshVoice: false,
   customVoices: [],
+  // Per-voice director metadata (admin-editable). Keyed by voice id; each entry
+  // can carry a `fullName` (real/display name) and a `prompt` (extra context the
+  // AI uses when auto-formatting a script for that voice).
+  voiceProfiles: {},
+  // Alternate (revamped) settings page. Admin sets the default; users can toggle.
+  altSettings: false,
 };
 
 export async function ensureSystemConfig() {

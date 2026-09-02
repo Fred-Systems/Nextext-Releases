@@ -49,6 +49,8 @@ export async function postStatus(ownerId, {
   renditions = null,
   errorCode = null,
   errorMessage = null,
+  // visibility: "contacts" (default) or "public" (anyone on NexText can view).
+  visibility = "contacts",
 }) {
   const isVideo = mediaType === "video";
   const usePipeline = isVideo && originalPath;
@@ -83,6 +85,7 @@ export async function postStatus(ownerId, {
     errorMessage: errorMessage || null,
     previewURL: previewURL || null,
     posterURL: posterURL || null,
+    visibility: visibility === "public" ? "public" : "contacts",
   });
 }
 
@@ -278,7 +281,40 @@ export function useStatuses(uids) {
   return statuses;
 }
 
-// Returns a Set of UIDs that have at least one active status.
+// Flip a status's visibility between "contacts" and "public".
+export async function updateStatusVisibility(statusId, visibility) {
+  await setDoc(doc(db, "status", statusId), { visibility: visibility === "public" ? "public" : "contacts" }, { merge: true });
+}
+
+// Public statuses: any status the poster marked visibility:"public". Used by the
+// separate "Public Statuses" tab. Single-field equality query (no composite index
+// needed); client-side expiry filtering mirrors useStatuses.
+export function usePublicStatuses() {
+  const [statuses, setStatuses] = useState([]);
+  const deletingRef = useRef(new Set());
+  useEffect(() => {
+    const q = query(collection(db, "status"), where("visibility", "==", "public"));
+    const unsub = onSnapshot(q, (snap) => {
+      const now = Date.now();
+      const results = [];
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        const expMs = data.expiresAt?.toMillis?.() || 0;
+        if (expMs && expMs < now) {
+          if (!deletingRef.current.has(d.id)) {
+            deletingRef.current.add(d.id);
+            cleanupExpiredDoc(d).catch(() => {});
+          }
+          return;
+        }
+        results.push({ id: d.id, ...data, ownerId: data.ownerId });
+      });
+      setStatuses(results.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0)));
+    }, (err) => console.warn("[usePublicStatuses] snapshot error:", err?.message));
+    return () => unsub();
+  }, []);
+  return statuses;
+}
 export function useActiveStatusUids(uids) {
   const [active, setActive] = useState(new Set());
   const safeUidsKey = (uids || []).filter(Boolean).join(",");

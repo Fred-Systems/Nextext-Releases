@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic, MessageCircle, Download } from "lucide-react";
+import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic, MessageCircle, Download, Globe } from "lucide-react";
 import { useTheme, FONTS } from "../theme/ThemeContext";
-import { postStatus, useStatuses, viewStatus, useStatusViewers, deleteStatus } from "../firebase/status";
+import { postStatus, useStatuses, usePublicStatuses, viewStatus, useStatusViewers, deleteStatus, updateStatusVisibility } from "../firebase/status";
 import { useSystemConfigHook } from "../firebase/ai";
 import { checkStatusAllowed, recordStatusUsage } from "../firebase/limits";
 import { useContacts } from "../firebase/contacts";
@@ -245,6 +245,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   // onto everyone). Persisted to the user's profile and localStorage so it sticks.
   const [statusLayout, setStatusLayout] = useState(() => localStorage.getItem("nextext_status_layout") || "cards");
   const [statusPreviewSize, setStatusPreviewSize] = useState(() => localStorage.getItem("nextext_status_preview_size") || "compact");
+  const [statusTab, setStatusTab] = useState("updates"); // "updates" | "public"
+  const [postPublic, setPostPublic] = useState(false);
+  const [userStatusVisibility, setUserStatusVisibility] = useState("contacts");
   useEffect(() => {
     if (!myUid) return;
     const unsub = onSnapshot(doc(db, "users", myUid), (snap) => {
@@ -253,6 +256,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       setIsAdmin(d?.role === "admin");
       if (d?.statusLayout) { setStatusLayout(d.statusLayout); try { localStorage.setItem("nextext_status_layout", d.statusLayout); } catch {} }
       if (d?.statusPreviewSize) { setStatusPreviewSize(d.statusPreviewSize); try { localStorage.setItem("nextext_status_preview_size", d.statusPreviewSize); } catch {} }
+      if (d?.statusVisibility) setUserStatusVisibility(d.statusVisibility);
       if (d?.displayName || d?.username) setMyDisplayName(d.displayName || d.username || myUid);
     });
     return unsub;
@@ -391,6 +395,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const contactUids = acceptedContacts.map((c) => c.uid);
   const allUids = [myUid, ...contactUids];
   const statuses = useStatuses(allUids);
+  const publicStatuses = usePublicStatuses();
 
   useEffect(() => {
     if (showPost && postTextRef.current && document.activeElement !== postTextRef.current) {
@@ -412,8 +417,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     }
   }, [initialViewStatuses, statuses, viewStoryOwner, onStoryViewerChange, onConsumeInitialView]);
 
-  const myStatuses = statuses.filter((s) => s.ownerId === myUid);
-  const contactStatuses = statuses.filter((s) => s.ownerId !== myUid);
+  const sourceStatuses = statusTab === "public" ? publicStatuses : statuses;
+  const myStatuses = sourceStatuses.filter((s) => s.ownerId === myUid);
+  const contactStatuses = sourceStatuses.filter((s) => s.ownerId !== myUid);
 
   const grouped = {};
   contactStatuses.forEach((s) => {
@@ -521,6 +527,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     setIsVoiceRecording(false);
     setPosting(true);
     setPostError("");
+    const postVisibility = (postPublic || userStatusVisibility === "everyone") ? "public" : "contacts";
     try {
       // Handle voice-note status — a recorded audio blob with optional caption
       // (and optional background image). Uploaded the same way chat voice
@@ -540,6 +547,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           textStickers: textStickers.length ? textStickers : null,
           allowDownload: snapAllowDownload,
           commentsHidden: snapHideComments,
+          visibility: postVisibility,
         });
       }
       // Handle multiple images - send as separate status updates
@@ -557,8 +565,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
            durationMs: snapDuration * 1000,
            textOverlay: snapTextOverlay.trim() || null,
           textStickers: textStickers.length ? textStickers : null,
-           allowDownload: snapAllowDownload,
-           commentsHidden: snapHideComments,
+            allowDownload: snapAllowDownload,
+            commentsHidden: snapHideComments,
+            visibility: postVisibility,
           });
         }
         setPostImages([]);
@@ -614,6 +623,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             commentCount: 0,
             createdAt: serverTimestamp(),
             expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            visibility: postVisibility,
           });
         } else {
           const result = await uploadMediaFile(`status-${myUid}`, myUid, file);
@@ -691,6 +701,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             // feed uses this instead of re-deriving a Cloudinary fetch poster,
             // avoiding per-view transformation-credit costs.
             thumbnailURL: result.thumbnailURL || null,
+            visibility: postVisibility,
           });
         }
       }
@@ -717,6 +728,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           bgAudioVolume: bgAudioVol,
           videoVolume: null,
           commentsHidden: snapHideComments,
+          visibility: postVisibility,
         });
       }
 
@@ -1104,29 +1116,42 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
         <div onClick={() => setCameraCapture({ target: "chat" })} title="Camera" style={{ marginLeft: "auto", width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <Camera size={20} color={t.primary} />
         </div>
-        <div style={{ display: "flex", background: t.primaryLight, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
-          {["cards", "list", "rows"].map((l) => (
-            <span
-              key={l}
-              onClick={() => changeStatusLayout(l)}
-              style={{ padding: "6px 10px", fontSize: 11, fontWeight: 700, textTransform: "capitalize", color: statusLayout === l ? "#fff" : t.text, background: statusLayout === l ? t.primary : "transparent", cursor: "pointer" }}
-            >{l}</span>
-          ))}
-        </div>
-        {statusLayout === "cards" && (
-          <div style={{ display: "flex", background: t.primaryLight, borderRadius: 16, overflow: "hidden", flexShrink: 0 }}>
-            {["compact", "cozy"].map((s) => (
-              <span
-                key={s}
-                onClick={() => changeStatusPreviewSize(s)}
-                style={{ padding: "6px 10px", fontSize: 12, fontWeight: 700, textTransform: "capitalize", color: statusPreviewSize === s ? "#fff" : t.text, background: statusPreviewSize === s ? t.primary : "transparent", cursor: "pointer" }}
-              >{s}</span>
-            ))}
+        <select
+          value={statusLayout === "cards" ? `cards-${statusPreviewSize}` : statusLayout}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "list") changeStatusLayout("list");
+            else if (v === "rows") changeStatusLayout("rows");
+            else if (v === "cards-cozy") { changeStatusLayout("cards"); changeStatusPreviewSize("cozy"); }
+            else { changeStatusLayout("cards"); changeStatusPreviewSize("compact"); }
+          }}
+          style={{ padding: "7px 8px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 12, fontWeight: 600, outline: "none", color: t.text, background: t.bg, flexShrink: 0 }}
+        >
+          <option value="cards-compact">Cards · Compact</option>
+          <option value="cards-cozy">Cards · Cozy</option>
+          <option value="list">List</option>
+          <option value="rows">Rows</option>
+        </select>
+      </div>
+
+      {/* Tab bar: Updates (contacts) vs Public */}
+      <div style={{ display: "flex", background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
+        {[
+          { id: "updates", label: "Updates" },
+          { id: "public", label: `Public${publicStatuses.length ? ` (${publicStatuses.length})` : ""}` },
+        ].map((tab) => (
+          <div
+            key={tab.id}
+            onClick={() => setStatusTab(tab.id)}
+            style={{ flex: 1, textAlign: "center", padding: "11px 0", fontSize: 13.5, fontWeight: 700, cursor: "pointer", color: statusTab === tab.id ? t.primary : t.textMuted, borderBottom: `2px solid ${statusTab === tab.id ? t.primary : "transparent"}` }}
+          >
+            {tab.label}
           </div>
-        )}
+        ))}
       </div>
 
       <div className="nx-scroll" style={{ flex: 1, paddingBottom: 70, minHeight: 0 }}>
+        {statusTab === "updates" && (<>
         <SectionHeader label="My Status" />
         <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", borderBottom: `1px solid ${t.border}` }}>
           <div style={{ position: "relative", cursor: "pointer" }} onClick={() => openPostSheet("text")}>
@@ -1165,13 +1190,20 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
               </span>
             </div>
             <SlideViewerCount statusId={s.id} t={t} onClickEye={(sid) => setViewerModalStatusId(sid)} />
+            <div
+              onClick={(e) => { e.stopPropagation(); updateStatusVisibility(s.id, s.visibility === "public" ? "contacts" : "public").catch(() => {}); }}
+              title={s.visibility === "public" ? "Visible to everyone — tap to limit to contacts" : "Limited to contacts — tap to make public"}
+              style={{ padding: "4px 8px", borderRadius: 8, fontSize: 10.5, fontWeight: 700, cursor: "pointer", flexShrink: 0, color: s.visibility === "public" ? "#fff" : t.textMuted, background: s.visibility === "public" ? t.primary : t.primaryLight }}
+            >
+              {s.visibility === "public" ? "PUBLIC" : "CONTACTS"}
+            </div>
             <div onClick={(e) => { e.stopPropagation(); if (window.confirm("Delete this status update early?")) { deleteStatus(s.id).catch(() => {}); } }} style={{ padding: 4, cursor: "pointer", flexShrink: 0 }}>
               <Trash2 size={15} color="#FF3B30" />
             </div>
           </div>
-        ))}
+        ))}</>)}
 
-        {Object.keys(grouped).length > 0 && <SectionHeader label="Recent Updates" />}
+        {Object.keys(grouped).length > 0 && <SectionHeader label={statusTab === "public" ? "Public Statuses" : "Recent Updates"} />}
         {statusLayout === "list" ? (
           <div style={{ display: "flex", overflowX: "auto", overflowY: "hidden", padding: "10px 16px 14px", WebkitOverflowScrolling: "touch", onTouchMove: (e) => e.stopPropagation() }}>
             {Object.entries(grouped).map(([uid, items]) => {
@@ -1856,6 +1888,24 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                 style={{ width: 46, height: 26, borderRadius: 13, background: hideComments ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.15s ease" }}
               >
                 <span style={{ position: "absolute", top: 3, left: hideComments ? 23 : 3, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.15s ease", boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }} />
+              </button>
+            </div>
+
+            {/* Public visibility toggle for this status */}
+            <div style={{ marginBottom: 12, padding: "12px 14px", borderRadius: 12, background: t.bg, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Globe size={18} color={postPublic ? t.primary : t.textMuted} />
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>Make public</div>
+                  <div style={{ fontSize: 11.5, color: t.textMuted }}>{postPublic ? "Anyone on NexText can see this" : "Only your NexText contacts"}</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setPostPublic((v) => !v)}
+                aria-label={postPublic ? "Make contacts-only" : "Make public"}
+                style={{ width: 46, height: 26, borderRadius: 13, background: postPublic ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.15s ease" }}
+              >
+                <span style={{ position: "absolute", top: 3, left: postPublic ? 23 : 3, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.15s ease", boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }} />
               </button>
             </div>
 

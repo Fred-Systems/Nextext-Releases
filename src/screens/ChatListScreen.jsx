@@ -813,6 +813,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         durationMs: durationMs || 8000,
         textOverlay: cameraCaption.trim() || null,
         waitForVideo: media.type === "video",
+        visibility: "contacts",
       });
       discardCapturedMedia();
     } catch {
@@ -879,7 +880,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     const nameSize = compactList ? 14.5 : 15.5;
     const msgSize = compactList ? 12.5 : 13.5;
     const badgeSize = compactList ? 12 : 14;
-    const gap = compactList ? 10 : 13;
+    const gap = compactList ? 14 : 18;
     return (
     <div key={c.id} style={{ position: "relative", overflow: "hidden", marginBottom: 1 }}>
       <div

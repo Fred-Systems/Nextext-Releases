@@ -180,7 +180,7 @@ export default function CameraCapture({
     const videoMime = videoMimeCandidates.find(
       (m) => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)
     ) || "";
-    try { recorder = videoMime ? new MediaRecorder(streamRef.current, { mimeType: videoMime }) : new MediaRecorder(streamRef.current); }
+    try { recorder = videoMime ? new MediaRecorder(streamRef.current, { mimeType: videoMime, audioBitsPerSecond: 128000, videoBitsPerSecond: 2500000 }) : new MediaRecorder(streamRef.current, { audioBitsPerSecond: 128000, videoBitsPerSecond: 2500000 }); }
     catch { try { recorder = new MediaRecorder(streamRef.current); } catch { return; } }
     recorderRef.current = recorder;
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };

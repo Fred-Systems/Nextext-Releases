@@ -2,15 +2,16 @@ import React, { useState, useEffect, useRef } from "react";
 import { ChevronLeft, Send, Plus, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive, Copy, Forward, MessageSquare } from "lucide-react";
 import VoiceToTextButton from "../components/VoiceToTextButton";
 import VoiceWaveform from "../components/VoiceWaveform";
-import { getAvailableVoices, resolveVoice } from "../firebase/tts";
+import { getAvailableVoices, resolveVoice, synthesizeSpeechBytes, Y_MIZRACHI_VOICE_ID } from "../firebase/tts";
 import { useTheme } from "../theme/ThemeContext";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { deleteChatCompletely } from "../firebase/chats";
+import { deleteChatCompletely, sendMediaMessage } from "../firebase/chats";
 import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, detectImageIntent, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, setGeminiModel, useSystemConfigHook, describeAIError } from "../firebase/ai";
 import { useAIIconStyle, getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
 import Avatar from "../components/Avatar";
+import { downloadMedia } from "../utils/download";
 
 function ThinkingDots({ color = "#000" }) {
   return (
@@ -112,21 +113,7 @@ function AIImage({ src, onOpen, style = {} }) {
   const download = async () => {
     if (!src || saving) return;
     setSaving(true);
-    try {
-      const res = await fetch(src);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `nextext-ai-image-${Date.now()}.png`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-    } catch {
-      // Fallback: open in a new tab so the user can long-press to save.
-      window.open(src, "_blank", "noopener");
-    }
+    await downloadMedia(src, `nextext-ai-image-${Date.now()}.png`);
     setSaving(false);
   };
   // Safety: if the image never fires onLoad/onError (e.g. the generator stalls),
@@ -230,14 +217,7 @@ function AutoAudio({ src, canDownload }) {
     return () => clearTimeout(to);
   }, [src]);
   const download = () => {
-    try {
-      const a = document.createElement("a");
-      a.href = src;
-      a.download = "y-mizrachi-voice.mp3";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } catch {}
+    downloadMedia(src, "y-mizrachi-voice.mp3");
   };
   return (
     <div style={{ marginTop: 8 }}>
@@ -287,6 +267,12 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [showChatPicker, setShowChatPicker] = useState(false);
   const [allChats, setAllChats] = useState([]);
   const [contactNames, setContactNames] = useState({});
+  const [showPodcast, setShowPodcast] = useState(false);
+  const [podcastVoices, setPodcastVoices] = useState([]);
+  const [podcastMode, setPodcastMode] = useState("auto");
+  const [podcastTopic, setPodcastTopic] = useState("");
+  const [podcastBusy, setPodcastBusy] = useState(false);
+  const [podcastStatus, setPodcastStatus] = useState("");
   const [summarizingExternal, setSummarizingExternal] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isArchived, setIsArchived] = useState(false);
@@ -317,6 +303,72 @@ export default function AIChatScreen({ myUid, onBack }) {
   const imageInputRef = useRef(null);
   const pinchStartRef = useRef(null);
   const chatId = `${AI_CHAT_PREFIX}${myUid}`;
+
+  // ── AI Podcast / multi-voice conversation ──
+  const availableVoices = getAvailableVoices(sysConfig);
+  const togglePodcastVoice = (id) => {
+    setPodcastVoices((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= 4) return prev;
+      return [...prev, id];
+    });
+  };
+  // Parse the AI's script output into a list of {voiceId, text} turns.
+  const parsePodcastScript = (raw, fallbackVoices) => {
+    try {
+      const match = raw.match(/\[[\s\S]*\]/);
+      const arr = JSON.parse(match ? match[0] : raw);
+      if (Array.isArray(arr)) {
+        return arr
+          .filter((l) => l && (l.text || l.line))
+          .map((l) => ({ voiceId: l.voiceId || fallbackVoices[0], text: (l.text || l.line || "").toString() }));
+      }
+    } catch {}
+    // Fallback: one line for the first selected voice.
+    return [{ voiceId: fallbackVoices[0], text: raw.trim() }];
+  };
+  const generatePodcast = async () => {
+    const voices = podcastVoices.length ? podcastVoices : [availableVoices[0]?.id].filter(Boolean);
+    if (podcastBusy || voices.length < 1) return;
+    setPodcastBusy(true);
+    setPodcastStatus("Writing the conversation…");
+    try {
+      const voiceMeta = voices.map((id) => {
+        const v = availableVoices.find((x) => x.id === id);
+        const prof = sysConfig?.voiceProfiles?.[id] || {};
+        return `- ${v?.name || id}${prof.fullName ? ` (${prof.fullName})` : ""}${prof.prompt ? `: ${prof.prompt}` : ""}`;
+      }).join("\n");
+      const modeLine = podcastMode === "auto"
+        ? "Invent a natural, engaging podcast/conversation topic that fits these speakers. You may use details and names you know about them."
+        : `Follow the user's direction below for what the conversation should be about and each speaker's opinion/style:\n${podcastTopic}`;
+      const instruction =
+        "You are producing a multi-speaker AI podcast script. Output STRICTLY a JSON array (no markdown, no code fences) of objects {\"voiceId\": string, \"text\": string}. " +
+        "Each 'text' is one spoken turn of under 220 characters. Use Fish Audio bracket tags like [serious], [laughing], [slow], [whispering] for emotion — NEVER asterisks or italics. " +
+        "Extend stressed vowels for emphasis. Keep it punchy and conversational.\n" +
+        "Speakers (use the exact voiceId values):\n" + voiceMeta + "\n" +
+        "Mode: " + modeLine + "\n" +
+        "Produce 6-10 turns, alternating speakers naturally.";
+      const raw = await sendAIMessage(myUid, "Generate the podcast script now.", [], instruction);
+      setPodcastStatus("Synthesizing voices…");
+      const lines = parsePodcastScript(raw || "", voices);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const v = availableVoices.find((x) => x.id === line.voiceId) || availableVoices.find((x) => x.id === voices[0]);
+        const text = line.text.trim();
+        if (!text) continue;
+        setPodcastStatus(`Synthesizing turn ${i + 1} of ${lines.length} (${v?.name || "voice"})…`);
+        const blob = await synthesizeSpeechBytes(text, v?.referenceId || Y_MIZRACHI_VOICE_ID);
+        const file = new File([blob], `podcast-${i}.mp3`, { type: "audio/mpeg" });
+        const uploadResult = await uploadChatFile(chatId, myUid, file);
+        await sendMediaMessage(chatId, myUid, "voice", uploadResult, [AI_CONTACT_UID], {});
+      }
+      setPodcastStatus("Podcast posted! ✓");
+      setTimeout(() => { setShowPodcast(false); setPodcastBusy(false); setPodcastStatus(""); }, 1200);
+    } catch (err) {
+      setPodcastStatus("Error: " + (err?.message || "failed"));
+      setPodcastBusy(false);
+    }
+  };
 
   // ── Voice replies (Fish Audio / Y Mizrachi) ──
   const voiceMasterOn = sysConfig?.global_voice_enabled !== false;
@@ -926,6 +978,14 @@ export default function AIChatScreen({ myUid, onBack }) {
               <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>AI Assistant Persona</span>
               <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
             </div>
+            <div
+              onClick={() => { setShowSettings(false); setShowPodcast(true); }}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
+            >
+              <span style={{ fontSize: 16 }}>🎙️</span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Start AI Podcast</span>
+              <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
+            </div>
             {voiceMasterOn && (
               <div
                 onClick={sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin ? undefined : toggleVoiceReplies}
@@ -1421,6 +1481,57 @@ export default function AIChatScreen({ myUid, onBack }) {
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={() => setShowClearConfirm(false)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>Cancel</button>
               <button onClick={clearChat} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: "#FF3B30", color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>Clear</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Podcast / multi-voice conversation builder */}
+      {showPodcast && (
+        <div onClick={() => { if (!podcastBusy) setShowPodcast(false); }} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: t.surface, borderRadius: 18, width: "100%", maxWidth: 340, maxHeight: "86vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 800, fontSize: 17, color: t.text }}>🎙️ AI Podcast</div>
+              <X size={20} color={t.text} onClick={() => { if (!podcastBusy) setShowPodcast(false); }} style={{ cursor: "pointer" }} />
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 8 }}>Select up to 4 voices</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                {availableVoices.map((v) => {
+                  const sel = podcastVoices.includes(v.id);
+                  return (
+                    <div key={v.id} onClick={() => togglePodcastVoice(v.id)} style={{ padding: "8px 12px", borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: "pointer", border: `1px solid ${sel ? t.primary : t.border}`, background: sel ? t.primary : t.bg, color: sel ? "#fff" : t.text }}>
+                      {v.name}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 8 }}>Mode</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                <div onClick={() => setPodcastMode("auto")} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${podcastMode === "auto" ? t.primary : t.border}`, background: podcastMode === "auto" ? t.primary : t.bg, color: podcastMode === "auto" ? "#fff" : t.text }}>AI invents topic</div>
+                <div onClick={() => setPodcastMode("directed")} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${podcastMode === "directed" ? t.primary : t.border}`, background: podcastMode === "directed" ? t.primary : t.bg, color: podcastMode === "directed" ? "#fff" : t.text }}>I direct it</div>
+              </div>
+              {podcastMode === "directed" && (
+                <textarea
+                  value={podcastTopic}
+                  onChange={(e) => setPodcastTopic(e.target.value)}
+                  placeholder="Describe the topic and what each voice should say or how they should speak (e.g. 'Voice A is skeptical, Voice B is excited about...')."
+                  rows={4}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, resize: "none", outline: "none", color: t.text, background: t.bg, marginBottom: 12 }}
+                />
+              )}
+              {podcastStatus && (
+                <div style={{ fontSize: 12.5, color: t.primary, fontWeight: 600, marginBottom: 8 }}>{podcastStatus}</div>
+              )}
+            </div>
+            <div style={{ padding: 14, borderTop: `1px solid ${t.border}` }}>
+              <button
+                onClick={generatePodcast}
+                disabled={podcastBusy || podcastVoices.length < 1}
+                style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", background: (podcastBusy || podcastVoices.length < 1) ? t.border : t.primary, color: "#fff", fontWeight: 700, fontSize: 15, cursor: (podcastBusy || podcastVoices.length < 1) ? "not-allowed" : "pointer" }}
+              >
+                {podcastBusy ? "Generating…" : "Generate Podcast"}
+              </button>
             </div>
           </div>
         </div>

@@ -4,7 +4,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { AI_CONTACT_UID, PERSONALITIES } from "../firebase/ai";
-import { setFishAudioKey, getFishAudioKey } from "../firebase/tts";
+import { setFishAudioKey, getFishAudioKey, getAvailableVoices } from "../firebase/tts";
 import { getOrCreateDirectChat } from "../firebase/chats";
 import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings } from "../firebase/config-settings";
 import { getPreWarmConfig, setPreWarmEnabled } from "../firebase/prewarm";
@@ -230,6 +230,12 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [aiModeDraft, setAiModeDraft] = useState(sysConfig?.aiMode || "old");
   const [aiLiveDraft, setAiLiveDraft] = useState(sysConfig?.aiLiveModel || "groq/compound");
   const [aiSaved, setAiSaved] = useState(false);
+  const [voiceProfilesDraft, setVoiceProfilesDraft] = useState(sysConfig?.voiceProfiles || {});
+  const [voiceProfilesSaved, setVoiceProfilesSaved] = useState(false);
+  useEffect(() => {
+    if (sysConfig?.voiceProfiles != null) setVoiceProfilesDraft(sysConfig.voiceProfiles);
+  }, [sysConfig?.voiceProfiles]);
+  const allVoices = getAvailableVoices(sysConfig);
   const [geminiKeyDraft, setGeminiKeyDraft] = useState(sysConfig?.geminiApiKey || "");
   useEffect(() => {
     if (sysConfig?.geminiApiKey != null) setGeminiKeyDraft(sysConfig.geminiApiKey);
@@ -1740,6 +1746,40 @@ export default function AdminDashboard({ myUid, onBack }) {
                 </div>
               </div>
 
+              <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: t.text, marginBottom: 4 }}>Per-Voice Director Profiles</div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+                  Give each voice a real/full name and a short prompt. When a user auto-formats a script for that voice (e.g. Y Mizrachi), the AI uses this context to weave the name and personality into the output.
+                </div>
+                {(allVoices || []).map((v) => {
+                  const prof = voiceProfilesDraft[v.id] || {};
+                  return (
+                    <div key={v.id} style={{ borderTop: `1px solid ${t.border}`, paddingTop: 10, marginTop: 10 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: t.text, marginBottom: 6 }}>{v.name}{v.custom ? " (custom)" : ""}</div>
+                      <input
+                        value={prof.fullName || ""}
+                        onChange={(e) => setVoiceProfilesDraft((d) => ({ ...d, [v.id]: { ...(d[v.id] || {}), fullName: e.target.value } }))}
+                        placeholder="Full / real name (optional)"
+                        style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, outline: "none", color: t.text, background: t.bg, marginBottom: 6 }}
+                      />
+                      <textarea
+                        value={prof.prompt || ""}
+                        onChange={(e) => setVoiceProfilesDraft((d) => ({ ...d, [v.id]: { ...(d[v.id] || {}), prompt: e.target.value } }))}
+                        placeholder="Prompt / personality context for the AI (optional)"
+                        rows={2}
+                        style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, resize: "none", outline: "none", color: t.text, background: t.bg }}
+                      />
+                    </div>
+                  );
+                })}
+                <button
+                  onClick={() => { setSystemConfig({ voiceProfiles: voiceProfilesDraft }, myUid); setVoiceProfilesSaved(true); setTimeout(() => setVoiceProfilesSaved(false), 2000); }}
+                  style={{ marginTop: 12, width: "100%", padding: 10, borderRadius: 10, border: "none", background: t.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}
+                >
+                  {voiceProfilesSaved ? "Saved ✓" : "Save Voice Profiles"}
+                </button>
+              </div>
+
               <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
             <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.border, position: "relative" }}>
               <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.hideMizrachiMode ? 23 : 3, transition: "left 0.15s" }} />
@@ -1747,6 +1787,12 @@ export default function AdminDashboard({ myUid, onBack }) {
             <span style={{ fontWeight: 700, fontSize: 14, color: sysConfig?.hideMizrachiMode ? "#fff" : t.text }}>
               {sysConfig?.hideMizrachiMode ? "Y Mizrachi Mode: HIDDEN" : "Y Mizrachi Mode: visible"}
             </span>
+          </div>
+          <div onClick={() => { setSystemConfig({ altSettings: !sysConfig?.altSettings }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.altSettings ? t.primary : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
+            <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.altSettings ? t.border : t.border, position: "relative" }}>
+              <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.altSettings ? 23 : 3, transition: "left 0.15s" }} />
+            </div>
+            <span style={{ fontWeight: 700, fontSize: 14, color: sysConfig?.altSettings ? "#fff" : t.text }}>{sysConfig?.altSettings ? "Revamped Settings: default ON for all users" : "Revamped Settings: default OFF (classic)"}</span>
           </div>
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>

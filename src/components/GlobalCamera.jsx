@@ -156,8 +156,8 @@ export default function GlobalCamera({ t, myUid, chats, contacts, hideNav, onClo
     ) || "";
     try {
       recorder = videoMime
-        ? new MediaRecorder(streamRef.current, { mimeType: videoMime })
-        : new MediaRecorder(streamRef.current);
+        ? new MediaRecorder(streamRef.current, { mimeType: videoMime, audioBitsPerSecond: 128000, videoBitsPerSecond: 2500000 })
+        : new MediaRecorder(streamRef.current, { audioBitsPerSecond: 128000, videoBitsPerSecond: 2500000 });
     } catch {
       try { recorder = new MediaRecorder(streamRef.current); } catch { return; }
     }

@@ -97,7 +97,7 @@ async function saveToNexTextFolder(fileName, blob, mimeType) {
 import { useStatuses } from "../firebase/status";
 import { shouldTriggerGroupAI, sendGroupAIMessage, AI_CONTACT_UID, transcribeVoiceNote, useSystemConfigHook, translateMessage, LANGUAGES, getLanguageLabel, sendAIMessage } from "../firebase/ai";
 import { getProxyMediaUrl, getVideoPosterUrl } from "../media/mediaProxy";
-import { useContacts, getContactDisplayName, getContactRealName } from "../firebase/contacts";
+import { useContacts, getContactDisplayName, getContactRealName, sendContactRequest } from "../firebase/contacts";
 import ContactSharePicker from "../components/ContactSharePicker";
 import ForwardPicker from "../components/ForwardPicker";
 import VoiceToTextButton from "../components/VoiceToTextButton";
@@ -665,8 +665,16 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [yVoiceId, setYVoiceId] = useState("y-mizrachi");
   // Voice-to-voice changer (Record AI Voice Note)
   const [showVoiceConvert, setShowVoiceConvert] = useState(false);
+  const [vcRecording, setVcRecording] = useState(false);
+  const [vcBlob, setVcBlob] = useState(null);
+  const [vcUrl, setVcUrl] = useState(null);
+  const [vcDuration, setVcDuration] = useState(0);
   const [vcSending, setVcSending] = useState(false);
   const [vcError, setVcError] = useState("");
+  const vcMediaRef = useRef(null);
+  const vcAudioRef = useRef(null);
+  const vcChunksRef = useRef([]);
+  const vcStartRef = useRef(0);
   const [yNoteSending, setYNoteSending] = useState(false);
   const [galleryActive, setGalleryActive] = useState(false);
   const [showLocationSheet, setShowLocationSheet] = useState(false);
@@ -852,6 +860,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [showOverflow, setShowOverflow] = useState(openSettings || false);
 
   const [showSearch, setShowSearch] = useState(false);
+  const [contactRequestSent, setContactRequestSent] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [chatMeta, setChatMeta] = useState(null);
   const [memberNames, setMemberNames] = useState({});
@@ -1904,16 +1913,32 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setYNoteFormatting(true);
     setSendError("");
     try {
+      const voice = availableVoices.find((v) => v.id === yVoiceId) || availableVoices[0];
+      const voiceName = voice?.fullName || voice?.name || "the speaker";
+      const voiceExtra = voice?.prompt ? `\nContext about ${voiceName}: ${voice.prompt}` : "";
       const instruction =
-        "Take this raw user idea and rewrite it into a dramatic script under 500 characters " +
-        "optimized for a fiery speaker. Strip all asterisks, and dynamically insert Fish Audio " +
-        "emotion tags like [serious], [furious], [whispering], [laughter], [slow] to maximize the " +
-        "delivery impact. Extend critical word vowels for heavy stress (e.g., HELLLL!). Return ONLY the formatted text.";
+        "You are an expert AI Audio Director specializing in script formatting for the Fish Audio S2.1 Pro Text-to-Speech system. " +
+        "Transform the user's raw concept into a dramatic, highly expressive script optimized for vocal synthesis.\n\n" +
+        "CRITICAL FORMATTING DIRECTIONS:\n" +
+        "1. NEVER use markdown symbols like asterisks (*) or italics (_) to denote action or emotion. The voice engine will try to read them literally.\n" +
+        "2. Use square brackets [] exclusively for inline emotion and prosody cues. Place tags exactly where the tone shifts.\n" +
+        "3. Keep the overall script tight, punchy, and strictly under 500 characters.\n\n" +
+        "VOCABULARY & STYLE GUIDE:\n" +
+        "- Layer expressions at the beginning of dramatic sentences using stacked brackets, e.g. '[furious][dark]'.\n" +
+        "- Inject natural conversational fillers like '[sigh] Oy vey...', '[gasp]', or '[clear throat]' to maximize human-like pacing.\n" +
+        "- Use explicit pacing tags like '[pause]', '[long pause]', or '[slow]' right before highly critical reveals.\n" +
+        "- Emphasize intense final words by typing them in ALL CAPS and extending vowel phonetics, e.g. 'goooo... straight... TO HELLLL!'.\n" +
+        "The script is voiced by: " + voiceName + "." + voiceExtra + "\n" +
+        "If the user's idea references a specific person by name, recognize the name and weave it naturally into the script; if a name is not recognized, simply ignore that detail.\n" +
+        "Return ONLY the formatted script text and nothing else.";
       const out = await sendAIMessage(myUid, idea, [], instruction);
       const formatted = (out || "").replace(/^["']|["']$/g, "").trim();
-      if (formatted) setYNoteText(formatted);
+      // Always produce something — fall back to the user's raw idea if the LLM fails.
+      setYNoteText(formatted || idea);
     } catch (err) {
-      setSendError("Couldn't auto-format the script: " + (err?.message || "unknown error"));
+      // Never leave the user stuck: fall back to their original text.
+      setYNoteText(idea);
+      setSendError("Couldn't auto-format — using your text as-is.");
     }
     setYNoteFormatting(false);
   };
@@ -2464,43 +2489,48 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   // in the chosen Fish Audio voice (Y Mizrachi by default). This is the working
   // free-tier equivalent of "your voice → target voice".
   const [vcTranscript, setVcTranscript] = useState("");
-  const [vcListening, setVcListening] = useState(false);
   const [vcVoiceId, setVcVoiceId] = useState("y-mizrachi");
-  const vcSrRef = useRef(null);
-  const vcStartListening = () => {
-    const SR = (typeof window !== "undefined") && (window.SpeechRecognition || window.webkitSpeechRecognition);
-    if (!SR) { setVcError("Speech recognition isn't supported on this device."); return; }
+  const vcStartRec = async () => {
     try {
-      const rec = new SR();
-      rec.lang = "en-US";
-      rec.interimResults = true;
-      rec.continuous = false;
-      rec.onresult = (e) => {
-        let txt = "";
-        for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
-        setVcTranscript(txt);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      vcChunksRef.current = [];
+      const rec = new MediaRecorder(stream);
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) vcChunksRef.current.push(e.data); };
+      rec.onstop = () => {
+        const blob = new Blob(vcChunksRef.current, { type: rec.mimeType || "audio/webm" });
+        if (vcUrl) URL.revokeObjectURL(vcUrl);
+        setVcUrl(URL.createObjectURL(blob));
+        setVcBlob(blob);
+        setVcDuration((Date.now() - vcStartRef.current) / 1000);
+        stream.getTracks().forEach((tr) => tr.stop());
       };
-      rec.onerror = (e) => { setVcError("Speech recognition error: " + (e?.error || "unknown")); setVcListening(false); };
-      rec.onend = () => setVcListening(false);
-      vcSrRef.current = rec;
-      setVcError("");
+      vcStartRef.current = Date.now();
       rec.start();
-      setVcListening(true);
-    } catch { setVcError("Couldn't start speech recognition."); }
+      vcMediaRef.current = rec;
+      setVcError("");
+      setVcRecording(true);
+    } catch { setVcError("Microphone access denied."); }
   };
-  const vcStopListening = () => { try { vcSrRef.current?.stop?.(); } catch {} setVcListening(false); };
+  const vcStopRec = () => { try { vcMediaRef.current?.stop?.(); } catch {} setVcRecording(false); };
+  const vcDiscard = () => {
+    if (vcUrl) URL.revokeObjectURL(vcUrl);
+    setVcBlob(null); setVcUrl(null); setVcDuration(0); setVcTranscript(""); setVcError("");
+  };
   const vcSend = async () => {
-    const text = vcTranscript.trim();
-    if (!text || vcSending) return;
+    if (!vcBlob || vcSending) return;
     if (sysConfig?.global_voice_enabled === false) { setVcError("Voice features are disabled."); return; }
     setVcSending(true); setVcError("");
     try {
       const voice = availableVoices.find((v) => v.id === vcVoiceId) || availableVoices[0];
+      // Groq Whisper transcription → text, then Fish Audio TTS in the chosen voice.
+      const text = (await transcribeVoiceNote(myUid, vcBlob)).trim();
+      if (!text) throw new Error("Couldn't transcribe the recording.");
       const blob = await synthesizeSpeechBytes(text, voice?.referenceId || Y_MIZRACHI_VOICE_ID);
       const file = new File([blob], `ai-voice-${voice?.id || "note"}.mp3`, { type: "audio/mpeg" });
       const result = await uploadChatFile(chatId, myUid, file);
       await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: 0 });
-      setVcTranscript("");
+      setVcTranscript(text);
+      vcDiscard();
       setShowVoiceConvert(false);
     } catch (err) {
       setVcError(err?.message || "Voice conversion failed.");
@@ -3486,7 +3516,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "calc(14px + var(--safe-top)) 12px 14px", background: "#111B21", position: "relative", flexShrink: 0 }}>
         <ChevronLeft size={22} color="#fff" onClick={handleBack} style={{ cursor: "pointer" }} />
-        <div onClick={onOpenProfile} style={{ cursor: "pointer" }}>
+        <div onClick={() => { if (isGroup && onOpenGroupInfo) onOpenGroupInfo({ id: chatId, groupName: chatMeta?.groupName }); else onOpenProfile(); }} style={{ cursor: "pointer" }}>
           {isGroup && chatMeta?.groupPhotoURL ? (
             <img src={chatMeta.groupPhotoURL} alt="" style={{ width: 38, height: 38, borderRadius: "50%", objectFit: "cover", cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); setFullscreenImage(chatMeta.groupPhotoURL); }} />
           ) : (
@@ -3503,7 +3533,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             />
           )}
         </div>
-          <div onClick={onOpenProfile} style={{ flex: 1, cursor: "pointer" }}>
+          <div onClick={() => { if (isGroup && onOpenGroupInfo) onOpenGroupInfo({ id: chatId, groupName: chatMeta?.groupName }); else onOpenProfile(); }} style={{ flex: 1, cursor: "pointer" }}>
           <div style={{ color: "#fff", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
             {isSelfChat ? "Message Yourself" : isGroup ? (myGroupNickname || contact?.groupName || chatMeta?.groupName || "Group") : (getContactDisplayName(contact) || "…")}
             {isLocked && <Lock size={13} color="rgba(255,255,255,0.8)" />}
@@ -3523,6 +3553,23 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             ) : isSelfChat ? "Your private space" : !presence.visible ? "" : presence.isOnline ? "online" : formatLastSeen(presence.lastSeen)}
           </div>
         </div>
+        {!isGroup && !isSelfChat && contact?.status !== "accepted" && contact?.status !== "pending" && (
+          <div
+            onClick={async () => { try { await sendContactRequest(myUid, otherUid); setContactRequestSent(true); } catch {} }}
+            style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 14, background: t.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", marginRight: 4, flexShrink: 0 }}
+          >
+            <UserPlus size={14} color="#fff" />
+            {contactRequestSent ? "Requested" : "Add"}
+          </div>
+        )}
+        {!isGroup && !isSelfChat && contact?.status === "pending" && (
+          <div
+            style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 14, background: "rgba(255,255,255,0.18)", color: "#fff", fontSize: 12, fontWeight: 700, flexShrink: 0, marginRight: 4 }}
+          >
+            <UserPlus size={14} color="#fff" />
+            Requested
+          </div>
+        )}
         <Search size={19} color="#fff" style={{ cursor: "pointer", marginRight: 4 }} onClick={() => setShowSearch(!showSearch)} />
         <MoreVertical size={19} color="#fff" style={{ cursor: "pointer" }} onClick={() => setShowOverflow(!showOverflow)} />
 
@@ -3830,22 +3877,33 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     <option key={v.id} value={v.id}>{v.name}</option>
                   ))}
                 </select>
-                <div onClick={vcListening ? vcStopListening : vcStartListening} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "16px 0", borderRadius: 12, background: vcListening ? t.primary : t.primaryLight, color: vcListening ? t.bubbleMeText : t.primary, fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 10 }}>
-                  <Mic size={18} color={vcListening ? t.bubbleMeText : t.primary} /> {vcListening ? "Listening… tap to stop" : "Tap to speak"}
-                </div>
-                <textarea
-                  value={vcTranscript}
-                  onChange={(e) => setVcTranscript(e.target.value)}
-                  placeholder="Your spoken words will appear here — edit before sending."
-                  rows={3}
-                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, resize: "none", outline: "none", color: t.text, background: t.bg }}
-                />
+                {!vcBlob && !vcRecording && (
+                  <div onClick={vcStartRec} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "18px 0", borderRadius: 12, background: t.primaryLight, cursor: "pointer", color: t.primary, fontWeight: 700, fontSize: 14, marginBottom: 10 }}>
+                    <Mic size={18} color={t.primary} /> Tap to record your voice
+                  </div>
+                )}
+                {vcRecording && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 12px", borderRadius: 12, background: t.surface, border: `1px solid ${t.border}`, marginBottom: 10 }}>
+                    <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#FF3B30", animation: "nextext-rec-pulse 1s ease-in-out infinite" }} />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: t.text, flex: 1 }}>Recording…</span>
+                    <div onClick={vcStopRec} style={{ padding: "8px 16px", borderRadius: 10, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Stop</div>
+                  </div>
+                )}
+                {vcBlob && vcUrl && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 12px", borderRadius: 12, background: t.surface, border: `1px solid ${t.border}`, marginBottom: 10 }}>
+                    <audio ref={(el) => { if (el) vcAudioRef.current = el; }} src={vcUrl} controls preload="metadata" style={{ flex: 1, maxWidth: "100%" }} />
+                    <div onClick={vcDiscard} style={{ fontSize: 12.5, color: t.textMuted, cursor: "pointer", textDecoration: "underline", flexShrink: 0 }}>Discard</div>
+                  </div>
+                )}
+                {vcTranscript && (
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 6 }}>Transcribed: {vcTranscript}</div>
+                )}
                 {vcError && <div style={{ color: "#FF3B30", fontSize: 12.5, margin: "10px 0 0" }}>{vcError}</div>}
                 <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-                  <div onClick={() => { if (!vcSending) { setVcTranscript(""); setShowVoiceConvert(false); } }} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, fontWeight: 700, fontSize: 14, color: t.textMuted, cursor: "pointer" }}>
+                  <div onClick={() => { if (!vcSending) { vcDiscard(); setShowVoiceConvert(false); } }} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, fontWeight: 700, fontSize: 14, color: t.textMuted, cursor: "pointer" }}>
                     Cancel
                   </div>
-                  <div onClick={vcSend} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcTranscript.trim() && !vcSending ? "pointer" : "not-allowed", opacity: vcTranscript.trim() && !vcSending ? 1 : 0.5 }}>
+                  <div onClick={vcSend} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcBlob && !vcSending ? "pointer" : "not-allowed", opacity: vcBlob && !vcSending ? 1 : 0.5 }}>
                     {vcSending ? "Converting…" : "Send AI Voice Note"}
                   </div>
                 </div>

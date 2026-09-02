@@ -2,6 +2,10 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
 import { createPortal } from "react-dom";
 import { ThemeProvider, useTheme, themes, ROTATE_INTERVALS, isThemeDark } from "./theme/ThemeContext";
 
+// Search context for the (optional) revamped Settings layout: when a query is
+// typed, only SectionCards whose title matches are rendered (and auto-expanded).
+const SettingsSearchContext = React.createContext("");
+
 // Resolves the notification dark-mode flag. An explicit user choice in the
 // notification settings ("actual"/"lettering") wins; otherwise the card
 // follows the app's current theme so a dark theme yields a dark notification.
@@ -232,10 +236,10 @@ if (blocked) {
       <div style={{ marginTop: 20, marginBottom: 20 }}>
         <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, padding: "10px 12px", borderRadius: 10, background: t.primaryLight }}>
           Name changes are blocked{userDoc?.restrictions?.blockNameChange ? " for your account" : " by the admin"}. Contact an admin if you need to change your name.
-        </div>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   return (
     <div style={{ marginTop: 20, marginBottom: 20 }}>
@@ -633,6 +637,18 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const customStatusInputRef = useRef(null);
   const [customStatusSaved, setCustomStatusSaved] = useState(false);
   const [openSections, setOpenSections] = useState({ accountActions: true });
+  // Revamped settings layout: admin sets the default (sysConfig.altSettings); each
+  // user can override via the Classic/Revamped toggle. Smart search filters sections.
+  const [settingsSearch, setSettingsSearch] = useState("");
+  const [altSettingsView, setAltSettingsView] = useState(() => {
+    try { const v = localStorage.getItem("nextext_settings_layout"); if (v) return v; } catch {}
+    return sysConfig?.altSettings ? "revamped" : "classic";
+  });
+  const toggleAltSettingsView = () => {
+    const next = altSettingsView === "revamped" ? "classic" : "revamped";
+    setAltSettingsView(next);
+    try { localStorage.setItem("nextext_settings_layout", next); } catch {}
+  };
   const [appearanceSubs, setAppearanceSubs] = useState({});
   const [resetPasswordModal, setResetPasswordModal] = useState(false);
   const [resetPasswordInput, setResetPasswordInput] = useState("");
@@ -712,7 +728,10 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     );
   };
   const SectionCard = useMemo(() => ({ title, emoji, children, sectionKey }) => {
-    const isOpen = sectionKey ? (openSections?.[sectionKey] ?? false) : true;
+    const searchQuery = React.useContext(SettingsSearchContext);
+    const q = (searchQuery || "").trim().toLowerCase();
+    if (q && title && !title.toLowerCase().includes(q)) return null;
+    const isOpen = sectionKey ? (searchQuery ? true : (openSections?.[sectionKey] ?? false)) : true;
     // Category headers are dark grey (#1E1E1E) on light themes for a crisp
     // WhatsApp-style look; dark themes use a light header instead so the title
     // stays readable against the dark background.
@@ -811,6 +830,29 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           <span style={{ color: t.text, fontWeight: 700, fontSize: 18 }}>Settings</span>
           {!hideVersion && <span style={{ marginLeft: "auto", fontSize: 12.5, fontWeight: 700, color: t.primary }}>v{APP_VERSION}</span>}
         </div>
+        {/* Revamped settings: smart search + layout toggle */}
+        <div style={{ padding: "10px 16px", background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.bg, borderRadius: 12, padding: "9px 12px", border: `1px solid ${t.border}` }}>
+            <Search size={16} color={t.textMuted} />
+            <input
+              value={settingsSearch}
+              onChange={(e) => setSettingsSearch(e.target.value)}
+              placeholder="Search settings…"
+              style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: t.text, fontSize: 14 }}
+            />
+            {settingsSearch && <X size={16} color={t.textMuted} onClick={() => setSettingsSearch("")} style={{ cursor: "pointer" }} />}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12.5, color: t.textMuted, fontWeight: 600 }}>Layout</span>
+            <div style={{ display: "flex", background: t.bg, borderRadius: 12, overflow: "hidden", border: `1px solid ${t.border}`, flexShrink: 0 }}>
+              {["classic", "revamped"].map((v) => (
+                <span key={v} onClick={toggleAltSettingsView} style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: 700, textTransform: "capitalize", cursor: "pointer", color: altSettingsView === v ? "#fff" : t.text, background: altSettingsView === v ? t.primary : "transparent" }}>{v}</span>
+              ))}
+            </div>
+            {altSettingsView === "revamped" && <span style={{ fontSize: 11.5, color: t.textMuted }}>Admins set the default; you can switch back any time.</span>}
+          </div>
+        </div>
+      <SettingsSearchContext.Provider value={altSettingsView === "revamped" ? settingsSearch : ""}>
       <div className="nx-scroll" style={{ padding: "12px 16px", paddingBottom: 100 }}>
 
         {/* ═══ ACCOUNT & PROFILE ═══ */}
@@ -2034,6 +2076,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         </div>
       , document.body)}
       </div>
+      </SettingsSearchContext.Provider>
     </div>
   );
 }
@@ -2955,6 +2998,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     try { window.__nextextComposePrefill = shareText; } catch { /* best-effort */ }
     setSharePayload(null);
     openChat(null, uid, contact);
+  };
+  const sendShareToGroup = (chat) => {
+    try { window.__nextextComposePrefill = shareText; } catch { /* best-effort */ }
+    setSharePayload(null);
+    openChat(chat, null, null);
   };
   const shareToStatus = () => {
     try { window.__nextextStatusPrefill = { text: shareText, uris: (sharePayload?.uris) || [] }; } catch { /* best-effort */ }
@@ -4306,12 +4354,24 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
               <div style={{ fontSize: 13, fontWeight: 700, color: t.textMuted, marginBottom: 6 }}>Send to chat</div>
             </div>
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 14px 14px" }}>
+              {(myChats || []).filter((c) => c.type === "group").map((c) => (
+                <div key={c.id} onClick={() => sendShareToGroup(c)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Users size={18} color={t.primary} />
+                  </div>
+                  <span style={{ fontSize: 14, color: t.text, fontWeight: 600 }}>{c.groupName || "Group"}</span>
+                  <span style={{ fontSize: 12, color: t.textMuted, marginLeft: "auto" }}>group</span>
+                </div>
+              ))}
               {(contacts || []).filter((c) => c.status === "accepted").map((c) => (
                 <div key={c.uid} onClick={() => sendShareToContact(c.uid, c)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
                   <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={36} />
                   <span style={{ fontSize: 14, color: t.text, fontWeight: 600 }}>{c.profile?.displayName}</span>
                 </div>
               ))}
+              {(myChats || []).filter((c) => c.type === "group").length === 0 && (contacts || []).filter((c) => c.status === "accepted").length === 0 && (
+                <div style={{ fontSize: 13, color: t.textMuted, padding: "12px 4px" }}>No chats available.</div>
+              )}
             </div>
           </div>
         </div>
