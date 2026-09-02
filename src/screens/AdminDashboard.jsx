@@ -503,6 +503,18 @@ export default function AdminDashboard({ myUid, onBack }) {
     }
   };
 
+  // Per-user "AI voice note conversion" grant. Lets a specific user (e.g. one
+  // without general AI access) still use the AI formatting / Y Mizrachi voice
+  // note features, enabled by an admin from the directory.
+  const toggleUserAiVoiceNote = async (uid, currentVal) => {
+    setError("");
+    try {
+      await updateDoc(doc(db, "users", uid), { aiVoiceNoteEnabled: !currentVal });
+    } catch (e) {
+      setError("Couldn't update voice-note access: " + e.message);
+    }
+  };
+
   const resetSingleAIAccess = async (uid) => {
     if (!window.confirm(`Reset AI for this user? This will revoke AI access, delete their AI chat(s), and clear pending requests. The user will need to re-request access.`)) return;
     setError("");
@@ -1213,6 +1225,10 @@ export default function AdminDashboard({ myUid, onBack }) {
                   <Bot size={12} color={u.aiApproved ? "#28A745" : t.textMuted} />
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: u.aiApproved ? "#28A745" : t.textMuted }}>{u.aiApproved ? "AI On" : "AI Off"}</span>
                 </div>
+                <div onClick={(e) => { e.stopPropagation(); toggleUserAiVoiceNote(u.uid, !!u.aiVoiceNoteEnabled); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.aiVoiceNoteEnabled ? "#E5F0FF" : t.bg, border: `1px solid ${u.aiVoiceNoteEnabled ? "#1DA1F2" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
+                  <Mic size={12} color={u.aiVoiceNoteEnabled ? "#1DA1F2" : t.textMuted} />
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: u.aiVoiceNoteEnabled ? "#1DA1F2" : t.textMuted }}>{u.aiVoiceNoteEnabled ? "AI Voice Note" : "Voice Note Off"}</span>
+                </div>
                 {u.aiApproved && (
                   <div onClick={(e) => { e.stopPropagation(); resetSingleAIAccess(u.uid); }} title="Reset AI: revoke access and delete AI chats" style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 8, background: "#FFE5E5", border: "1px solid #FF3B30", cursor: "pointer", flexShrink: 0 }}>
                     <RefreshCw size={11} color="#FF3B30" />
@@ -1796,6 +1812,38 @@ export default function AdminDashboard({ myUid, onBack }) {
                       }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 8, cursor: "pointer", background: hidden ? "#2a2a2a" : t.bg, border: `1px solid ${t.border}` }}>
                         <span style={{ flex: 1, fontSize: 13, color: hidden ? t.textMuted : t.text, fontWeight: 600 }}>{label}</span>
                         <span style={{ fontSize: 11.5, fontWeight: 700, color: hidden ? "#FF3B30" : "#28A745" }}>{hidden ? "HIDDEN" : "VISIBLE"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: t.text, marginBottom: 4 }}>Persona → Voice Hookup</div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+                  Assign a Fish Audio voice to each persona. When voice replies are ON, the AI uses the hooked voice for that persona (overriding its built-in voice). Leave as "Default (persona voice)" to use the persona's own voice.
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+                  {AI_PERSONA_TRAY.map(([key, label]) => {
+                    const current = (sysConfig?.personaVoiceMap && sysConfig.personaVoiceMap[key]) || "";
+                    return (
+                      <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, background: t.bg, border: `1px solid ${t.border}` }}>
+                        <span style={{ flex: 1, fontSize: 13, color: t.text, fontWeight: 600 }}>{label}</span>
+                        <select
+                          value={current}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const map = { ...(sysConfig?.personaVoiceMap || {}) };
+                            if (val) map[key] = val; else delete map[key];
+                            setSystemConfig({ personaVoiceMap: map }, myUid);
+                          }}
+                          style={{ flexShrink: 0, maxWidth: 170, padding: "6px 8px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.bg, color: t.text, cursor: "pointer" }}
+                        >
+                          <option value="">Default (persona voice)</option>
+                          {allVoices.map((v) => (
+                            <option key={v.id} value={v.referenceId}>{v.name}</option>
+                          ))}
+                        </select>
                       </div>
                     );
                   })}

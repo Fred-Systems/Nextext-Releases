@@ -263,6 +263,53 @@ public class NextextNativePlugin extends Plugin {
         call.resolve(ret);
     }
 
+    // "Reply" action: holds the chatId + typed text until the web app mounts.
+    private static String pendingReplyChatId = null;
+    private static String pendingReplyText = null;
+
+    public void onNotificationReply(String chatId, String text) {
+        if (chatId == null || chatId.isEmpty()) return;
+        pendingReplyChatId = chatId;
+        pendingReplyText = (text == null) ? "" : text;
+        try {
+            JSObject data = new JSObject();
+            data.put("chatId", chatId);
+            data.put("text", pendingReplyText);
+            notifyListeners("localNotificationReply", data);
+        } catch (Exception ignored) { /* event delivery is best-effort */ }
+    }
+
+    @PluginMethod
+    public void getPendingNotificationReply(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("chatId", pendingReplyChatId == null ? "" : pendingReplyChatId);
+        ret.put("text", pendingReplyText == null ? "" : pendingReplyText);
+        pendingReplyChatId = null;
+        pendingReplyText = null;
+        call.resolve(ret);
+    }
+
+    // "Mute" action: holds the chatId until the web app mounts.
+    private static String pendingMuteChatId = null;
+
+    public void onNotificationMute(String chatId) {
+        if (chatId == null || chatId.isEmpty()) return;
+        pendingMuteChatId = chatId;
+        try {
+            JSObject data = new JSObject();
+            data.put("chatId", chatId);
+            notifyListeners("localNotificationMute", data);
+        } catch (Exception ignored) { /* event delivery is best-effort */ }
+    }
+
+    @PluginMethod
+    public void getPendingNotificationMute(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("chatId", pendingMuteChatId == null ? "" : pendingMuteChatId);
+        pendingMuteChatId = null;
+        call.resolve(ret);
+    }
+
     // Returns the authoritative active icon profile id persisted in
     // SharedPreferences (written by setAppIcon). The WebView's localStorage can
     // be dropped independently of native storage, so the JS disguise gate
@@ -546,6 +593,35 @@ public class NextextNativePlugin extends Plugin {
                             ctx, ("mark_read_" + chatId).hashCode(), markRead,
                             android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
                         builder.addAction(0, "Mark as read", mrpi);
+                    } catch (Exception ignored) { /* action is best-effort */ }
+                    // "Mute" action: opens the app (or routes via onNewIntent)
+                    // with a mute marker so the chat is muted without opening it.
+                    try {
+                        android.content.Intent mute = new android.content.Intent(launch);
+                        mute.putExtra("nextext_action", "mute");
+                        mute.putExtra("nextext_chat_id", chatId);
+                        android.app.PendingIntent mutePi = android.app.PendingIntent.getActivity(
+                            ctx, ("mute_" + chatId).hashCode(), mute,
+                            android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+                        builder.addAction(0, "Mute", mutePi);
+                    } catch (Exception ignored) { /* action is best-effort */ }
+                    // "Reply" action: Android inline direct-reply. The typed text
+                    // is delivered back on the launch intent (read via
+                    // RemoteInput.getResultsFromIntent) and routed to the web app.
+                    try {
+                        if (android.os.Build.VERSION.SDK_INT >= 24) {
+                            android.app.RemoteInput remoteInput = new android.app.RemoteInput.Builder("nextext_reply_text")
+                                .setLabel("Reply").build();
+                            android.content.Intent reply = new android.content.Intent(launch);
+                            reply.putExtra("nextext_action", "reply");
+                            reply.putExtra("nextext_chat_id", chatId);
+                            android.app.PendingIntent replyPi = android.app.PendingIntent.getActivity(
+                                ctx, ("reply_" + chatId).hashCode(), reply,
+                                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+                            android.app.Notification.Action replyAction = new android.app.Notification.Action.Builder(
+                                0, "Reply", replyPi).addRemoteInput(remoteInput).build();
+                            builder.addAction(replyAction);
+                        }
                     } catch (Exception ignored) { /* action is best-effort */ }
                 }
                 nm.notify(tag, 0, builder.build());

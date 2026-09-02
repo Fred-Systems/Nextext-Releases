@@ -276,6 +276,10 @@ const SYSTEM_CONFIG_DEFAULTS = {
   // Admin can globally disable the AI chatbot's spoken voice replies for all
   // users (admins are exempt). The "Send Y Mizrachi Voice Note" feature stays on.
   aiVoiceReplyGloballyDisabled: false,
+  // Admin mapping of AI chat persona → Fish Audio voice reference id. When set
+  // for a persona, AI voice replies use this voice instead of the persona's
+  // built-in voiceRef. Keyed by persona key (e.g. "mizrachi", "trump").
+  personaVoiceMap: {},
   // When ON, every user can download an AI voice reply as a .mp3 voice note.
   // Admins can always download regardless of this flag.
   allowVoiceDownload: false,

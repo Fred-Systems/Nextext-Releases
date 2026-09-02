@@ -23,12 +23,22 @@ export const VOICE_PRESETS = [
 ];
 
 // All voices available to a user given the current system config (honours the
-// admin "hide Rosh" switch and appends admin-created custom voices).
+// admin "hide Rosh" switch, admin-hidden personas, and appends admin-created
+// custom voices).
+//
+// When an admin hides a persona in the dashboard, its matching voice is also
+// removed from the "Send Y Mizrachi Voice Note" / AI voice-reply pickers so the
+// hidden persona can't be reached through the voice channel either.
+const PERSONA_TO_VOICE = { mizrachi: "y-mizrachi", trump: "trump", magnusC: "magnus" };
 export function getAvailableVoices(sysConfig) {
   const profiles = sysConfig?.voiceProfiles || {};
-  const presets = VOICE_PRESETS.filter((v) => !(sysConfig?.hideRoshVoice === true && v.id === "rosh"));
+  const hidden = sysConfig?.hiddenPersonas || [];
+  const hiddenVoiceIds = hidden.map((k) => PERSONA_TO_VOICE[k]).filter(Boolean);
+  const presets = VOICE_PRESETS.filter(
+    (v) => !(sysConfig?.hideRoshVoice === true && v.id === "rosh") && !hiddenVoiceIds.includes(v.id)
+  );
   const custom = (sysConfig?.customVoices || [])
-    .filter((v) => v && v.name && v.referenceId)
+    .filter((v) => v && v.name && v.referenceId && !hiddenVoiceIds.includes(v.id || v.referenceId))
     .map((v) => ({ id: v.id || v.referenceId, name: v.name, referenceId: v.referenceId, custom: true }));
   const all = [...presets, ...custom];
   // Merge admin director metadata (fullName + prompt) onto each voice.

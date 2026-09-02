@@ -43,14 +43,29 @@ export default function GlobalCamera({ t, myUid, chats, contacts, hideNav, onClo
     setZoom(1);
     try {
       const wantsVideo = mode === "video";
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: facing,
-          width: { ideal: 1920, max: 1920 },
-          height: { ideal: 1080, max: 1080 },
-        },
-        audio: wantsVideo,
-      });
+      // Always request an audio track so recorded videos carry sound, even when
+      // starting from photo mode. If the mic is unavailable, fall back to a
+      // video-only stream rather than failing the whole camera.
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facing,
+            width: { ideal: 1920, max: 1920 },
+            height: { ideal: 1080, max: 1080 },
+          },
+          audio: true,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facing,
+            width: { ideal: 1920, max: 1920 },
+            height: { ideal: 1080, max: 1080 },
+          },
+          audio: false,
+        });
+      }
       streamRef.current = stream;
       setStep("camera");
       setTimeout(() => {

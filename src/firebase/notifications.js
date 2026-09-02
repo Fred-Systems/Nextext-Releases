@@ -42,6 +42,36 @@ export function setNotificationMarkReadHandler(handler) {
   }
 }
 
+// Same buffering for the "Reply" notification action: holds the chatId + typed
+// text until the web app mounts and polls for it.
+let replyHandler = null;
+let pendingReplyChatId = null;
+let pendingReplyText = null;
+
+export function setNotificationReplyHandler(handler) {
+  replyHandler = handler;
+  if (pendingReplyChatId) {
+    const chatId = pendingReplyChatId;
+    const text = pendingReplyText || "";
+    pendingReplyChatId = null;
+    pendingReplyText = null;
+    handler?.(chatId, text);
+  }
+}
+
+// Same buffering for the "Mute" notification action.
+let muteHandler = null;
+let pendingMuteChatId = null;
+
+export function setNotificationMuteHandler(handler) {
+  muteHandler = handler;
+  if (pendingMuteChatId) {
+    const chatId = pendingMuteChatId;
+    pendingMuteChatId = null;
+    handler?.(chatId);
+  }
+}
+
 // Feeds a tapped-notification chatId into the routing mechanism. The handler
 // may not be mounted yet (cold start), in which case it's buffered.
 function routeNotificationTap(chatId) {
@@ -55,6 +85,20 @@ function routeMarkRead(chatId) {
   if (!chatId) return;
   if (markReadHandler) markReadHandler(chatId);
   else pendingMarkReadChatId = chatId;
+}
+
+// Feeds a "Reply" action (chatId + typed text) into its handler.
+function routeReply(chatId, text) {
+  if (!chatId) return;
+  if (replyHandler) replyHandler(chatId, text || "");
+  else { pendingReplyChatId = chatId; pendingReplyText = text || ""; }
+}
+
+// Feeds a "Mute" action into its handler.
+function routeMute(chatId) {
+  if (!chatId) return;
+  if (muteHandler) muteHandler(chatId);
+  else pendingMuteChatId = chatId;
 }
 
 // Polls the native side for a chatId left behind by a notification tap that
@@ -79,6 +123,34 @@ export async function pollPendingMarkRead() {
     const res = await NextextNative.getPendingMarkRead();
     const chatId = res?.chatId;
     if (chatId) routeMarkRead(chatId);
+    return chatId || null;
+  } catch {
+    return null;
+  }
+}
+
+// Polls the native side for a "Reply" action captured before the web app had a
+// listener (cold start).
+export async function pollPendingNotificationReply() {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const res = await NextextNative.getPendingNotificationReply();
+    const chatId = res?.chatId;
+    if (chatId) routeReply(chatId, res?.text || "");
+    return chatId || null;
+  } catch {
+    return null;
+  }
+}
+
+// Polls the native side for a "Mute" action captured before the web app had a
+// listener (cold start).
+export async function pollPendingNotificationMute() {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const res = await NextextNative.getPendingNotificationMute();
+    const chatId = res?.chatId;
+    if (chatId) routeMute(chatId);
     return chatId || null;
   } catch {
     return null;
@@ -262,6 +334,13 @@ export async function initNotifications(myUid) {
       // badge without opening the chat. Cold-start actions are picked up by
       // pollPendingMarkRead in App.jsx.
       NextextNative.addListener("localNotificationMarkRead", ({ chatId }) => routeMarkRead(chatId)).catch(() => {});
+
+      // "Reply" action (Android inline direct-reply) → pass the chatId + typed
+      // text to the web app so it can open the chat and prefill the message.
+      NextextNative.addListener("localNotificationReply", ({ chatId, text }) => routeReply(chatId, text || "")).catch(() => {});
+
+      // "Mute" action → mute the chat without opening it.
+      NextextNative.addListener("localNotificationMute", ({ chatId }) => routeMute(chatId)).catch(() => {});
 
       PushNotifications.addListener("registration", ({ value }) => {
         if (value) {

@@ -1250,7 +1250,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
 
         {Object.keys(grouped).length > 0 && <SectionHeader label={statusTab === "public" ? "Public Statuses" : "Recent Updates"} />}
         {statusLayout === "list" ? (
-          <div style={{ display: "flex", overflowX: "auto", overflowY: "hidden", padding: "10px 16px 14px", WebkitOverflowScrolling: "touch", touchAction: "pan-x", onTouchMove: (e) => e.stopPropagation() }}>
+          <div style={{ display: "flex", overflowX: "auto", overflowY: "hidden", padding: "10px 16px 14px", WebkitOverflowScrolling: "touch", touchAction: "pan-x pan-y" }}>
             {Object.entries(grouped).map(([uid, items]) => {
               const contact = acceptedContacts.find((c) => c.uid === uid);
               const name = contact?.profile?.displayName || "Unknown";

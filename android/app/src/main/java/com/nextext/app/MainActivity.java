@@ -24,6 +24,8 @@ public class MainActivity extends BridgeActivity {
     private static final String NOTIF_CHAT_ID_EXTRA = "nextext_chat_id";
     private static final String NOTIF_ACTION_EXTRA = "nextext_action";
     private static final String NOTIF_ACTION_MARK_READ = "mark_read";
+    private static final String NOTIF_ACTION_MUTE = "mute";
+    private static final String NOTIF_ACTION_REPLY = "reply";
 
     // A tapped local notification carries the chatId as an intent extra. Cold
     // starts arrive in onCreate, warm starts (app already in memory) in
@@ -46,8 +48,22 @@ public class MainActivity extends BridgeActivity {
             } catch (Exception ignored) { /* plugin may not be loaded yet */ }
         }
         if (nextextPlugin != null) {
-            if (isMarkRead) nextextPlugin.onNotificationMarkRead(chatId);
-            else nextextPlugin.onNotificationTap(chatId);
+            if (NOTIF_ACTION_MUTE.equals(intent.getStringExtra(NOTIF_ACTION_EXTRA))) {
+                nextextPlugin.onNotificationMute(chatId);
+            } else if (NOTIF_ACTION_REPLY.equals(intent.getStringExtra(NOTIF_ACTION_EXTRA))) {
+                String text = "";
+                if (android.os.Build.VERSION.SDK_INT >= 21) {
+                    try {
+                        android.os.Bundle results = android.app.RemoteInput.getResultsFromIntent(intent);
+                        if (results != null) text = results.getString("nextext_reply_text", "");
+                    } catch (Exception ignored) { /* no inline reply text */ }
+                }
+                nextextPlugin.onNotificationReply(chatId, text);
+            } else if (isMarkRead) {
+                nextextPlugin.onNotificationMarkRead(chatId);
+            } else {
+                nextextPlugin.onNotificationTap(chatId);
+            }
         }
     }
 
@@ -135,6 +151,9 @@ public class MainActivity extends BridgeActivity {
         SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
         splashScreen.setKeepOnScreenCondition(() -> keepSplash);
         super.onCreate(savedInstanceState);
+        // Cold-start: a notification tap carries the chatId on the launch intent.
+        // Route it here (warm starts go through onNewIntent) so the chat opens.
+        handleNotificationTap(getIntent());
 
         // Replace the default WebChromeClient with one that manages the WebView
         // media permission request. When the OS-level RECORD_AUDIO/CAMERA

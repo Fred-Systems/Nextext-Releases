@@ -13,7 +13,7 @@ const SETTINGS_SEARCH_KEYWORDS = {
   account: ["name", "username", "profile", "photo", "block", "delete account", "logout", "sign out"],
   loginSecurity: ["login", "password", "email", "security", "two factor", "verification"],
   about: ["about me", "bio", "description", "story"],
-  privacy: ["privacy", "last seen", "online", "read receipt", "block", "status visibility", "who can see", "contacts", "public status", "disappearing"],
+  privacy: ["privacy", "last seen", "online", "read receipt", "block", "status visibility", "who can see", "contacts", "public status", "disappearing", "parental", "parent", "parental control", "restrictions", "restrict", "child", "kids", "age", "content filter", "screen time"],
   voiceNotes: ["voice", "y mizrachi", "rosh", "trump", "magnus", "custom voice", "fish audio", "director", "podcast", "voice note", "transcription"],
   notifprefs: ["notification", "sound", "vibrate", "ring", "mute", "led", "alert"],
   appearance: ["theme", "dark", "light", "color", "wallpaper", "density", "font", "size", "layout", "settings layout", "classic", "revamped", "rounded", "ui scale", "splash"],
@@ -42,7 +42,7 @@ import { useAuth } from "./firebase/useAuth";
 import { usePresenceHeartbeat, useAppUsageTracker } from "./firebase/presence";
 import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
 import { useContacts } from "./firebase/contacts";
-import { useChats, purgeExpiredChatMedia, markChatRead } from "./firebase/chats";
+import { useChats, purgeExpiredChatMedia, markChatRead, setMute } from "./firebase/chats";
 import { setGlobalWallpaper, fileToWallpaperDataUrl } from "./theme/wallpaper";
 import { ChevronLeft, ChevronRight, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile, Megaphone, LayoutGrid } from "lucide-react";
 import { FONTS } from "./theme/ThemeContext";
@@ -71,7 +71,7 @@ import NotepadScreen from "./screens/NotepadScreen";
 import AnnouncementsScreen from "./screens/AnnouncementsScreen";
 import IconPickerScreen from "./screens/IconPickerScreen";
 import { getActiveProfileId, syncNativeProfile, ICON_PROFILES, setNotepadKeyword, setActiveProfile } from "./services/iconManager";
-import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead, VIBRATION_PRESETS, previewNotificationFeedback, cancelNotificationForChat } from "./firebase/notifications";
+import { initNotifications, setNotificationTapHandler, showLocalNotification, getNotificationsStatus, enableNotifications, pollPendingNotificationTap, setNotificationMarkReadHandler, pollPendingMarkRead, VIBRATION_PRESETS, previewNotificationFeedback, cancelNotificationForChat, setNotificationReplyHandler, pollPendingNotificationReply, setNotificationMuteHandler, pollPendingNotificationMute } from "./firebase/notifications";
 import { App as CapApp } from "@capacitor/app";
 import PermissionsScreen from "./screens/PermissionsScreen";
 import UpdatePrompt from "./components/UpdatePrompt";
@@ -2979,6 +2979,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   useAppUsageTracker(myUid);
 
   const [pendingNotifChatId, setPendingNotifChatId] = useState(null);
+  const [pendingNotifReply, setPendingNotifReply] = useState(null);
 
   useEffect(() => {
     setNotificationTapHandler((chatId) => {
@@ -3003,12 +3004,42 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       if (myUidRef.current && chatId) markChatRead(chatId, myUidRef.current).catch(() => {});
     });
     pollPendingMarkRead();
+    // "Reply" action: open the chat and prefill the composer with the typed text
+    // so the user can edit/send it. If the chat isn't loaded yet, buffer it.
+    setNotificationReplyHandler((chatId, text) => {
+      const chat = (myChatsRef.current || []).find((c) => c.id === chatId);
+      if (chat) {
+        const otherUid = (chat.participants || []).find((p) => p !== myUidRef.current);
+        openChatRef.current(chat, otherUid, (contactsRef.current || []).find((c) => c.uid === otherUid), { replyPrefill: text || "" });
+      } else {
+        setPendingNotifReply({ chatId, text: text || "" });
+      }
+    });
+    pollPendingNotificationReply();
+    // "Mute" action: mute the chat without opening it.
+    setNotificationMuteHandler((chatId) => {
+      if (myUidRef.current && chatId) setMute(chatId, myUidRef.current, true).catch(() => {});
+    });
+    pollPendingNotificationMute();
     // Retry once the splash is out of the way in case the bridge wasn't
     // ready for the first read.
-    const retry = setTimeout(() => pollPendingNotificationTap(), 2500);
+     const retry = setTimeout(() => pollPendingNotificationTap(), 2500);
     const retryMarkRead = setTimeout(() => pollPendingMarkRead(), 2500);
-    return () => { setNotificationTapHandler(null); setNotificationMarkReadHandler(null); clearTimeout(retry); clearTimeout(retryMarkRead); };
+    const retryReply = setTimeout(() => pollPendingNotificationReply(), 2500);
+    const retryMute = setTimeout(() => pollPendingNotificationMute(), 2500);
+    return () => { setNotificationTapHandler(null); setNotificationMarkReadHandler(null); setNotificationReplyHandler(null); setNotificationMuteHandler(null); clearTimeout(retry); clearTimeout(retryMarkRead); clearTimeout(retryReply); clearTimeout(retryMute); };
   }, []);
+
+  // Apply a buffered notification "Reply" once its chat is available in the list.
+  useEffect(() => {
+    if (!pendingNotifReply || !myChats) return;
+    const chat = myChats.find((c) => c.id === pendingNotifReply.chatId);
+    if (chat) {
+      const otherUid = (chat.participants || []).find((p) => p !== myUid);
+      openChat(chat, otherUid, (contacts || []).find((c) => c.uid === otherUid), { replyPrefill: pendingNotifReply.text || "" });
+      setPendingNotifReply(null);
+    }
+  }, [pendingNotifReply, myChats, contacts, openChat]);
 
   useEffect(() => {
     if (!myUid) return;
@@ -3572,7 +3603,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       return;
     }
     if (chatId) verifiedLockedChatsRef.current.add(chatId);
-    setActiveChat({ chatId, otherUid, contact, origin: "chat", openSettings: options?.openSettings || false });
+    setActiveChat({ chatId, otherUid, contact, origin: "chat", openSettings: options?.openSettings || false, replyPrefill: options?.replyPrefill || "" });
     setScreen("chat");
     // Dismiss this chat's OS notification the moment the user opens it — whether
     // they tapped the notification or navigated in from the chat list.
@@ -4235,6 +4266,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           otherUid={activeChat.otherUid}
           contact={activeChat.contact}
           openSettings={activeChat.openSettings}
+          initialText={activeChat.replyPrefill || ""}
           userDoc={liveUserDoc || auth.userDoc}
           onBack={() => setScreen("list")}
           onOpenProfile={() => setScreen("contactProfile")}

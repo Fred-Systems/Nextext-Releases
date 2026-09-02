@@ -262,6 +262,10 @@ export default function AIChatScreen({ myUid, onBack }) {
   const aiIcon = useAIIconStyle();
   const [showProfile, setShowProfile] = useState(false);
   const [userDoc, setUserDoc] = useState(null);
+  // Declared early (before the voice-reply effect that lists it in its deps) so
+  // React can read it from the dependency array during render without hitting a
+  // temporal-dead-zone ReferenceError.
+  const currentPersonality = userDoc?.aiPersonality || "default";
   const [analyzing, setAnalyzing] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
@@ -449,9 +453,11 @@ export default function AIChatScreen({ myUid, onBack }) {
       (async () => {
         try {
           const { synthesizeSpeech } = await import("../firebase/tts");
-          // Prefer the currently-selected persona's voice when it has a Fish Audio
-          // reference; otherwise fall back to the configured voice.
-          const personaRef = PERSONALITIES[currentPersonality]?.voiceRef;
+          // Admin can hook a specific Fish Audio voice to this persona (overrides
+          // the persona's built-in voiceRef). Fall back to the persona's
+          // voiceRef, then to the user's chosen voice.
+          const adminHooked = sysConfig?.personaVoiceMap?.[currentPersonality];
+          const personaRef = adminHooked || PERSONALITIES[currentPersonality]?.voiceRef;
           const voice = personaRef ? { referenceId: personaRef } : resolveVoice(sysConfig, voiceMode);
           const url = await synthesizeSpeech(candidate.text, voice?.referenceId);
           setVoiceAudios((prev) => ({ ...prev, [msgId]: url }));
@@ -977,7 +983,6 @@ export default function AIChatScreen({ myUid, onBack }) {
     setSummarizingExternal(false);
   };
 
-  const currentPersonality = userDoc?.aiPersonality || "default";
   const [geminiModel, setGeminiModelLocal] = useState(userDoc?.geminiModel || sysConfig?.geminiModel || DEFAULT_GEMINI_MODEL);
   const [showModelTray, setShowModelTray] = useState(false);
   useEffect(() => {
@@ -1343,6 +1348,12 @@ export default function AIChatScreen({ myUid, onBack }) {
             <div style={{ fontSize: 12.5, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{replyTo.previewText}</div>
           </div>
           <X size={18} color={t.textMuted} onClick={() => setReplyTo(null)} style={{ cursor: "pointer", flexShrink: 0 }} />
+        </div>
+      )}
+      {voiceMasterOn && voiceEnabled && voiceBusy && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", padding: "7px 12px", background: t.primaryLight, borderTop: `1px solid ${t.border}` }}>
+          <span style={{ width: 14, height: 14, borderRadius: "50%", border: `2px solid ${t.primary}`, borderTopColor: "transparent", animation: "nextext-spin 0.7s linear infinite" }} />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: t.primary }}>🔊 Generating voice reply…</span>
         </div>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderTop: `1px solid ${t.border}`, background: t.surface }}>

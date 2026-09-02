@@ -134,6 +134,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const aiLongPressTimer = useRef(null);
   const aiDraggingRef = useRef(false);
   const rowRefs = useRef({});
+  const listScrollRef = useRef(null);
   const [unlockPassError, setUnlockPassError] = useState("");
   const tryUnlock = () => {
     const val = unlockPassInput.trim();
@@ -938,6 +939,11 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       aiDraggingRef.current = true;
       setAiDragging(true);
       longPressFiredRef.current = true;
+      // Lock list scrolling for the duration of the drag so the page doesn't
+      // scroll under the finger (touch action on the AI row alone isn't enough
+      // once the row is re-ordered and the touch target is released).
+      if (listScrollRef.current) listScrollRef.current.style.overflow = "hidden";
+      document.body.style.overflow = "hidden";
       const idx = mergedRef.current.findIndex((i) => i.kind === "ai");
       setDragDisplayIndex(idx === -1 ? null : idx);
     }, 380);
@@ -945,6 +951,14 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const aiTouchMove = (e) => {
     if (!aiDraggingRef.current) return;
     const y = e.touches[0].clientY;
+    // Edge auto-scroll: when the finger is near the top/bottom of the list,
+    // nudge the scroll so the user can reach chats that are off-screen.
+    const sc = listScrollRef.current;
+    if (sc) {
+      const r = sc.getBoundingClientRect();
+      if (y < r.top + 56) sc.scrollTop -= 10;
+      else if (y > r.bottom - 56) sc.scrollTop += 10;
+    }
     setDragDisplayIndex(computeDropIndex(y));
   };
   const aiTouchEnd = () => {
@@ -952,6 +966,8 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     if (aiDraggingRef.current) {
       aiDraggingRef.current = false;
       setAiDragging(false);
+      if (listScrollRef.current) listScrollRef.current.style.overflow = "";
+      document.body.style.overflow = "";
       const finalIndex = dragDisplayIndex ?? mergedRef.current.findIndex((i) => i.kind === "ai");
       commitAiOrder(finalIndex);
       setDragDisplayIndex(null);
@@ -1150,7 +1166,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         </div>
       </div>
 
-      <div className="nx-scroll" style={{ paddingBottom: hideNav ? 80 : 140 }}>
+      <div className="nx-scroll" ref={listScrollRef} style={{ paddingBottom: hideNav ? 80 : 140 }}>
         {notArchived.some((c) => c.unreadCount?.[myUid] > 0) && (
           <div onClick={handleMarkAllRead} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
             <CheckCheck size={15} color={t.primary} />

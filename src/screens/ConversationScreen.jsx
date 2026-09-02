@@ -31,6 +31,7 @@ import { extractFirstUrl, fetchLinkPreview, isLinkPreviewEnabled } from "../util
 import { playVoicePing, playVoiceEndChime } from "../utils/pingSounds";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { getSystemInsets } from "../utils/systemInsets";
+import { getAudioDuration } from "../utils/audio";
 
 
 const NEX_TEXT_FOLDER = "NexText";
@@ -590,13 +591,18 @@ function ScheduleSendSheet({ t, onClose, onSchedule }) {
 
 // Pinch-to-zoom + drag-to-pan media viewer is imported from ZoomableMedia.
 
-export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, recordingBarScale = 1, userDoc, emojiAnimations = true, emojiBigOn = true, onOpenAskAI, onOpenStatus }) {
+export default function ConversationScreen({ myUid, chatId: initialChatId, otherUid, contact, onBack, onOpenProfile, onOpenGroupInfo, onOpenChat, openSettings = false, showScrollDownSetting = true, scrollDownSize = 22, scrollDownPos = "center", animatedScrollEntry = false, recordingBarScale = 1, userDoc, emojiAnimations = true, emojiBigOn = true, onOpenAskAI, onOpenStatus, initialText = "" }) {
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth, composerButtonOrder, voiceSpacing } = useTheme();
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
   const availableVoices = getAvailableVoices(sysConfig);
   const aiApproved = userDoc?.aiApproved && !sysConfig?.aiGloballyDisabled && !sysConfig?.hideAiEverywhere && userDoc?.restrictions?.blockAI !== true;
+  const isAdmin = userDoc?.role === "admin";
+  // Admin can grant "AI voice note conversion" to a specific user even if they
+  // lack general AI access, so they can still use the Y Mizrachi voice-note AI
+  // formatter.
+  const canUseAiVoiceNote = aiApproved || !!userDoc?.aiVoiceNoteEnabled || isAdmin;
   const isGroup = !!contact?.isGroup;
   // Local (device-resident) media URLs for the WhatsApp-style auto-delete mode.
   // Keyed by message id -> object URL serving the cached Blob.
@@ -604,7 +610,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [imgErrorIds, setImgErrorIds] = useState(() => new Set());
   const cachingInFlight = useRef(new Set());
   const [chatId, setChatId] = useState(initialChatId);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialText || "");
   const [activeMsg, setActiveMsg] = useState(null);
   const [reactionFx, setReactionFx] = useState(null);
   const [forwardMsg, setForwardMsg] = useState(null);
@@ -1895,7 +1901,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       const blob = await synthesizeSpeechBytes(text, voice?.referenceId);
       const file = new File([blob], `ai-voice-${voice?.id || "note"}.mp3`, { type: "audio/mpeg" });
       const result = await uploadChatFile(chatId, myUid, file);
-      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: 0 });
+      const dur = await getAudioDuration(blob);
+      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: dur || 1 });
       setYNoteText("");
       setYNoteIdea("");
       setShowYNote(false);
@@ -1910,6 +1917,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const formatVoiceScript = async () => {
     const idea = yNoteIdea.trim();
     if (!idea || yNoteFormatting) return;
+    if (!canUseAiVoiceNote) { setSendError("AI voice-note formatting is off. Ask an admin to enable it for your account."); return; }
     setYNoteFormatting(true);
     setSendError("");
     try {
@@ -3783,11 +3791,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     <Mic size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Send Y Mizrachi Voice Note</span>
                   </div>
                 )}
-                {sysConfig?.global_voice_enabled !== false && (
-                  <div onClick={() => { closeAttach(); setShowClone(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
-                    <Mic size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Send Cloned Voice Note</span>
-                  </div>
-                )}
                 {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
                   <div onClick={() => { closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                     <ImageIcon size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Photo or video</span>
@@ -3839,7 +3842,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   rows={2}
                   style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, resize: "none", outline: "none", color: t.text, background: t.bg, marginBottom: 8 }}
                 />
-                <div onClick={formatVoiceScript} style={{ alignSelf: "flex-end", textAlign: "center", padding: "9px 14px", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 13, color: t.bubbleMeText, cursor: yNoteFormatting ? "wait" : "pointer", opacity: yNoteFormatting ? 0.6 : 1, marginBottom: 10 }}>
+                <div onClick={canUseAiVoiceNote ? formatVoiceScript : undefined} style={{ alignSelf: "flex-end", textAlign: "center", padding: "9px 14px", borderRadius: 10, background: canUseAiVoiceNote ? t.primary : t.border, fontWeight: 700, fontSize: 13, color: canUseAiVoiceNote ? t.bubbleMeText : t.textMuted, cursor: canUseAiVoiceNote && !yNoteFormatting ? "pointer" : "not-allowed", opacity: yNoteFormatting ? 0.6 : 1, marginBottom: 10 }}>
                   {yNoteFormatting ? "Formatting…" : "Auto-Format for Voice"}
                 </div>
                 <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textMuted, marginBottom: 4 }}>Generated Voice Script:</div>
