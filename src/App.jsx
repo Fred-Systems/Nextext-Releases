@@ -62,7 +62,7 @@ import FeedbackScreen from "./screens/FeedbackScreen";
 import ContactProfileScreen from "./screens/ContactProfileScreen";
 import AdminDashboard from "./screens/AdminDashboard";
 import AIChatScreen from "./screens/AIChatScreen";
-import { useSystemConfigHook, requestAIAccess, setAIPersonality, setSystemConfig, PERSONALITIES, AI_CONTACT_UID } from "./firebase/ai";
+import { useSystemConfigHook, requestAIAccess, setAIPersonality, setSystemConfig, PERSONALITIES, AI_PERSONA_TRAY, getVisiblePersonaTray, AI_CONTACT_UID } from "./firebase/ai";
 import AppLockScreen from "./screens/AppLockScreen";
 import StatusScreen from "./screens/StatusScreen";
 import GroupInfoScreen from "./screens/GroupInfoScreen";
@@ -347,7 +347,7 @@ function SettingsRow({ icon, label, sub, onClick, t, dataTour }) {
   );
 }
 
-function NotificationsRow({ myUid, t }) {
+function NotificationsRow({ myUid, t, userDoc }) {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
   const refresh = async () => {
@@ -1201,7 +1201,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
         {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}
         <SectionCard title="Notification Sound & Vibration" emoji="🔔" sectionKey="notifprefs">
-          <NotificationsRow myUid={myUid} t={t} />
+          <NotificationsRow myUid={myUid} t={t} userDoc={userDoc} />
           <NotificationPrefsRow t={t} auth={auth} myUid={myUid} />
         </SectionCard>
 
@@ -1944,14 +1944,17 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 </div>
                 <div style={{ padding: "12px 0" }}>
                   <div style={{ fontWeight: 600, color: t.text, fontSize: 14, marginBottom: 8 }}>AI Personality</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {Object.entries(PERSONALITIES).map(([key, p]) => (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+                    {getVisiblePersonaTray(sysConfig).map(([key, label]) => {
+                      const p = PERSONALITIES[key];
+                      return (
                       <div key={key} onClick={() => { setAIPersonality(myUid, key); setLiveUserDoc((prev) => ({ ...(prev || userDoc || {}), aiPersonality: key })); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, background: userDoc?.aiPersonality === key ? t.primaryLight : t.bg, border: `1px solid ${userDoc?.aiPersonality === key ? t.primary : t.border}`, cursor: "pointer" }}>
-                        <span style={{ fontSize: 18 }}>{p.icon}</span>
-                        <span style={{ fontWeight: 600, fontSize: 14, color: userDoc?.aiPersonality === key ? t.primary : t.text }}>{p.label}</span>
+                        <span style={{ fontSize: 18 }}>{p?.icon}</span>
+                        <span style={{ fontWeight: 600, fontSize: 14, color: userDoc?.aiPersonality === key ? t.primary : t.text }}>{p?.label || label}</span>
                         {userDoc?.aiPersonality === key && <span style={{ marginLeft: "auto", color: t.primary, fontWeight: 700 }}>✓</span>}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
                  <div style={{ padding: "12px 0", borderTop: `1px solid ${t.border}` }}>

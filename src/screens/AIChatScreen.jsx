@@ -9,7 +9,7 @@ import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, se
 import { db } from "../firebase/config";
 import { deleteChatCompletely, sendMediaMessage } from "../firebase/chats";
 import { uploadChatFile } from "../supabase/media";
-import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, detectImageIntent, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, setGeminiModel, useSystemConfigHook, describeAIError } from "../firebase/ai";
+import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, detectImageIntent, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, PERSONALITIES, AI_PERSONA_TRAY, getVisiblePersonaTray, setAIPersonality, setGeminiModel, useSystemConfigHook, describeAIError } from "../firebase/ai";
 import { useAIIconStyle, getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
 import Avatar from "../components/Avatar";
 import { downloadMedia } from "../utils/download";
@@ -354,7 +354,30 @@ export default function AIChatScreen({ myUid, onBack }) {
         "Speakers (use the exact voiceId values):\n" + voiceMeta + "\n" +
         "Mode: " + modeLine + "\n" +
         "Produce 6-10 turns, alternating speakers naturally.";
-      const raw = await sendAIMessage(myUid, "Generate the podcast script now.", [], instruction);
+      let raw = null;
+      let lastErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const r = await sendAIMessage(myUid, "Generate the podcast script now.", [], instruction);
+          if (r && r.trim()) { raw = r; break; }
+        } catch (e) { lastErr = e; }
+      }
+      // Graceful fallback: if the model returned empty (or errored) after retries,
+      // synthesize a simple alternating script so the podcast never hard-fails.
+      if (!raw || !raw.trim()) {
+        const names = voices.map((id) => availableVoices.find((x) => x.id === id)?.name || id);
+        const topic = podcastMode === "directed" && podcastTopic.trim() ? podcastTopic.trim() : "something we both care about";
+        const fallbackLines = [
+          `Let's dive into ${topic}.`,
+          names[1] ? `I've been wanting to talk about that — it's been on my mind.` : `I've been wanting to talk about that.`,
+          `Here's how I see it.`,
+          names[1] ? `I hear you, but there's another side worth considering.` : `Tell me more.`,
+          `[laughing] Okay, fair point!`,
+          names[1] ? `Let's agree to keep exploring this.` : `Let's keep going.`,
+        ];
+        raw = JSON.stringify(fallbackLines.map((l, i) => ({ voiceId: voices[i % voices.length], text: l })));
+        if (lastErr) console.warn("[podcast] using fallback script:", lastErr?.message);
+      }
       setPodcastStatus("Synthesizing voices…");
       const lines = parsePodcastScript(raw || "", voices);
       for (let i = 0; i < lines.length; i++) {
@@ -426,7 +449,10 @@ export default function AIChatScreen({ myUid, onBack }) {
       (async () => {
         try {
           const { synthesizeSpeech } = await import("../firebase/tts");
-          const voice = resolveVoice(sysConfig, voiceMode);
+          // Prefer the currently-selected persona's voice when it has a Fish Audio
+          // reference; otherwise fall back to the configured voice.
+          const personaRef = PERSONALITIES[currentPersonality]?.voiceRef;
+          const voice = personaRef ? { referenceId: personaRef } : resolveVoice(sysConfig, voiceMode);
           const url = await synthesizeSpeech(candidate.text, voice?.referenceId);
           setVoiceAudios((prev) => ({ ...prev, [msgId]: url }));
         } catch (err) {
@@ -436,7 +462,7 @@ export default function AIChatScreen({ myUid, onBack }) {
         }
         setVoiceBusy(false);
       })();
-  }, [messages, voiceMasterOn, voiceEnabled, voiceBusy, voiceAudios]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [messages, voiceMasterOn, voiceEnabled, voiceBusy, voiceAudios, currentPersonality]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pinchEnabled = () => {
     try { return localStorage.getItem("nextext_pinch_zoom") !== "false"; } catch { return true; }
@@ -1071,9 +1097,7 @@ export default function AIChatScreen({ myUid, onBack }) {
             <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>AI Assistant Persona</span>
           </div>
           <div style={{ maxHeight: 280, overflowY: "auto" }}>
-            {AI_PERSONA_TRAY
-              .filter(([key]) => !(sysConfig?.hideMizrachiMode && key === "mizrachi"))
-              .map(([key, label]) => (
+            {getVisiblePersonaTray(sysConfig).map(([key, label]) => (
               <div
                 key={key}
                 onClick={() => {

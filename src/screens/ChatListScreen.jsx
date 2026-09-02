@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, Check, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow, Pin, FlipHorizontal2 } from "lucide-react";
+import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, Check, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow, Pin, FlipHorizontal2, GripVertical } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { useChats, toggleArchive, toggleFavorite, toggleLocked, togglePinned, deleteChatForUser } from "../firebase/chats";
 import { useContacts, searchUsersByUsername, sendContactRequest, acceptContactRequest, getContactDisplayName } from "../firebase/contacts";
@@ -128,7 +128,12 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   // Unlocking an already-locked chat requires the locked-chats password.
   const [unlockPassChat, setUnlockPassChat] = useState(null);
   const [unlockPassInput, setUnlockPassInput] = useState("");
-  const [aiMenuOpen, setAiMenuOpen] = useState(false);
+  const [aiDragging, setAiDragging] = useState(false);
+  const [dragDisplayIndex, setDragDisplayIndex] = useState(null);
+  const aiDragStartRef = useRef(null);
+  const aiLongPressTimer = useRef(null);
+  const aiDraggingRef = useRef(false);
+  const rowRefs = useRef({});
   const [unlockPassError, setUnlockPassError] = useState("");
   const tryUnlock = () => {
     const val = unlockPassInput.trim();
@@ -873,28 +878,109 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     openChatRow(c);
   };
 
-  const toggleAiPin = () => {
-    const next = !userDoc?.aiChatPinned;
-    try { updateDoc(doc(db, "users", myUid), { aiChatPinned: next }); } catch (e) {}
-    setAiMenuOpen(false);
+  // ── AI chat ordering (drag to any position) ──
+  // The AI chat is a synthetic row sorted alongside real chats by a numeric
+  // "order key". By default we use its own recency (so it behaves like a normal
+  // chat); once the user drags it, we store an explicit key placed between its
+  // neighbours so it stays where they dropped it.
+  const aiRealChat = tabFiltered.find((c) => c.id === `ai_${myUid}`);
+  const aiDefaultKey = aiRealChat ? chatSortTime(aiRealChat) : 0;
+  const aiKey = userDoc?.aiChatOrder != null ? userDoc.aiChatOrder : aiDefaultKey;
+
+  const buildMerged = (overrideAiIndex) => {
+    const items = sortedChats.map((c) => ({ kind: "chat", c, key: chatSortTime(c) }));
+    items.push({ kind: "ai", key: aiKey });
+    items.sort((a, b) => b.key - a.key);
+    if (overrideAiIndex != null) {
+      const aiIdx = items.findIndex((i) => i.kind === "ai");
+      if (aiIdx !== -1 && aiIdx !== overrideAiIndex) {
+        const [ai] = items.splice(aiIdx, 1);
+        const clamped = Math.max(0, Math.min(overrideAiIndex, items.length));
+        items.splice(clamped, 0, ai);
+      }
+    }
+    return items;
   };
 
-  const renderAiRow = (pinned) => {
+  const computeDropIndex = (clientY) => {
+    const ids = mergedRef.current.map((it) => (it.kind === "ai" ? "ai" : it.c.id));
+    let idx = ids.length;
+    for (let i = 0; i < ids.length; i++) {
+      const el = rowRefs.current[ids[i]];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) { idx = i; break; }
+    }
+    return Math.max(0, Math.min(idx, ids.length));
+  };
+
+  const commitAiOrder = (displayIndex) => {
+    // Use the DISPLAYED order (with the AI placed at displayIndex) so the
+    // neighbours we read match what the user actually saw while dragging.
+    const items = buildMerged(displayIndex);
+    const aiPos = items.findIndex((i) => i.kind === "ai");
+    const before = items[aiPos - 1];
+    const after = items[aiPos + 1];
+    let newKey;
+    if (!before && !after) newKey = Date.now();
+    else if (!before) newKey = (after.key) + 1e12;
+    else if (!after) newKey = (before.key) - 1e12;
+    else newKey = (before.key + after.key) / 2;
+    try { updateDoc(doc(db, "users", myUid), { aiChatOrder: newKey }); } catch (e) {}
+  };
+
+  const aiTouchStart = (e) => {
+    longPressFiredRef.current = false;
+    const t0 = e.touches?.[0] || e;
+    aiDragStartRef.current = { x: t0.clientX, y: t0.clientY };
+    if (aiLongPressTimer.current) clearTimeout(aiLongPressTimer.current);
+    aiLongPressTimer.current = setTimeout(() => {
+      aiDraggingRef.current = true;
+      setAiDragging(true);
+      longPressFiredRef.current = true;
+      const idx = mergedRef.current.findIndex((i) => i.kind === "ai");
+      setDragDisplayIndex(idx === -1 ? null : idx);
+    }, 380);
+  };
+  const aiTouchMove = (e) => {
+    if (!aiDraggingRef.current) return;
+    const y = e.touches[0].clientY;
+    setDragDisplayIndex(computeDropIndex(y));
+  };
+  const aiTouchEnd = () => {
+    if (aiLongPressTimer.current) { clearTimeout(aiLongPressTimer.current); aiLongPressTimer.current = null; }
+    if (aiDraggingRef.current) {
+      aiDraggingRef.current = false;
+      setAiDragging(false);
+      const finalIndex = dragDisplayIndex ?? mergedRef.current.findIndex((i) => i.kind === "ai");
+      commitAiOrder(finalIndex);
+      setDragDisplayIndex(null);
+      longPressFiredRef.current = true;
+      setTimeout(() => { longPressFiredRef.current = false; }, 60);
+      return;
+    }
+  };
+
+  const mergedRef = useRef([]);
+  const merged = buildMerged(dragDisplayIndex);
+  mergedRef.current = merged;
+
+  const renderAiRowItem = () => {
     if (!aiApproved || userDoc?.aiDisabledByUser || effectiveTab !== "all") return null;
-    if (pinned && userDoc?.aiChatPinned) {
-      // rendered at top instead
-      return null;
-    }
-    if (!pinned && userDoc?.aiChatPinned) {
-      // when pinned, don't render in default spot
-      return null;
-    }
     return (
       <div
         key="ai-row"
-        onContextMenu={(e) => { e.preventDefault(); setAiMenuOpen(true); }}
-        onClick={() => onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true })}
-        style={{ display: "flex", alignItems: "center", gap: compactList ? 10 : 13, padding: compactList ? "8px 16px" : "13px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.bg }}
+        ref={(el) => { rowRefs.current["ai"] = el; }}
+        onTouchStart={aiTouchStart}
+        onTouchMove={aiTouchMove}
+        onTouchEnd={aiTouchEnd}
+        onTouchCancel={aiTouchEnd}
+        onContextMenu={(e) => e.preventDefault()}
+        onClick={() => {
+          if (longPressFiredRef.current) { longPressFiredRef.current = false; return; }
+          onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true });
+        }}
+        style={{ display: "flex", alignItems: "center", gap: compactList ? 10 : 13, padding: compactList ? "8px 16px" : "13px 16px", cursor: aiDragging ? "grabbing" : "pointer", borderBottom: `1px solid ${t.border}`, background: aiDragging ? t.primaryLight : t.bg, opacity: aiDragging ? 0.92 : 1, boxShadow: aiDragging ? "0 4px 14px rgba(0,0,0,0.18)" : "none", transform: aiDragging ? "scale(1.02)" : "none", touchAction: aiDragging ? "none" : "pan-y" }}
       >
         <div style={{ position: "relative", flexShrink: 0 }}>
           <Avatar uid={AI_CONTACT_UID} size={compactList ? 40 : 52} style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }} />
@@ -904,8 +990,9 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             <span style={{ fontWeight: 700, color: t.text, fontSize: compactList ? 14.5 : 15.5 }}>NexText AI</span>
             <span style={{ fontSize: 10, fontWeight: 700, color: "#000", background: "linear-gradient(135deg, #00E676, #00C853)", borderRadius: 6, padding: "1px 6px", marginLeft: 4, letterSpacing: 0.5 }}>NEX-AI</span>
           </div>
-          <span style={{ fontSize: 13.5, color: t.textMuted }}>Ask me anything! {userDoc?.aiChatPinned ? "(pinned)" : "· hold to reorder"}</span>
+          <span style={{ fontSize: 13.5, color: t.textMuted }}>{aiDragging ? "Drop to reorder…" : "Hold and drag to reorder"}</span>
         </div>
+        <GripVertical size={18} color={t.textMuted} style={{ flexShrink: 0 }} />
       </div>
     );
   };
@@ -1119,18 +1206,19 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           </div>
         ) : (
           <>
-            {renderAiRow(false)}
             {tabFiltered.length === 0 && !(aiApproved && effectiveTab === "all") && (
               <div style={{ padding: 30, textAlign: "center", color: t.textMuted, fontSize: 13.5, lineHeight: 1.6 }}>
                 {effectiveTab === "all" ? "No chats here yet." : `No ${effectiveTab} chats.`}
               </div>
             )}
-            {sortedChats.map((c) => (
-              <React.Fragment key={c.id}>
-                {userDoc?.aiChatPinned && c.id === sortedChats[0]?.id && renderAiRow(true)}
-                {renderChatRow(c)}
-              </React.Fragment>
-            ))}
+            {merged.map((it) => it.kind === "ai"
+              ? <React.Fragment key="ai">{renderAiRowItem()}</React.Fragment>
+              : (
+                <div key={it.c.id} ref={(el) => { rowRefs.current[it.c.id] = el; }}>
+                  {renderChatRow(it.c)}
+                </div>
+              )
+            )}
           </>
         )}
 
@@ -1262,15 +1350,6 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         <Plus size={26} color="#fff" style={{ transform: showFab ? "rotate(45deg)" : "none", transition: "transform 0.2s" }} />
       </button>
 
-      {aiMenuOpen && (
-        <div onClick={() => setAiMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 2147481500, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(300px, 86vw)", background: t.surface, borderRadius: 16, padding: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
-            <div style={{ padding: "12px 14px", fontWeight: 700, fontSize: 15, color: t.text }}>NexText AI</div>
-            <div onClick={toggleAiPin} style={{ padding: "13px 14px", borderRadius: 10, cursor: "pointer", fontWeight: 600, fontSize: 14, color: t.primary, background: t.primaryLight }}>{userDoc?.aiChatPinned ? "Unpin from top" : "Pin to top of chats"}</div>
-            <div onClick={() => setAiMenuOpen(false)} style={{ padding: "13px 14px", textAlign: "center", color: t.textMuted, fontSize: 14, marginTop: 4 }}>Cancel</div>
-          </div>
-        </div>
-      )}
       {showAIWidget && !showGlobalCamera && !capturedMedia && !cameraPreviewStep && (
         <AISidebarWidget
           myUid={myUid}

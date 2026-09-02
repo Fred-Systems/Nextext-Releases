@@ -9,7 +9,7 @@ import { getOrCreateDirectChat } from "../firebase/chats";
 import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings } from "../firebase/config-settings";
 import { getPreWarmConfig, setPreWarmEnabled } from "../firebase/prewarm";
 import { getUserMessageStats, formatActiveTime, formatBytes } from "../firebase/stats";
-import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest, GEMINI_MODELS, DEFAULT_GEMINI_MODEL } from "../firebase/ai";
+import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, AI_PERSONA_TRAY } from "../firebase/ai";
 import { getActiveStorageProviderFromDb, setActiveStorageProviderDb, getSystemSetting, writeSystemSetting } from "../firebase/systemSettings";
 import { invalidateStorageProviderCache } from "../services/mediaUpload";
 import { supabase, MEDIA_BUCKET } from "../supabase/config";
@@ -1778,6 +1778,28 @@ export default function AdminDashboard({ myUid, onBack }) {
                 >
                   {voiceProfilesSaved ? "Saved ✓" : "Save Voice Profiles"}
                 </button>
+              </div>
+
+              <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: t.text, marginBottom: 4 }}>Hidden Personas</div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+                  Toggle any persona off to hide it from AI chat and AI voice for all users. Hidden personas can't be selected anywhere until re-enabled.
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 280, overflowY: "auto" }}>
+                  {AI_PERSONA_TRAY.map(([key, label]) => {
+                    const hidden = (sysConfig?.hiddenPersonas || []).includes(key);
+                    return (
+                      <div key={key} onClick={() => {
+                        const cur = sysConfig?.hiddenPersonas || [];
+                        const next = hidden ? cur.filter((k) => k !== key) : [...cur, key];
+                        setSystemConfig({ hiddenPersonas: next }, myUid);
+                      }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 8, cursor: "pointer", background: hidden ? "#2a2a2a" : t.bg, border: `1px solid ${t.border}` }}>
+                        <span style={{ flex: 1, fontSize: 13, color: hidden ? t.textMuted : t.text, fontWeight: 600 }}>{label}</span>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: hidden ? "#FF3B30" : "#28A745" }}>{hidden ? "HIDDEN" : "VISIBLE"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div onClick={() => { setSystemConfig({ hideMizrachiMode: !sysConfig?.hideMizrachiMode }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.hideMizrachiMode ? "#FF3B30" : t.primaryLight, cursor: "pointer", marginBottom: 14 }}>
