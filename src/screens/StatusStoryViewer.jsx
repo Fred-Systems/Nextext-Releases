@@ -98,7 +98,7 @@ function ViewersPanel({ contacts, extraProfiles, viewers, ownerName }) {
   );
 }
 
-export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, ownerUid, contacts, onClose, onViewStory, onNext, onExit }) {
+export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, ownerUid, contacts, onClose, onViewStory, onNext, onExit, onViewedStatus }) {
   const { t, appFont } = useTheme();
   const initializedRef = useRef(false);
   const completedRef = useRef(false);
@@ -152,6 +152,8 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
   const isOwner = myUid && ownerUid && myUid === ownerUid;
   const current = statuses[idx];
+  // Track locally-viewed status IDs so re-opening resumes at the first unseen one.
+  useEffect(() => { if (current?.id && onViewedStatus) onViewedStatus(current.id); }, [current?.id, onViewedStatus]);
   const [hlsUrl, setHlsUrl] = useState(null);
   const [fallbackUrl, setFallbackUrl] = useState(null);
   const [posterUrl, setPosterUrl] = useState(null);

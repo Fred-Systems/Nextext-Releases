@@ -8,6 +8,7 @@ import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { deleteChatCompletely, sendMediaMessage } from "../firebase/chats";
+import { uploadChatFile } from "../supabase/media";
 import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, detectImageIntent, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, PERSONALITIES, AI_PERSONA_TRAY, setAIPersonality, setGeminiModel, useSystemConfigHook, describeAIError } from "../firebase/ai";
 import { useAIIconStyle, getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
 import Avatar from "../components/Avatar";
@@ -271,6 +272,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [podcastVoices, setPodcastVoices] = useState([]);
   const [podcastMode, setPodcastMode] = useState("auto");
   const [podcastTopic, setPodcastTopic] = useState("");
+  const [podcastSpeakerNotes, setPodcastSpeakerNotes] = useState({}); // voiceId -> note
   const [podcastBusy, setPodcastBusy] = useState(false);
   const [podcastStatus, setPodcastStatus] = useState("");
   const [summarizingExternal, setSummarizingExternal] = useState(false);
@@ -308,7 +310,10 @@ export default function AIChatScreen({ myUid, onBack }) {
   const availableVoices = getAvailableVoices(sysConfig);
   const togglePodcastVoice = (id) => {
     setPodcastVoices((prev) => {
-      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.includes(id)) {
+        setPodcastSpeakerNotes((n) => { const c = { ...n }; delete c[id]; return c; });
+        return prev.filter((x) => x !== id);
+      }
       if (prev.length >= 4) return prev;
       return [...prev, id];
     });
@@ -336,7 +341,8 @@ export default function AIChatScreen({ myUid, onBack }) {
       const voiceMeta = voices.map((id) => {
         const v = availableVoices.find((x) => x.id === id);
         const prof = sysConfig?.voiceProfiles?.[id] || {};
-        return `- ${v?.name || id}${prof.fullName ? ` (${prof.fullName})` : ""}${prof.prompt ? `: ${prof.prompt}` : ""}`;
+        const note = (podcastSpeakerNotes[id] || "").trim();
+        return `- ${v?.name || id}${prof.fullName ? ` (${prof.fullName})` : ""}${prof.prompt ? `\n  Persona: ${prof.prompt}` : ""}${note ? `\n  This speaker's direction: ${note}` : ""}`;
       }).join("\n");
       const modeLine = podcastMode === "auto"
         ? "Invent a natural, engaging podcast/conversation topic that fits these speakers. You may use details and names you know about them."
@@ -1512,13 +1518,31 @@ export default function AIChatScreen({ myUid, onBack }) {
                 <div onClick={() => setPodcastMode("directed")} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${podcastMode === "directed" ? t.primary : t.border}`, background: podcastMode === "directed" ? t.primary : t.bg, color: podcastMode === "directed" ? "#fff" : t.text }}>I direct it</div>
               </div>
               {podcastMode === "directed" && (
-                <textarea
-                  value={podcastTopic}
-                  onChange={(e) => setPodcastTopic(e.target.value)}
-                  placeholder="Describe the topic and what each voice should say or how they should speak (e.g. 'Voice A is skeptical, Voice B is excited about...')."
-                  rows={4}
-                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, resize: "none", outline: "none", color: t.text, background: t.bg, marginBottom: 12 }}
-                />
+                <>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: t.text, marginBottom: 6 }}>General conversation direction</div>
+                  <textarea
+                    value={podcastTopic}
+                    onChange={(e) => setPodcastTopic(e.target.value)}
+                    placeholder="Describe the overall topic and flow (e.g. 'A lively debate about the best pizza topping')."
+                    rows={3}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, resize: "none", outline: "none", color: t.text, background: t.bg, marginBottom: 12 }}
+                  />
+                  {podcastVoices.map((id) => {
+                    const v = availableVoices.find((x) => x.id === id);
+                    return (
+                      <div key={id} style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, color: t.primary, marginBottom: 4 }}>{v?.name || id}'s opinion & style</div>
+                        <textarea
+                          value={podcastSpeakerNotes[id] || ""}
+                          onChange={(e) => setPodcastSpeakerNotes((n) => ({ ...n, [id]: e.target.value }))}
+                          placeholder={`How should ${v?.name || "this speaker"} speak and what's their stance?`}
+                          rows={2}
+                          style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 12.5, resize: "none", outline: "none", color: t.text, background: t.bg }}
+                        />
+                      </div>
+                    );
+                  })}
+                </>
               )}
               {podcastStatus && (
                 <div style={{ fontSize: 12.5, color: t.primary, fontWeight: 600, marginBottom: 8 }}>{podcastStatus}</div>

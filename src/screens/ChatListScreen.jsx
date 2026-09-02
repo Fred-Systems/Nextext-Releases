@@ -128,6 +128,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   // Unlocking an already-locked chat requires the locked-chats password.
   const [unlockPassChat, setUnlockPassChat] = useState(null);
   const [unlockPassInput, setUnlockPassInput] = useState("");
+  const [aiMenuOpen, setAiMenuOpen] = useState(false);
   const [unlockPassError, setUnlockPassError] = useState("");
   const tryUnlock = () => {
     const val = unlockPassInput.trim();
@@ -872,15 +873,54 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     openChatRow(c);
   };
 
+  const toggleAiPin = () => {
+    const next = !userDoc?.aiChatPinned;
+    try { updateDoc(doc(db, "users", myUid), { aiChatPinned: next }); } catch (e) {}
+    setAiMenuOpen(false);
+  };
+
+  const renderAiRow = (pinned) => {
+    if (!aiApproved || userDoc?.aiDisabledByUser || effectiveTab !== "all") return null;
+    if (pinned && userDoc?.aiChatPinned) {
+      // rendered at top instead
+      return null;
+    }
+    if (!pinned && userDoc?.aiChatPinned) {
+      // when pinned, don't render in default spot
+      return null;
+    }
+    return (
+      <div
+        key="ai-row"
+        onContextMenu={(e) => { e.preventDefault(); setAiMenuOpen(true); }}
+        onClick={() => onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true })}
+        style={{ display: "flex", alignItems: "center", gap: compactList ? 10 : 13, padding: compactList ? "8px 16px" : "13px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.bg }}
+      >
+        <div style={{ position: "relative", flexShrink: 0 }}>
+          <Avatar uid={AI_CONTACT_UID} size={compactList ? 40 : 52} style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: compactList ? 1 : 3 }}>
+            <span style={{ fontWeight: 700, color: t.text, fontSize: compactList ? 14.5 : 15.5 }}>NexText AI</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#000", background: "linear-gradient(135deg, #00E676, #00C853)", borderRadius: 6, padding: "1px 6px", marginLeft: 4, letterSpacing: 0.5 }}>NEX-AI</span>
+          </div>
+          <span style={{ fontSize: 13.5, color: t.textMuted }}>Ask me anything! {userDoc?.aiChatPinned ? "(pinned)" : "· hold to reorder"}</span>
+        </div>
+      </div>
+    );
+  };
+
   const renderChatRow = (c) => {
     const otherUid = c.participants?.find((p) => p !== myUid);
     const otherContact = acceptedContacts.find((ac) => ac.uid === otherUid);
+    const _density = ["compact", "default", "roomy"].includes(localStorage.getItem("nextext_ui_density")) ? localStorage.getItem("nextext_ui_density") : "default";
+    const dScale = _density === "compact" ? 0.85 : _density === "roomy" ? 1.18 : 1;
     const avatarSize = compactList ? 40 : 52;
-    const rowPadding = compactList ? "8px 16px" : "13px 16px";
+    const rowPadding = compactList ? `8px 16px` : `13px 16px`;
     const nameSize = compactList ? 14.5 : 15.5;
     const msgSize = compactList ? 12.5 : 13.5;
     const badgeSize = compactList ? 12 : 14;
-    const gap = compactList ? 14 : 18;
+    const gap = Math.round((compactList ? 16 : 22) * dScale);
     return (
     <div key={c.id} style={{ position: "relative", overflow: "hidden", marginBottom: 1 }}>
       <div
@@ -927,7 +967,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           )}
         </div>
       )}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0, paddingLeft: 4 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: compactList ? 1 : 3, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, flex: 1 }}>
             <span style={{ fontWeight: 700, color: t.text, fontSize: nameSize, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{chatDisplayName(c)}</span>
@@ -1079,29 +1119,18 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           </div>
         ) : (
           <>
-            {aiApproved && effectiveTab === "all" && (
-              <div
-                onClick={() => onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true })}
-                style={{ display: "flex", alignItems: "center", gap: compactList ? 10 : 13, padding: compactList ? "8px 16px" : "13px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.bg }}
-              >
-                <div style={{ position: "relative", flexShrink: 0 }}>
-                  <Avatar uid={AI_CONTACT_UID} size={compactList ? 40 : 52} style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: compactList ? 1 : 3 }}>
-                    <span style={{ fontWeight: 700, color: t.text, fontSize: compactList ? 14.5 : 15.5 }}>NexText AI</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#000", background: "linear-gradient(135deg, #00E676, #00C853)", borderRadius: 6, padding: "1px 6px", marginLeft: 4, letterSpacing: 0.5 }}>NEX-AI</span>
-                  </div>
-                  <span style={{ fontSize: 13.5, color: t.textMuted }}>Ask me anything!</span>
-                </div>
-              </div>
-            )}
+            {renderAiRow(false)}
             {tabFiltered.length === 0 && !(aiApproved && effectiveTab === "all") && (
               <div style={{ padding: 30, textAlign: "center", color: t.textMuted, fontSize: 13.5, lineHeight: 1.6 }}>
                 {effectiveTab === "all" ? "No chats here yet." : `No ${effectiveTab} chats.`}
               </div>
             )}
-            {sortedChats.map((c) => renderChatRow(c))}
+            {sortedChats.map((c) => (
+              <React.Fragment key={c.id}>
+                {userDoc?.aiChatPinned && c.id === sortedChats[0]?.id && renderAiRow(true)}
+                {renderChatRow(c)}
+              </React.Fragment>
+            ))}
           </>
         )}
 
@@ -1173,7 +1202,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           )}
           {acceptedContacts.length === 0 && !aiApproved && <div style={{ fontSize: 13, color: t.textMuted }}>No contacts yet.</div>}
           {acceptedContacts.length === 0 && aiApproved && <div style={{ fontSize: 13, color: t.textMuted }}>No contacts yet. Try NexText AI below!</div>}
-          {aiApproved && !notArchived.some((c) => c.id?.startsWith("ai_")) && (
+          {aiApproved && !userDoc?.aiDisabledByUser && !notArchived.some((c) => c.id?.startsWith("ai_")) && (
             <div onClick={() => onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", cursor: "pointer" }}>
               <div style={{ width: 36, height: 36, borderRadius: "50%", background: "linear-gradient(135deg, #7C5CFF, #53BDEB)", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 18 }}>🤖</span></div>
               <span style={{ fontSize: 14, color: t.text, fontWeight: 600 }}>NexText AI</span>
@@ -1233,6 +1262,15 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         <Plus size={26} color="#fff" style={{ transform: showFab ? "rotate(45deg)" : "none", transition: "transform 0.2s" }} />
       </button>
 
+      {aiMenuOpen && (
+        <div onClick={() => setAiMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 2147481500, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(300px, 86vw)", background: t.surface, borderRadius: 16, padding: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+            <div style={{ padding: "12px 14px", fontWeight: 700, fontSize: 15, color: t.text }}>NexText AI</div>
+            <div onClick={toggleAiPin} style={{ padding: "13px 14px", borderRadius: 10, cursor: "pointer", fontWeight: 600, fontSize: 14, color: t.primary, background: t.primaryLight }}>{userDoc?.aiChatPinned ? "Unpin from top" : "Pin to top of chats"}</div>
+            <div onClick={() => setAiMenuOpen(false)} style={{ padding: "13px 14px", textAlign: "center", color: t.textMuted, fontSize: 14, marginTop: 4 }}>Cancel</div>
+          </div>
+        </div>
+      )}
       {showAIWidget && !showGlobalCamera && !capturedMedia && !cameraPreviewStep && (
         <AISidebarWidget
           myUid={myUid}

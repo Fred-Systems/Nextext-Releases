@@ -201,10 +201,14 @@ service cloud.firestore {
 
     // ── status ─────────────────────────────────────────────
     match /status/{statusId} {
-      allow read: if isSignedIn(); // visibility filtering (contacts-only, selected/excluded
-                                     // lists) happens client-side on top of this; tightening
-                                     // this further requires per-doc owner+viewer checks if
-                                     // stricter server-side enforcement is wanted later
+      // A status is viewable if it is public, owned by the viewer, or the viewer is
+      // an accepted contact of the poster (reverse-gate: the POSTER decides who may
+      // see their status via their own NexText contacts list).
+      allow read: if isSignedIn() && (
+        resource.data.visibility == 'public'
+        || resource.data.ownerId == request.auth.uid
+        || get(/databases/$(database)/documents/users/$(resource.data.ownerId)/contacts/$(request.auth.uid)).data.status == 'accepted'
+      );
       allow create: if isSignedIn() && notBanned() && statusAllowed() &&
         request.resource.data.ownerId == request.auth.uid;
       allow update: if isSignedIn() && (

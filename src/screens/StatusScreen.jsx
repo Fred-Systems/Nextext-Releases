@@ -66,6 +66,20 @@ function StatusThumb({ item, forceStaticPreview, showThumbs = true, style = {} }
   return <video src={vid || undefined} poster={poster || undefined} muted autoPlay loop playsInline preload="metadata" style={style} />;
 }
 
+// Pick the best status to show as a static preview: prefer an image, or a video
+// that already has a poster/thumbnail; fall back to the latest item. Used so
+// list/rows modes don't render a blank card when the newest status is a video
+// whose thumbnail couldn't be generated.
+function pickPreviewItem(items) {
+  if (!items || !items.length) return null;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.mediaType === "image" && it.mediaURL) return it;
+    if (it.mediaType === "video" && (it.posterURL || it.thumbnailURL || it.previewURL)) return it;
+  }
+  return items[items.length - 1];
+}
+
 // Camera preview / capture effect filters (CSS filter strings). Applied live to
 // the preview and baked into captured photos via canvas ctx.filter.
 const CAMERA_FILTERS = [
@@ -138,6 +152,16 @@ function markViewed(uid) {
   const viewed = getStoredViewed();
   viewed[uid] = Date.now();
   localStorage.setItem(VIEWED_KEY, JSON.stringify(viewed));
+}
+
+// Per-status viewed IDs so re-opening a story starts at the first unseen update.
+const STATUS_VIEWED_IDS_KEY = "nextext_status_viewed_ids";
+function getViewedIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(STATUS_VIEWED_IDS_KEY) || "[]")); } catch { return new Set(); }
+}
+function markStatusViewed(id) {
+  if (!id) return;
+  try { const s = getViewedIds(); s.add(id); localStorage.setItem(STATUS_VIEWED_IDS_KEY, JSON.stringify([...s])); } catch {}
 }
 
 function getVideoDuration(file) {
@@ -246,6 +270,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const [statusLayout, setStatusLayout] = useState(() => localStorage.getItem("nextext_status_layout") || "cards");
   const [statusPreviewSize, setStatusPreviewSize] = useState(() => localStorage.getItem("nextext_status_preview_size") || "compact");
   const [statusTab, setStatusTab] = useState("updates"); // "updates" | "public"
+  const [publicInfo, setPublicInfo] = useState(false);
   const [postPublic, setPostPublic] = useState(false);
   const [userStatusVisibility, setUserStatusVisibility] = useState("contacts");
   useEffect(() => {
@@ -1051,7 +1076,12 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   };
 
   const openStory = (items, ownerUid) => {
-    setViewStoryOwner({ statuses: items, initialIndex: 0, ownerUid });
+    // Start at the first status the user hasn't seen yet (so re-opening after a
+    // new post resumes where they left off).
+    const viewedIds = getViewedIds();
+    let initialIndex = items.findIndex((s) => !viewedIds.has(s.id));
+    if (initialIndex < 0) initialIndex = 0;
+    setViewStoryOwner({ statuses: items, initialIndex, ownerUid });
     onStoryViewerChange?.(true);
     // Record view for each status in this story (fire-and-forget) and mark the
     // owner as viewed locally so the ring turns from green (unviewed) to grey.
@@ -1143,11 +1173,26 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           <div
             key={tab.id}
             onClick={() => setStatusTab(tab.id)}
-            style={{ flex: 1, textAlign: "center", padding: "11px 0", fontSize: 13.5, fontWeight: 700, cursor: "pointer", color: statusTab === tab.id ? t.primary : t.textMuted, borderBottom: `2px solid ${statusTab === tab.id ? t.primary : "transparent"}` }}
+            style={{ flex: 1, textAlign: "center", padding: "11px 0", fontSize: 13.5, fontWeight: 700, cursor: "pointer", color: statusTab === tab.id ? t.primary : t.textMuted, borderBottom: `2px solid ${statusTab === tab.id ? t.primary : "transparent"}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
           >
-            {tab.label}
+            <span>{tab.label}</span>
+            {tab.id === "public" && (
+              <span
+                onClick={(e) => { e.stopPropagation(); setPublicInfo((v) => !v); }}
+                title="What is a public status?"
+                style={{ width: 16, height: 16, borderRadius: "50%", border: `1px solid ${t.textMuted}`, color: t.textMuted, fontSize: 11, fontWeight: 800, lineHeight: "14px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+              >?</span>
+            )}
           </div>
         ))}
+        {publicInfo && (
+          <div style={{ padding: "10px 16px", background: t.primaryLight, borderBottom: `1px solid ${t.border}` }}>
+            <div style={{ fontSize: 13, color: t.text, lineHeight: 1.5 }}>
+              <b>Public statuses</b> are visible to <b>anyone</b> with the app link — not just your NexText contacts. Post something public only if you're comfortable with it being widely seen. You can toggle each status between Contacts-only and Public from the visibility switch on your own status cards.
+            </div>
+            <div onClick={() => setPublicInfo(false)} style={{ textAlign: "right", fontSize: 12.5, fontWeight: 700, color: t.primary, marginTop: 6, cursor: "pointer" }}>Got it</div>
+          </div>
+        )}
       </div>
 
       <div className="nx-scroll" style={{ flex: 1, paddingBottom: 70, minHeight: 0 }}>
@@ -1205,11 +1250,13 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
 
         {Object.keys(grouped).length > 0 && <SectionHeader label={statusTab === "public" ? "Public Statuses" : "Recent Updates"} />}
         {statusLayout === "list" ? (
-          <div style={{ display: "flex", overflowX: "auto", overflowY: "hidden", padding: "10px 16px 14px", WebkitOverflowScrolling: "touch", onTouchMove: (e) => e.stopPropagation() }}>
+          <div style={{ display: "flex", overflowX: "auto", overflowY: "hidden", padding: "10px 16px 14px", WebkitOverflowScrolling: "touch", touchAction: "pan-x", onTouchMove: (e) => e.stopPropagation() }}>
             {Object.entries(grouped).map(([uid, items]) => {
               const contact = acceptedContacts.find((c) => c.uid === uid);
               const name = contact?.profile?.displayName || "Unknown";
               const latest = items[items.length - 1];
+              const previewItem = pickPreviewItem(items);
+              const noThumb = previewItem?.mediaType === "video" && !previewItem.posterURL && !previewItem.thumbnailURL && !previewItem.previewURL;
               return (
                 <div
                   key={uid}
@@ -1217,12 +1264,16 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                   style={{ flexShrink: 0, width: 158, marginRight: 10, borderRadius: 14, border: `2px solid ${isViewed(uid) ? t.border : t.primary}`, overflow: "hidden", background: t.surface, cursor: "pointer", boxSizing: "border-box" }}
                 >
                   <div style={{ position: "relative", paddingBottom: "120%", background: "#000" }}>
-                    {latest.mediaURL ? (
-                      latest.mediaType === "video" ? (
-                        <StatusThumb item={latest} forceStaticPreview={forceStaticPreview} showThumbs={showVideoThumbs} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
-                      ) : (
-                        <img src={getProxyMediaUrl(latest.mediaURL, "image")} alt="" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
-                      )
+                    {previewItem?.mediaURL && !noThumb ? (
+                      previewItem.mediaType === "video" ? (
+                        <StatusThumb item={previewItem} forceStaticPreview={forceStaticPreview} showThumbs={showVideoThumbs} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                        <img src={getProxyMediaUrl(previewItem.mediaURL, "image")} alt="" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                        )
+                    ) : noThumb ? (
+                      <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", background: "linear-gradient(135deg,#2a2a2e,#1a1a1d)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+                        <span style={{ fontSize: 12, color: "#fff", fontWeight: 700, textAlign: "center" }}>Tap to view {name}'s status</span>
+                      </div>
                     ) : (
                       <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 10 }}>
                         <span style={{ color: latest.backgroundColor ? "#fff" : t.text, fontSize: 12.5, fontWeight: 700, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical" }}>{latest.text || "Status"}</span>
@@ -1274,6 +1325,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
               const contact = acceptedContacts.find((c) => c.uid === uid);
               const name = contact?.profile?.displayName || "Unknown";
               const latest = items[items.length - 1];
+              const previewItem = pickPreviewItem(items);
+              const noThumb = previewItem?.mediaType === "video" && !previewItem.posterURL && !previewItem.thumbnailURL && !previewItem.previewURL;
               const viewed = isViewed(uid);
               return (
                 <div key={uid} onClick={() => openStory(items, uid)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.surface }}>
@@ -1283,10 +1336,12 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     <div style={{ fontSize: 12, color: t.textMuted }}>{items.length} update{items.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}</div>
                   </div>
                     <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#000", flexShrink: 0 }}>
-                    {latest.mediaURL ? (
-                      latest.mediaType === "video" ? (
-                        <StatusThumb item={latest} forceStaticPreview={forceStaticPreview} showThumbs={showVideoThumbs} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      ) : <img src={getProxyMediaUrl(latest.mediaURL, "image")} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    {previewItem?.mediaURL && !noThumb ? (
+                      previewItem.mediaType === "video" ? (
+                        <StatusThumb item={previewItem} forceStaticPreview={forceStaticPreview} showThumbs={showVideoThumbs} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : <img src={getProxyMediaUrl(previewItem.mediaURL, "image")} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : noThumb ? (
+                      <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg,#2a2a2e,#1a1a1d)", display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: "#fff", textAlign: "center" }}>Tap to view</span></div>
                     ) : (
                       <div style={{ width: "100%", height: "100%", background: latest.backgroundColor || t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", padding: 6 }}><span style={{ fontSize: 9, fontWeight: 700, color: latest.backgroundColor ? "#fff" : t.text }}>{(latest.text || "").slice(0, 12)}</span></div>
                     )}
@@ -1407,6 +1462,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           onClose={() => { setViewStoryOwner(null); onStoryViewerChange?.(false); }}
           onExit={() => { setViewStoryOwner(null); onStoryViewerChange?.(false); if (statusOrigin !== "status") onBack?.(); }}
           onViewStory={handleStoryViewed}
+          onViewedStatus={markStatusViewed}
           onNext={() => advanceToNextOwner(viewStoryOwner.ownerUid)}
         />
       )}

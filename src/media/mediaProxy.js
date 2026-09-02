@@ -21,6 +21,14 @@ export function isCloudinaryProxyEnabled() {
   return proxyEnabled;
 }
 
+// Supabase storage URLs are already public and load fine directly in the browser/
+// WebView. Cloudinary's fetch proxy frequently 400s on them (and wastes
+// transformation credits), so we never route them through the proxy — they're
+// returned as-is. Only external sources (e.g. image generators) get optimized.
+function isSupabaseUrl(url) {
+  return /supabase\.(co|in)/.test(url) || url.includes("/storage/v1/object/");
+}
+
 // Rewrite a media URL through Cloudinary's fetch API when the proxy is enabled.
 // type: "image" | "video" | anything else (treated as image).
 export function getProxyMediaUrl(url, type = "image") {
@@ -30,6 +38,8 @@ export function getProxyMediaUrl(url, type = "image") {
   if (url.includes("res.cloudinary.com") || url.includes("/image/fetch/") || url.includes("/video/fetch/")) {
     return url;
   }
+  // Supabase-hosted media loads directly; skip the proxy entirely.
+  if (isSupabaseUrl(url)) return url;
   const resource = type === "video" ? "video" : "image";
   const base = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/${resource}/fetch/f_auto,q_auto/`;
   // Encode the whole source URL so query strings / special chars survive.
@@ -45,10 +55,12 @@ function cloudinaryVideoPoster(url) {
 
 // Generate a still-frame poster for a video through Cloudinary. Works for both
 // Cloudinary-hosted videos (transform injection) and external URLs (fetch proxy),
-// so chat + status video previews never render blank.
+// so chat + status video previews never render blank. Supabase-hosted videos are
+// returned unchanged — the player/posters load them directly.
 export function getVideoPosterUrl(url) {
   if (!url || typeof url !== "string") return url;
   if (url.includes("res.cloudinary.com")) return cloudinaryVideoPoster(url);
+  if (isSupabaseUrl(url)) return url;
   const base = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/fetch/so_0,f_jpg,w_480/`;
   return base + encodeURIComponent(url);
 }

@@ -3,8 +3,24 @@ import { createPortal } from "react-dom";
 import { ThemeProvider, useTheme, themes, ROTATE_INTERVALS, isThemeDark } from "./theme/ThemeContext";
 
 // Search context for the (optional) revamped Settings layout: when a query is
-// typed, only SectionCards whose title matches are rendered (and auto-expanded).
-const SettingsSearchContext = React.createContext("");
+// typed (revamped mode or classic search opened), only matching SectionCards are
+// rendered (and auto-expanded). `revamped` switches the visual treatment.
+const SettingsSearchContext = React.createContext({ query: "", revamped: false });
+
+// Deep-search keywords per settings section so the search box finds specific
+// settings, not just top-level category titles.
+const SETTINGS_SEARCH_KEYWORDS = {
+  account: ["name", "username", "profile", "photo", "block", "delete account", "logout", "sign out"],
+  loginSecurity: ["login", "password", "email", "security", "two factor", "verification"],
+  about: ["about me", "bio", "description", "story"],
+  privacy: ["privacy", "last seen", "online", "read receipt", "block", "status visibility", "who can see", "contacts", "public status", "disappearing"],
+  voiceNotes: ["voice", "y mizrachi", "rosh", "trump", "magnus", "custom voice", "fish audio", "director", "podcast", "voice note", "transcription"],
+  notifprefs: ["notification", "sound", "vibrate", "ring", "mute", "led", "alert"],
+  appearance: ["theme", "dark", "light", "color", "wallpaper", "density", "font", "size", "layout", "settings layout", "classic", "revamped", "rounded", "ui scale", "splash"],
+  ai: ["ai", "artificial intelligence", "chatbot", "groq", "gemini", "persona", "voice reply", "image", "vision", "enable ai", "disable ai", "hide ai", "turn off ai", "turn on ai", "ai access"],
+  accountActions: ["account", "delete", "logout", "data", "export"],
+  techstack: ["tech stack", "version", "build", "about", "developer", "credits"],
+};
 
 // Resolves the notification dark-mode flag. An explicit user choice in the
 // notification settings ("actual"/"lettering") wins; otherwise the card
@@ -28,7 +44,7 @@ import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
 import { useContacts } from "./firebase/contacts";
 import { useChats, purgeExpiredChatMedia, markChatRead } from "./firebase/chats";
 import { setGlobalWallpaper, fileToWallpaperDataUrl } from "./theme/wallpaper";
-import { ChevronLeft, ChevronRight, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile, Megaphone } from "lucide-react";
+import { ChevronLeft, ChevronRight, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile, Megaphone, LayoutGrid } from "lucide-react";
 import { FONTS } from "./theme/ThemeContext";
 import Avatar from "./components/Avatar";
 import AvatarColorPicker from "./components/AvatarColorPicker";
@@ -338,6 +354,11 @@ function NotificationsRow({ myUid, t }) {
     try { setStatus(await getNotificationsStatus()); } catch { setStatus({ supported: false, hasPrompt: false, receive: "unknown" }); }
   };
   useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    const d = userDoc?.uiDensity || localStorage.getItem("nextext_ui_density") || "default";
+    const scale = d === "compact" ? 0.9 : d === "roomy" ? 1.12 : 1;
+    document.documentElement.style.setProperty("--nx-density", String(scale));
+  }, [userDoc?.uiDensity]);
   // On Android < 13 (API < 33) there is no POST_NOTIFICATIONS runtime
   // permission — notifications are granted automatically and no prompt/toggle
   // exists in system settings. We surface that honestly here.
@@ -640,6 +661,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   // Revamped settings layout: admin sets the default (sysConfig.altSettings); each
   // user can override via the Classic/Revamped toggle. Smart search filters sections.
   const [settingsSearch, setSettingsSearch] = useState("");
+  const [classicSearchOpen, setClassicSearchOpen] = useState(false);
   const [altSettingsView, setAltSettingsView] = useState(() => {
     try { const v = localStorage.getItem("nextext_settings_layout"); if (v) return v; } catch {}
     return sysConfig?.altSettings ? "revamped" : "classic";
@@ -728,10 +750,33 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     );
   };
   const SectionCard = useMemo(() => ({ title, emoji, children, sectionKey }) => {
-    const searchQuery = React.useContext(SettingsSearchContext);
-    const q = (searchQuery || "").trim().toLowerCase();
-    if (q && title && !title.toLowerCase().includes(q)) return null;
-    const isOpen = sectionKey ? (searchQuery ? true : (openSections?.[sectionKey] ?? false)) : true;
+    const ctx = React.useContext(SettingsSearchContext) || { query: "", revamped: false };
+    const q = (ctx.query || "").trim().toLowerCase();
+    if (q) {
+      const titleHit = title && title.toLowerCase().includes(q);
+      const kw = SETTINGS_SEARCH_KEYWORDS[sectionKey] || [];
+      const kwHit = kw.some((k) => k.includes(q) || q.includes(k));
+      if (!titleHit && !kwHit) return null;
+    }
+    const isOpen = sectionKey ? (q ? true : (openSections?.[sectionKey] ?? false)) : true;
+    if (ctx.revamped) {
+      // Revamped: flat, airy, icon-led categories with hairline dividers — a
+      // deliberately different look from the boxed classic cards.
+      return (
+        <div style={{ marginBottom: 22 }}>
+          <div onClick={sectionKey ? () => toggleSection(sectionKey) : undefined} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, cursor: sectionKey ? "pointer" : "default", padding: "6px 4px" }}>
+            <span style={{ fontSize: 18, width: 26, textAlign: "center" }}>{emoji}</span>
+            <span style={{ fontWeight: 800, fontSize: 16, color: t.text, flex: 1, letterSpacing: 0.2 }}>{title}</span>
+            {sectionKey && <span style={{ fontSize: 12, color: t.textMuted, transition: "transform 0.2s", transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>⌄</span>}
+          </div>
+          {isOpen && (
+            <div style={{ background: t.surface, borderRadius: 16, border: `1px solid ${t.border}`, overflow: "hidden" }}>
+              <div style={{ padding: "4px 14px" }}>{children}</div>
+            </div>
+          )}
+        </div>
+      );
+    }
     // Category headers are dark grey (#1E1E1E) on light themes for a crisp
     // WhatsApp-style look; dark themes use a light header instead so the title
     // stays readable against the dark background.
@@ -830,29 +875,42 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           <span style={{ color: t.text, fontWeight: 700, fontSize: 18 }}>Settings</span>
           {!hideVersion && <span style={{ marginLeft: "auto", fontSize: 12.5, fontWeight: 700, color: t.primary }}>v{APP_VERSION}</span>}
         </div>
-        {/* Revamped settings: smart search + layout toggle */}
-        <div style={{ padding: "10px 16px", background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.bg, borderRadius: 12, padding: "9px 12px", border: `1px solid ${t.border}` }}>
-            <Search size={16} color={t.textMuted} />
-            <input
-              value={settingsSearch}
-              onChange={(e) => setSettingsSearch(e.target.value)}
-              placeholder="Search settings…"
-              style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: t.text, fontSize: 14 }}
-            />
-            {settingsSearch && <X size={16} color={t.textMuted} onClick={() => setSettingsSearch("")} style={{ cursor: "pointer" }} />}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 12.5, color: t.textMuted, fontWeight: 600 }}>Layout</span>
-            <div style={{ display: "flex", background: t.bg, borderRadius: 12, overflow: "hidden", border: `1px solid ${t.border}`, flexShrink: 0 }}>
-              {["classic", "revamped"].map((v) => (
-                <span key={v} onClick={toggleAltSettingsView} style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: 700, textTransform: "capitalize", cursor: "pointer", color: altSettingsView === v ? "#fff" : t.text, background: altSettingsView === v ? t.primary : "transparent" }}>{v}</span>
-              ))}
+        {/* Settings search: built-in in revamped mode; a hideable dropdown in classic mode */}
+        {altSettingsView === "revamped" ? (
+          <div style={{ padding: "10px 16px 10px", background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.bg, borderRadius: 12, padding: "11px 12px", border: `1px solid ${t.border}` }}>
+              <Search size={16} color={t.primary} />
+              <input
+                value={settingsSearch}
+                onChange={(e) => setSettingsSearch(e.target.value)}
+                placeholder="Search all settings…"
+                style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: t.text, fontSize: 14 }}
+              />
+              {settingsSearch && <X size={16} color={t.textMuted} onClick={() => setSettingsSearch("")} style={{ cursor: "pointer" }} />}
             </div>
-            {altSettingsView === "revamped" && <span style={{ fontSize: 11.5, color: t.textMuted }}>Admins set the default; you can switch back any time.</span>}
           </div>
-        </div>
-      <SettingsSearchContext.Provider value={altSettingsView === "revamped" ? settingsSearch : ""}>
+        ) : (
+          <div style={{ padding: "10px 16px 10px", background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
+            {classicSearchOpen ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.bg, borderRadius: 12, padding: "11px 12px", border: `1px solid ${t.border}` }}>
+                <Search size={16} color={t.textMuted} />
+                <input
+                  autoFocus
+                  value={settingsSearch}
+                  onChange={(e) => setSettingsSearch(e.target.value)}
+                  placeholder="Search settings…"
+                  style={{ flex: 1, border: "none", outline: "none", background: "transparent", color: t.text, fontSize: 14 }}
+                />
+                <X size={16} color={t.textMuted} onClick={() => { setSettingsSearch(""); setClassicSearchOpen(false); }} style={{ cursor: "pointer" }} />
+              </div>
+            ) : (
+              <div onClick={() => setClassicSearchOpen(true)} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", background: t.bg, borderRadius: 12, padding: "10px 12px", border: `1px solid ${t.border}`, cursor: "pointer", color: t.textMuted, fontSize: 13.5, fontWeight: 600 }}>
+                <Search size={15} color={t.textMuted} /> Search settings ▾
+              </div>
+            )}
+          </div>
+        )}
+      <SettingsSearchContext.Provider value={{ query: (altSettingsView === "revamped" || classicSearchOpen) ? settingsSearch : "", revamped: altSettingsView === "revamped" }}>
       <div className="nx-scroll" style={{ padding: "12px 16px", paddingBottom: 100 }}>
 
         {/* ═══ ACCOUNT & PROFILE ═══ */}
@@ -1149,6 +1207,27 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
         {/* ═══ APPEARANCE & INTERFACE ═══ */}
         <SectionCard title="Appearance & Interface" emoji="🎨" sectionKey="appearance">
+          <Row
+            icon={<LayoutGrid size={18} color={t.primary} />}
+            label="Settings layout"
+            sub={altSettingsView === "revamped" ? "Revamped — searchable & modern" : "Classic"}
+            right={<Toggle on={altSettingsView === "revamped"} onClick={toggleAltSettingsView} />}
+          />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>App density</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Compact shrinks spacing; Roomy gives more breathing room.</div>
+            </div>
+            <div style={{ display: "flex", gap: 4, background: t.bg, borderRadius: 10, padding: 3, border: `1px solid ${t.border}`, flexShrink: 0 }}>
+              {["compact", "default", "roomy"].map((v) => (
+                <span
+                  key={v}
+                  onClick={() => { try { updateDoc(doc(db, "users", myUid), { uiDensity: v }); localStorage.setItem("nextext_ui_density", v); } catch (e) {} }}
+                  style={{ padding: "6px 11px", borderRadius: 8, fontSize: 12, fontWeight: 700, textTransform: "capitalize", cursor: "pointer", color: (userDoc?.uiDensity || "default") === v ? "#fff" : t.text, background: (userDoc?.uiDensity || "default") === v ? t.primary : "transparent" }}
+                >{v}</span>
+              ))}
+            </div>
+          </div>
           {renderSub("Theme & Display", (<>
             <Row icon={<Palette size={18} color={t.primary} />} label="Theme" sub={themes[themeKey]?.name || "Default Theme"} onClick={onOpenTheme} dataTour="theme" />
             <Row icon={<ImageIcon size={18} color={t.primary} />} label="Default chat background" sub={wallpaperSaved ? "Saved ✓" : "Applies to chats without their own background"} onClick={() => wallpaperInputRef.current?.click()} />
@@ -1849,6 +1928,18 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>NexText AI Access</div>
                     <div style={{ fontSize: 12.5, color: "#28A745", fontWeight: 600 }}>Approved ✓</div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 0", borderBottom: `1px solid ${t.border}` }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Show AI in app</div>
+                    <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>When off, AI is hidden from your chat list and sidebar until you turn it back on.</div>
+                  </div>
+                  <div
+                    onClick={() => { const next = !userDoc?.aiDisabledByUser; try { updateDoc(doc(db, "users", myUid), { aiDisabledByUser: next }); } catch (e) {} }}
+                    style={{ width: 46, height: 26, borderRadius: 13, background: (userDoc?.aiDisabledByUser ? t.border : t.primary), position: "relative", cursor: "pointer", flexShrink: 0 }}
+                  >
+                    <div style={{ position: "absolute", top: 3, left: userDoc?.aiDisabledByUser ? 3 : 23, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
                   </div>
                 </div>
                 <div style={{ padding: "12px 0" }}>
@@ -4016,7 +4107,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           if (key === "chats") return (
             <div key="chats" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Chats">
-                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "chats"} onOpenAI={() => setScreen("aiChat")} showAIWidget={true} />
+                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "chats"} onOpenAI={() => setScreen("aiChat")} showAIWidget={!liveUserDoc?.aiDisabledByUser} />
               </PageErrorBoundary>
             </div>
           );

@@ -663,8 +663,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [yNoteIdea, setYNoteIdea] = useState("");
   const [yNoteFormatting, setYNoteFormatting] = useState(false);
   const [yVoiceId, setYVoiceId] = useState("y-mizrachi");
-  // Voice-to-voice changer (Record AI Voice Note)
-  const [showVoiceConvert, setShowVoiceConvert] = useState(false);
+  // Voice-to-voice changer (cloned voice note) — opened inside the Y Mizrachi modal
+  const [cloneOpen, setCloneOpen] = useState(false);
   const [vcRecording, setVcRecording] = useState(false);
   const [vcBlob, setVcBlob] = useState(null);
   const [vcUrl, setVcUrl] = useState(null);
@@ -2492,9 +2492,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [vcVoiceId, setVcVoiceId] = useState("y-mizrachi");
   const vcStartRec = async () => {
     try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone API unavailable in this WebView");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       vcChunksRef.current = [];
-      const rec = new MediaRecorder(stream);
+      const mime = MediaRecorder.isTypeSupported?.("audio/webm;codecs=opus") ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported?.("audio/mp4") ? "audio/mp4" : undefined;
+      const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
       rec.ondataavailable = (e) => { if (e.data && e.data.size) vcChunksRef.current.push(e.data); };
       rec.onstop = () => {
         const blob = new Blob(vcChunksRef.current, { type: rec.mimeType || "audio/webm" });
@@ -2509,7 +2512,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       vcMediaRef.current = rec;
       setVcError("");
       setVcRecording(true);
-    } catch { setVcError("Microphone access denied."); }
+    } catch (e) {
+      setVcError("Mic error: " + (e?.message || e) + " — if denied, enable microphone for NexText in device app settings.");
+    }
   };
   const vcStopRec = () => { try { vcMediaRef.current?.stop?.(); } catch {} setVcRecording(false); };
   const vcDiscard = () => {
@@ -2531,7 +2536,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: 0 });
       setVcTranscript(text);
       vcDiscard();
-      setShowVoiceConvert(false);
+      setCloneOpen(false);
     } catch (err) {
       setVcError(err?.message || "Voice conversion failed.");
     }
@@ -3778,11 +3783,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     <Mic size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Send Y Mizrachi Voice Note</span>
                   </div>
                 )}
-                {sysConfig?.global_voice_enabled !== false && (
-                  <div onClick={() => { closeAttach(); setShowVoiceConvert(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
-                    <Mic size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Record AI Voice Note</span>
-                  </div>
-                )}
                 {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
                   <div onClick={() => { closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                     <ImageIcon size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Photo or video</span>
@@ -3853,60 +3853,48 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     {yNoteSending ? "Generating…" : "Generate Audio"}
                   </div>
                 </div>
-              </div>
-              </>,
-              document.body
-            )}
-            {showVoiceConvert && createPortal(
-              <>
-              <div onClick={() => { if (!vcSending) setShowVoiceConvert(false); }} style={{ position: "fixed", inset: 0, zIndex: 2147481302, background: "rgba(0,0,0,0.45)" }} />
-              <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(340px, 92vw)", background: t.surface, borderRadius: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", zIndex: 2147481303, padding: 18 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                  <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>🎙️ Record AI Voice Note</span>
-                  <X size={18} color={t.textMuted} onClick={() => { if (!vcSending) setShowVoiceConvert(false); }} style={{ cursor: "pointer" }} />
+                <div onClick={() => setCloneOpen((v) => !v)} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 10, padding: "11px 0", borderRadius: 10, border: `1px dashed ${t.primary}`, color: t.primary, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                  <Mic size={16} color={t.primary} /> {cloneOpen ? "Hide Cloned Voice Note" : "🎙️ Send Cloned Voice Note"}
                 </div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 12 }}>
-                  Tap the mic and speak. Your words are re-voiced into the selected Fish Audio voice and posted to the chat.
-                </div>
-                <select
-                  value={vcVoiceId}
-                  onChange={(e) => setVcVoiceId(e.target.value)}
-                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, outline: "none", color: t.text, background: t.bg, marginBottom: 10 }}
-                >
-                  {availableVoices.map((v) => (
-                    <option key={v.id} value={v.id}>{v.name}</option>
-                  ))}
-                </select>
-                {!vcBlob && !vcRecording && (
-                  <div onClick={vcStartRec} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "18px 0", borderRadius: 12, background: t.primaryLight, cursor: "pointer", color: t.primary, fontWeight: 700, fontSize: 14, marginBottom: 10 }}>
-                    <Mic size={18} color={t.primary} /> Tap to record your voice
+                {cloneOpen && (
+                  <div style={{ marginTop: 10, padding: 12, borderRadius: 12, background: t.primaryLight, border: `1px solid ${t.border}` }}>
+                    <div style={{ fontSize: 12, color: t.textMuted, lineHeight: 1.45, marginBottom: 10 }}>
+                      Tap the mic and speak — your words are re-voiced into the selected Fish Audio voice and posted to the chat.
+                    </div>
+                    <select
+                      value={vcVoiceId}
+                      onChange={(e) => setVcVoiceId(e.target.value)}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "9px 10px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, outline: "none", color: t.text, background: t.bg, marginBottom: 10 }}
+                    >
+                      {availableVoices.map((v) => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </select>
+                    {!vcBlob && !vcRecording && (
+                      <div onClick={vcStartRec} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 0", borderRadius: 10, background: t.surface, cursor: "pointer", color: t.primary, fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                        <Mic size={16} color={t.primary} /> Tap to record your voice
+                      </div>
+                    )}
+                    {vcRecording && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 10px", borderRadius: 10, background: t.surface, border: `1px solid ${t.border}`, marginBottom: 8 }}>
+                        <div style={{ width: 11, height: 11, borderRadius: "50%", background: "#FF3B30", animation: "nextext-rec-pulse 1s ease-in-out infinite" }} />
+                        <span style={{ fontSize: 12.5, fontWeight: 600, color: t.text, flex: 1 }}>Recording…</span>
+                        <div onClick={vcStopRec} style={{ padding: "7px 14px", borderRadius: 9, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Stop</div>
+                      </div>
+                    )}
+                    {vcBlob && vcUrl && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 10px", borderRadius: 10, background: t.surface, border: `1px solid ${t.border}`, marginBottom: 8 }}>
+                        <audio ref={(el) => { if (el) vcAudioRef.current = el; }} src={vcUrl} controls preload="metadata" style={{ flex: 1, maxWidth: "100%" }} />
+                        <div onClick={vcDiscard} style={{ fontSize: 12, color: t.textMuted, cursor: "pointer", textDecoration: "underline", flexShrink: 0 }}>Discard</div>
+                      </div>
+                    )}
+                    {vcTranscript && <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>Transcribed: {vcTranscript}</div>}
+                    {vcError && <div style={{ color: "#FF3B30", fontSize: 12, margin: "8px 0 0" }}>{vcError}</div>}
+                    <div onClick={vcSend} style={{ marginTop: 10, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcBlob && !vcSending ? "pointer" : "not-allowed", opacity: vcBlob && !vcSending ? 1 : 0.5 }}>
+                      {vcSending ? "Converting…" : "Send Cloned Voice Note"}
+                    </div>
                   </div>
                 )}
-                {vcRecording && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 12px", borderRadius: 12, background: t.surface, border: `1px solid ${t.border}`, marginBottom: 10 }}>
-                    <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#FF3B30", animation: "nextext-rec-pulse 1s ease-in-out infinite" }} />
-                    <span style={{ fontSize: 13, fontWeight: 600, color: t.text, flex: 1 }}>Recording…</span>
-                    <div onClick={vcStopRec} style={{ padding: "8px 16px", borderRadius: 10, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Stop</div>
-                  </div>
-                )}
-                {vcBlob && vcUrl && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 12px", borderRadius: 12, background: t.surface, border: `1px solid ${t.border}`, marginBottom: 10 }}>
-                    <audio ref={(el) => { if (el) vcAudioRef.current = el; }} src={vcUrl} controls preload="metadata" style={{ flex: 1, maxWidth: "100%" }} />
-                    <div onClick={vcDiscard} style={{ fontSize: 12.5, color: t.textMuted, cursor: "pointer", textDecoration: "underline", flexShrink: 0 }}>Discard</div>
-                  </div>
-                )}
-                {vcTranscript && (
-                  <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 6 }}>Transcribed: {vcTranscript}</div>
-                )}
-                {vcError && <div style={{ color: "#FF3B30", fontSize: 12.5, margin: "10px 0 0" }}>{vcError}</div>}
-                <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-                  <div onClick={() => { if (!vcSending) { vcDiscard(); setShowVoiceConvert(false); } }} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, fontWeight: 700, fontSize: 14, color: t.textMuted, cursor: "pointer" }}>
-                    Cancel
-                  </div>
-                  <div onClick={vcSend} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcBlob && !vcSending ? "pointer" : "not-allowed", opacity: vcBlob && !vcSending ? 1 : 0.5 }}>
-                    {vcSending ? "Converting…" : "Send AI Voice Note"}
-                  </div>
-                </div>
               </div>
               </>,
               document.body
