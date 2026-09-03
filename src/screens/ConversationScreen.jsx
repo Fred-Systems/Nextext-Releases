@@ -11,6 +11,7 @@ import {
   isMediaExpired, setVoiceRecordingHeartbeat, clearVoiceRecordingStatus,
   sendLocationMessage, updateLiveLocation, sendContactMessage,
   sendForwardedMessage, incrementForwardedCount,
+  sendCloudinaryVoiceNote, checkAndIncrementDailyLimit, incrementUnreadCounts,
 } from "../firebase/chats";
 import { Download } from "lucide-react";
 import { getWallpaperForChat, setWallpaperForChat, fileToWallpaperDataUrl } from "../theme/wallpaper";
@@ -102,6 +103,7 @@ import { useContacts, getContactDisplayName, getContactRealName, sendContactRequ
 import ContactSharePicker from "../components/ContactSharePicker";
 import ForwardPicker from "../components/ForwardPicker";
 import VoiceToTextButton from "../components/VoiceToTextButton";
+import { NativeCameraSheet, pendingCameraFile, setPendingCameraFile } from "../components/NativeCameraLauncher";
 
 
 const VIEWED_KEY = "nextext_status_viewed";
@@ -920,6 +922,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [transcribingId, setTranscribingId] = useState(null);
   const [transcriptErrors, setTranscriptErrors] = useState({});
   const [showCamera, setShowCamera] = useState(false);
+  const [showNativeCamera, setShowNativeCamera] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [navInset, setNavInset] = useState(0);
   const [cameraFacing, setCameraFacing] = useState("environment");
@@ -1889,6 +1892,17 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     await recordMediaUsage(myUid, file.size);
   };
 
+  // A photo captured from the ChatList camera button can target this chat: it's
+  // stashed in the module-level pendingCameraFile and sent as soon as we mount.
+  useEffect(() => {
+    if (chatId && pendingCameraFile) {
+      const file = pendingCameraFile;
+      setPendingCameraFile(null);
+      sendFileDirectly(file);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId]);
+
   const sendYVoiceNote = async () => {
     const text = yNoteText.trim();
     if (!text || !chatId || yNoteSending) return;
@@ -1900,9 +1914,8 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       const voice = availableVoices.find((v) => v.id === yVoiceId) || availableVoices[0];
       const blob = await synthesizeSpeechBytes(text, voice?.referenceId);
       const file = new File([blob], `ai-voice-${voice?.id || "note"}.mp3`, { type: "audio/mpeg" });
-      const result = await uploadChatFile(chatId, myUid, file);
       const dur = await getAudioDuration(blob);
-      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: dur || 1 });
+      await sendVoiceNoteMessage({ file, duration: dur || 1 });
       setYNoteText("");
       setYNoteIdea("");
       setShowYNote(false);
@@ -2398,6 +2411,38 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     return { blob, wasNative };
   };
 
+  // Send a voice-note audio file. Routes to Cloudinary first (so voice notes
+  // are not stored only in Supabase); if the Cloudinary upload throws we fall
+  // back to the legacy Supabase path. Keeps the chat-list preview + unread
+  // counts in sync on success (mirroring sendMediaMessage).
+  const sendVoiceNoteMessage = async ({ file, duration, replyTo = null, disappearingData = null }) => {
+    const opts = {
+      duration: duration ? Math.round(duration) : null,
+      mimeType: file.type,
+      senderId: myUid,
+      replyTo: replyTo || null,
+      disappearingData: disappearingData || null,
+    };
+    try {
+      await sendCloudinaryVoiceNote(chatId, file, opts);
+    } catch (cloudErr) {
+      const result = await uploadChatFile(chatId, myUid, file);
+      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, {
+        durationSeconds: Math.max(1, Math.round(duration || 0)),
+        replyTo: replyTo || null,
+        disappearing: disappearingData ? { viewsAllowed: disappearingData.viewsAllowed } : null,
+      });
+      return;
+    }
+    try {
+      await updateDoc(doc(db, "chats", chatId), {
+        lastMessage: { text: "🎤 Voice note", senderId: myUid, sentAt: serverTimestamp(), type: "voice" },
+        deletedForSelf: deleteField(),
+      });
+      await incrementUnreadCounts(chatId, otherParticipants);
+    } catch { /* best-effort */ }
+  };
+
   const stopVoiceRecording = async (send) => {
     clearInterval(recordTimerRef.current);
     stopVoiceHeartbeat();
@@ -2430,8 +2475,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     const file = new File([blob], `voice-${Date.now()}.${wasNative ? "m4a" : "webm"}`, { type: blob.type || (wasNative ? "audio/mp4" : "audio/webm") });
     setUploading(true);
     try {
-      const result = await uploadChatFile(chatId, myUid, file);
-      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: Math.max(1, Math.round(finalDuration)) });
+      await sendVoiceNoteMessage({ file, duration: finalDuration });
     } catch (err) {
       if (err instanceof FileTooLargeError) setSendError("Voice note too large (over 50MB).");
       else setSendError("Couldn't send voice note: " + err.message);
@@ -2480,8 +2524,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setUploading(true);
     try {
       const file = new File([p.blob], `voice-${Date.now()}.${p.isNative ? "m4a" : "webm"}`, { type: p.type || (p.isNative ? "audio/mp4" : "audio/webm") });
-      const result = await uploadChatFile(chatId, myUid, file);
-      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: p.duration });
+      await sendVoiceNoteMessage({ file, duration: p.duration });
       discardRecordedPreview();
     } catch (err) {
       if (err instanceof FileTooLargeError) setSendError("Voice note too large (over 50MB).");
@@ -2499,8 +2542,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setUploading(true);
     try {
       const file = new File([blob], `voice-${Date.now()}.mp3`, { type: "audio/mpeg" });
-      const result = await uploadChatFile(chatId, myUid, file);
-      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: Math.max(1, Math.round(duration || 0)) });
+      await sendVoiceNoteMessage({ file, duration: Math.max(1, Math.round(duration || 0)) });
     } catch (err) {
       if (err instanceof FileTooLargeError) setSendError("Voice note too large (over 50MB).");
       else setSendError("Couldn't send voice note: " + err.message);
@@ -2548,7 +2590,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   };
   const vcSend = async () => {
     if (!vcBlob || vcSending) return;
-    if (sysConfig?.global_voice_enabled === false) { setVcError("Voice features are disabled."); return; }
+    // Enforce global + per-user daily cloned-voice-note limit before sending.
+    const sys = sysConfig;
+    if (!sys?.global_voice_enabled) { setVcError("Voice features are currently disabled."); return; }
+    if (!isAdmin && sys?.aiVoiceReplyGloballyDisabled) { setVcError("Voice features are currently disabled."); return; }
+    const limit = userDoc?.aiLimits?.voiceNote || sys?.defaultVoiceNoteLimit || 0;
+    const res = await checkAndIncrementDailyLimit(myUid, "voiceNote", limit);
+    if (!res.allowed) { setVcError("You've reached your daily cloned voice-note limit."); return; }
     setVcSending(true); setVcError("");
     try {
       const voice = availableVoices.find((v) => v.id === vcVoiceId) || availableVoices[0];
@@ -2557,8 +2605,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       if (!text) throw new Error("Couldn't transcribe the recording.");
       const blob = await synthesizeSpeechBytes(text, voice?.referenceId || Y_MIZRACHI_VOICE_ID);
       const file = new File([blob], `ai-voice-${voice?.id || "note"}.mp3`, { type: "audio/mpeg" });
-      const result = await uploadChatFile(chatId, myUid, file);
-      await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, { durationSeconds: 0 });
+      await sendVoiceNoteMessage({ file, duration: 0 });
       setVcTranscript(text);
       vcDiscard();
       setShowClone(false);
@@ -3823,7 +3870,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <UserPlus size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Contact</span>
                 </div>
                 {!parentalBlockedType("image") && (
-                  <div onClick={() => { closeAttach(); openCamera(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                  <div onClick={() => { closeAttach(); setShowNativeCamera(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                     <Camera size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Camera</span>
                   </div>
                 )}
@@ -3834,6 +3881,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               </>,
               document.body
             )}
+            <NativeCameraSheet
+              open={showNativeCamera}
+              onClose={() => setShowNativeCamera(false)}
+              onSendChat={async (file) => { await sendFileDirectly(file); }}
+            />
             {showYNote && createPortal(
               <>
               <div onClick={() => { if (!yNoteSending) setShowYNote(false); }} style={{ position: "fixed", inset: 0, zIndex: 2147481300, background: "rgba(0,0,0,0.45)" }} />
@@ -4098,7 +4150,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               )}
               {!(parentalBlockedType("image") && parentalBlockedType("video")) && (typeof localStorage === "undefined" || localStorage.getItem("nextext_hide_composer_camera") !== "on") && !sysConfig?.nativeGallery && (
                 <div
-                  onClick={() => { setShowEmojiPicker(false); closeAttach(); openCamera(); }}
+                  onClick={() => { setShowEmojiPicker(false); closeAttach(); setShowNativeCamera(true); }}
                   style={{ width: Math.max(30, Math.round(32 * composerHeight)), height: Math.max(30, Math.round(32 * composerHeight)), borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: showCamera ? t.primaryLight : "transparent" }}
                 >
                   <Camera size={Math.max(22, Math.round(25 * composerHeight))} color={showCamera ? t.primary : t.textMuted} />

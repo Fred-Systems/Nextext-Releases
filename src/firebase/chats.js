@@ -6,6 +6,7 @@ import {
 import { db } from "./config";
 import { AI_CONTACT_UID, getAIChatId } from "./ai";
 import { deleteChatFile } from "../supabase/media";
+import { uploadToCloudinary } from "../services/mediaUpload";
 
 // ── Offline outbox ──────────────────────────────────────────────────────────
 // When a send fails because the device is offline or Firestore is blocked
@@ -521,7 +522,7 @@ export async function sendForwardedMessage(targetChatId, senderUid, sourceMsg, o
   return true;
 }
 
-async function incrementUnreadCounts(chatId, otherParticipants) {
+ export async function incrementUnreadCounts(chatId, otherParticipants) {
   const ref = doc(db, "chats", chatId);
   const snap = await getDoc(ref);
   const current = snap.data()?.unreadCount || {};
@@ -600,6 +601,64 @@ export async function reactToMessage(chatId, messageId, myUid, emoji) {
       [`reactions.${myUid}`]: emoji,
     });
   }
+}
+
+// Sends a voice note whose bytes live in Cloudinary (resource_type "video",
+// since Cloudinary treats audio as a video resource). Used so voice notes are
+// not stored only in Supabase. On any failure the error is rethrown so the
+// caller can fall back to the Supabase path.
+export async function sendCloudinaryVoiceNote(chatId, file, opts = {}) {
+  try {
+    const cloud = await uploadToCloudinary(file, { resourceType: "video" });
+    const ref = await addDoc(collection(db, "chats", chatId, "messages"), {
+      type: "voice",
+      mediaURL: cloud.url,
+      cloudinaryPublicId: cloud.path,
+      duration: opts.duration || null,
+      fileSize: file.size,
+      mimeType: opts.mimeType || file.type,
+      senderId: opts.senderId,
+      replyTo: opts.replyTo || null,
+      disappearingData: opts.disappearingData || null,
+      sentAt: serverTimestamp(),
+      status: "sent",
+    });
+    return ref.id;
+  } catch (e) {
+    console.error("[sendCloudinaryVoiceNote] upload/send failed:", e?.message || e);
+    throw e;
+  }
+}
+
+// Per-user daily counter for cloned voice notes (stored in users/{uid}'s
+// `aiLimits` style sub-doc: `usage/{myUid}`[kind] = { count, date }).
+// kind is "voiceNote" or "voiceReply". limit<=0 means unlimited.
+// Returns { allowed, remaining }. Does NOT increment when disallowed.
+export async function checkAndIncrementDailyLimit(myUid, kind, limit) {
+  const today = new Date().toISOString().slice(0, 10);
+  const ref = doc(db, "usage", myUid);
+  const snap = await getDoc(ref);
+  const data = snap.data() || {};
+  const entry = data[kind] || { count: 0, date: "" };
+  let count = Number(entry.count) || 0;
+  const date = entry.date || "";
+
+  // New day -> reset the running counter.
+  if (date !== today) count = 0;
+
+  // Unlimited: never block, just persist a fresh zeroed entry.
+  if (limit <= 0) {
+    await setDoc(ref, { [kind]: { count: 0, date: today } }, { merge: true });
+    return { allowed: true, remaining: 0 };
+  }
+
+  if (count >= limit) {
+    return { allowed: false, remaining: 0 };
+  }
+
+  const newCount = count + 1;
+  await setDoc(ref, { [kind]: { count: newCount, date: today } }, { merge: true });
+  return { allowed: true, remaining: limit - newCount };
 }
 
 // Sends an image, video, file, or voice note message -- the actual bytes

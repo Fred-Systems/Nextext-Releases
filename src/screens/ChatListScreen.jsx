@@ -9,7 +9,7 @@ import { usePresence, formatLastSeen } from "../firebase/presence";
 import { useStatuses, postStatus } from "../firebase/status";
 import { useSystemConfigHook, getAIContact, AI_CONTACT_UID } from "../firebase/ai";
 import { useBroadcastLists, createBroadcastList, deleteBroadcastList, sendBroadcastText } from "../firebase/broadcast";
-import { useGlobalSettings } from "../firebase/config-settings";
+import { useGlobalSettings, useDismissedAnnouncement, dismissAnnouncement } from "../firebase/config-settings";
 
 const VIEWED_KEY = "nextext_status_viewed";
 function getStoredViewed() {
@@ -19,6 +19,7 @@ import { uploadChatFile } from "../supabase/media";
 import { uploadMediaFile } from "../services/mediaUpload";
 import Avatar from "../components/Avatar";
 import AISidebarWidget from "../components/AISidebarWidget";
+import { NativeCameraSheet, setPendingCameraFile } from "../components/NativeCameraLauncher";
 import NewGroupScreen from "./NewGroupScreen";
 import FindFriendsScreen from "./FindFriendsScreen";
 import { doc, onSnapshot, updateDoc, collection, getCountFromServer, setDoc, getDoc } from "firebase/firestore";
@@ -97,6 +98,10 @@ function ChatRowMeta({ myUid, otherUid, chatId, t, compact, isGroup }) {
 export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroupInfo, onOpenSettings, onOpenAI, showAIWidget = false, hideNav, navTab, compactList, searchMode = "visible", topBarVisible = true, searchBarScale = 1, isActiveTab = true }) {
   const { t } = useTheme();
   const globalSettings = useGlobalSettings();
+  const dismissedAnnId = useDismissedAnnouncement(myUid);
+
+  const announcement = globalSettings?.announcement;
+  const showAnnouncement = announcement && announcement.id && announcement.id !== dismissedAnnId;
   const { chats } = useChats(myUid);
   const { contacts } = useContacts(myUid);
   const [showAddContact, setShowAddContact] = useState(false);
@@ -148,6 +153,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [groupMenu, setGroupMenu] = useState(null);
   const [groupPictureFullscreen, setGroupPictureFullscreen] = useState(null);
   const [showGlobalCamera, setShowGlobalCamera] = useState(false);
+  const [showNativeCamera, setShowNativeCamera] = useState(false);
   const [globalCameraError, setGlobalCameraError] = useState("");
   const [globalCameraMode, setGlobalCameraMode] = useState("photo"); // "photo" | "video"
   const [globalCameraFacing, setGlobalCameraFacing] = useState("environment"); // "environment" | "user"
@@ -734,6 +740,35 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     setShowGlobalCamera(false);
   };
 
+  // ── Native camera (Capacitor) + routing sheet ──────────────────
+  const nativeCameraChats = sortedChats.map((c) => ({ id: c.id, name: chatDisplayName(c), isGroup: c.type === "group" }));
+
+  const nativeSendStatus = async (file) => {
+    setPostingStatus(true);
+    try {
+      const result = await uploadMediaFile(`status-${myUid}`, myUid, file);
+      await postStatus(myUid, {
+        text: null,
+        mediaURL: result.url,
+        mediaType: "image",
+        backgroundColor: null,
+        fontFamily: null,
+        durationMs: 8000,
+        textOverlay: null,
+        visibility: "contacts",
+      });
+    } catch { /* silent */ }
+    setPostingStatus(false);
+  };
+
+  const nativeSendChatTo = (file, chatId) => {
+    // Stash the file and open the chat so ConversationScreen sends it on mount.
+    setPendingCameraFile(file);
+    const chat = sortedChats.find((c) => c.id === chatId) || visibleChats.find((c) => c.id === chatId);
+    if (chat) openChatRow(chat);
+    else onOpenChat(chatId);
+  };
+
   const discardCapturedMedia = () => {
     if (capturedMedia?.url) URL.revokeObjectURL(capturedMedia.url);
     setCapturedMedia(null);
@@ -1101,10 +1136,25 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
 
   return (
     <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg }}>
+      {showAnnouncement && (
+        <div style={{ background: "#FF9500", color: "#fff", padding: 12, margin: 8, borderRadius: 12, display: "flex", alignItems: "flex-start", gap: 8, maxWidth: 390, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+          <Megaphone size={18} color="#fff" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, lineHeight: 1.4, wordBreak: "break-word", overflowWrap: "anywhere" }}>{announcement.text}</div>
+          <button
+            type="button"
+            onClick={() => dismissAnnouncement(myUid, announcement.id)}
+            aria-label="Dismiss announcement"
+            title="Dismiss"
+            style={{ flexShrink: 0, border: "none", background: "rgba(255,255,255,0.2)", color: "#fff", borderRadius: 8, padding: "4px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}
+          >
+            <X size={14} color="#fff" /> Dismiss
+          </button>
+        </div>
+      )}
       {topBarVisible && <div style={{ padding: "calc(12px + var(--safe-top)) 16px 6px", background: t.surface, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, position: "relative", zIndex: 1 }}>
         <span style={{ color: t.text, fontWeight: 800, fontSize: 20, flexShrink: 0 }}>NexText</span>
         <div style={{ display: "flex", gap: 22, alignItems: "center", flexShrink: 0 }}>
-          <Camera size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => (showGlobalCamera ? closeGlobalCamera() : openGlobalCamera())} />
+          <Camera size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => setShowNativeCamera(true)} />
           <div style={{ width: 1, height: 22, background: t.divider, flexShrink: 0 }} />
           {searchMode !== "visible" && <Search size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => setShowSearch(!showSearch)} />}
           <div style={{ width: 1, height: 22, background: t.divider, flexShrink: 0 }} />
@@ -1380,6 +1430,13 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       )}
 
       {showAddContact && <AddContactSheet myUid={myUid} acceptedContacts={acceptedContacts} onOpenChat={onOpenChat} onClose={() => setShowAddContact(false)} />}
+      <NativeCameraSheet
+        open={showNativeCamera}
+        onClose={() => setShowNativeCamera(false)}
+        onSendStatus={nativeSendStatus}
+        onSendChatTo={nativeSendChatTo}
+        chats={nativeCameraChats}
+      />
       {showFindFriends && <FindFriendsScreen myUid={myUid} onBack={() => setShowFindFriends(false)} onOpenChat={onOpenChat} />}
       {showNewGroup && (
         <NewGroupScreen

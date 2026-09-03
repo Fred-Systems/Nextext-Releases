@@ -40,7 +40,12 @@ export function getAvailableVoices(sysConfig) {
   const custom = (sysConfig?.customVoices || [])
     .filter((v) => v && v.name && v.referenceId && !hiddenVoiceIds.includes(v.id || v.referenceId))
     .map((v) => ({ id: v.id || v.referenceId, name: v.name, referenceId: v.referenceId, custom: true }));
-  const all = [...presets, ...custom];
+  // Admin-added personas that have a Fish Audio voice reference also appear as
+  // selectable voices (so the podcast builder can use them).
+  const extraPersonas = (sysConfig?.personas || [])
+    .filter((p) => p && p.voiceRef && !hiddenVoiceIds.includes(p.voiceRef))
+    .map((p) => ({ id: `persona_${p.key}`, name: p.name, referenceId: p.voiceRef, custom: true }));
+  const all = [...presets, ...custom, ...extraPersonas];
   // Merge admin director metadata (fullName + prompt) onto each voice.
   return all.map((v) => {
     const p = profiles[v.id];

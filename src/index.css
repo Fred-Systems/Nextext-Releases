@@ -37,9 +37,13 @@ p {
 .nextext-message-in {
   animation: nextext-message-slide-in 0.22s ease-out;
 }
- @keyframes nextext-spin {
-   to { transform: rotate(360deg); }
- }
+  @keyframes nextext-spin {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes nextext-slide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
  @keyframes nextext-pulse {
    0%, 100% { transform: scale(1); opacity: 1; }
    50% { transform: scale(1.6); opacity: 0.5; }

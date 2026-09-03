@@ -6,7 +6,7 @@ import { db } from "../firebase/config";
 import { AI_CONTACT_UID, PERSONALITIES } from "../firebase/ai";
 import { setFishAudioKey, getFishAudioKey, getAvailableVoices } from "../firebase/tts";
 import { getOrCreateDirectChat } from "../firebase/chats";
-import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings } from "../firebase/config-settings";
+import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings, setAnnouncement, clearAnnouncement, setPersona, deletePersona } from "../firebase/config-settings";
 import { getPreWarmConfig, setPreWarmEnabled } from "../firebase/prewarm";
 import { getUserMessageStats, formatActiveTime, formatBytes } from "../firebase/stats";
 import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, AI_PERSONA_TRAY } from "../firebase/ai";
@@ -255,6 +255,27 @@ export default function AdminDashboard({ myUid, onBack }) {
     if (sysConfig?.voiceProfiles != null) setVoiceProfilesDraft(sysConfig.voiceProfiles);
   }, [sysConfig?.voiceProfiles]);
   const allVoices = getAvailableVoices(sysConfig);
+  // ── Announcements + custom AI personas (admin) ──
+  const [annText, setAnnText] = useState("");
+  const [personaName, setPersonaName] = useState("");
+  const [personaIcon, setPersonaIcon] = useState("");
+  const [personaDesc, setPersonaDesc] = useState("");
+  const [personaPrompt, setPersonaPrompt] = useState("");
+  const [personaSpeak, setPersonaSpeak] = useState("");
+  const [personaVoice, setPersonaVoice] = useState("");
+  const [editingPersonaKey, setEditingPersonaKey] = useState(null);
+  const customPersonas = settings?.personas || [];
+  const savePersona = async () => {
+    const name = personaName.trim();
+    if (!name) return;
+    const key = editingPersonaKey || name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    await setPersona({ key, name, icon: personaIcon.trim() || "🧠", description: personaDesc.trim(), systemPrompt: personaPrompt.trim(), speakStyle: personaSpeak.trim(), voiceRef: personaVoice.trim() || undefined });
+    setPersonaName(""); setPersonaIcon(""); setPersonaDesc(""); setPersonaPrompt(""); setPersonaSpeak(""); setPersonaVoice(""); setEditingPersonaKey(null);
+  };
+  const editPersona = (p) => {
+    setEditingPersonaKey(p.key); setPersonaName(p.name); setPersonaIcon(p.icon || ""); setPersonaDesc(p.description || ""); setPersonaPrompt(p.systemPrompt || ""); setPersonaSpeak(p.speakStyle || ""); setPersonaVoice(p.voiceRef || "");
+  };
+  const postAnnouncement = async () => { await setAnnouncement(annText, myUid); setAnnText(""); };
   const [geminiKeyDraft, setGeminiKeyDraft] = useState(sysConfig?.geminiApiKey || "");
   useEffect(() => {
     if (sysConfig?.geminiApiKey != null) setGeminiKeyDraft(sysConfig.geminiApiKey);
@@ -2771,6 +2792,59 @@ export default function AdminDashboard({ myUid, onBack }) {
               )}
             </div>
           ))}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 24, marginBottom: 12 }}>
+            <Megaphone size={18} color={t.primary} />
+            <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>Announcement</span>
+          </div>
+          <div style={{ background: t.surface, borderRadius: 12, padding: 14, marginBottom: 12 }}>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Shown at the top of every user's chat list until they dismiss it.</div>
+            <textarea
+              value={annText}
+              onChange={(e) => setAnnText(e.target.value)}
+              placeholder="Type an announcement for all users…"
+              rows={3}
+              style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, resize: "none", outline: "none", color: t.text, background: t.bg, marginBottom: 10 }}
+            />
+            <button onClick={postAnnouncement} disabled={!annText.trim()} style={{ width: "100%", padding: 10, borderRadius: 10, border: "none", background: annText.trim() ? t.primary : t.border, color: "#fff", fontWeight: 700, fontSize: 13, cursor: annText.trim() ? "pointer" : "not-allowed" }}>
+              Post announcement
+            </button>
+            {settings?.announcement?.text && (
+              <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: t.bg, fontSize: 12.5, color: t.text }}>
+                <div style={{ marginBottom: 8 }}>Current: {settings.announcement.text}</div>
+                <button onClick={() => clearAnnouncement()} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: "#FF3B30", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Clear announcement</button>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 24, marginBottom: 12 }}>
+            <Bot size={18} color={t.primary} />
+            <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>Custom AI Personas</span>
+          </div>
+          <div style={{ background: t.surface, borderRadius: 12, padding: 14, marginBottom: 12 }}>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10 }}>{editingPersonaKey ? "Editing persona" : "Add a new AI persona (name, how it speaks, how it answers, optional voice)."}</div>
+            <input value={personaName} onChange={(e) => setPersonaName(e.target.value)} placeholder="Name (e.g. Coach Carter)" style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 9, border: `1px solid ${t.border}`, fontSize: 13, marginBottom: 8, color: t.text, background: t.bg, outline: "none" }} />
+            <input value={personaIcon} onChange={(e) => setPersonaIcon(e.target.value)} placeholder="Icon emoji (default 🧠)" style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 9, border: `1px solid ${t.border}`, fontSize: 13, marginBottom: 8, color: t.text, background: t.bg, outline: "none" }} />
+            <textarea value={personaPrompt} onChange={(e) => setPersonaPrompt(e.target.value)} placeholder="How it should answer (system prompt)" rows={2} style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 9, border: `1px solid ${t.border}`, fontSize: 13, resize: "none", marginBottom: 8, color: t.text, background: t.bg, outline: "none" }} />
+            <textarea value={personaSpeak} onChange={(e) => setPersonaSpeak(e.target.value)} placeholder="How it should speak (tone, style, mannerisms)" rows={2} style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 9, border: `1px solid ${t.border}`, fontSize: 13, resize: "none", marginBottom: 8, color: t.text, background: t.bg, outline: "none" }} />
+            <input value={personaVoice} onChange={(e) => setPersonaVoice(e.target.value)} placeholder="Fish Audio voice ref ID (optional)" style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: 9, border: `1px solid ${t.border}`, fontSize: 13, marginBottom: 10, color: t.text, background: t.bg, outline: "none" }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={savePersona} disabled={!personaName.trim()} style={{ flex: 1, padding: 10, borderRadius: 10, border: "none", background: personaName.trim() ? t.primary : t.border, color: "#fff", fontWeight: 700, fontSize: 13, cursor: personaName.trim() ? "pointer" : "not-allowed" }}>{editingPersonaKey ? "Update persona" : "Add persona"}</button>
+              {editingPersonaKey && <button onClick={() => { setEditingPersonaKey(null); setPersonaName(""); setPersonaIcon(""); setPersonaDesc(""); setPersonaPrompt(""); setPersonaSpeak(""); setPersonaVoice(""); }} style={{ padding: "10px 14px", borderRadius: 10, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Cancel</button>}
+            </div>
+            {customPersonas.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                {customPersonas.map((p) => (
+                  <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: `1px solid ${t.border}` }}>
+                    <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>{p.icon || "🧠"} {p.name}</div>
+                    <button onClick={() => editPersona(p)} style={{ padding: "5px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.primary, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Edit</button>
+                    <button onClick={() => deletePersona(p.key)} style={{ padding: "5px 10px", borderRadius: 8, border: "none", background: "#FFE5E5", color: "#FF3B30", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Delete</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 24, marginBottom: 12 }}>
             <Users size={18} color={t.primary} />
             <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>Group AI Injection Requests</span>

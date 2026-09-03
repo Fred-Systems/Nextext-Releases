@@ -10,12 +10,12 @@ import { useTheme } from "../theme/ThemeContext";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { deleteChatCompletely, sendMediaMessage } from "../firebase/chats";
+import { deleteChatCompletely, sendMediaMessage, checkAndIncrementDailyLimit } from "../firebase/chats";
 import { uploadChatFile } from "../supabase/media";
-import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, detectImageIntent, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, PERSONALITIES, AI_PERSONA_TRAY, getVisiblePersonaTray, setAIPersonality, setGeminiModel, useSystemConfigHook, describeAIError } from "../firebase/ai";
+import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, detectImageIntent, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, PERSONALITIES, AI_PERSONA_TRAY, getVisiblePersonaTray, getPersonaMeta, setAIPersonality, setGeminiModel, useSystemConfigHook, describeAIError } from "../firebase/ai";
 import { useAIIconStyle, getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
 import Avatar from "../components/Avatar";
-import { downloadMedia } from "../utils/download";
+import { downloadMedia, downloadImage } from "../utils/download";
 
 function ThinkingDots({ color = "#000" }) {
   return (
@@ -117,7 +117,7 @@ function AIImage({ src, onOpen, style = {} }) {
   const download = async () => {
     if (!src || saving) return;
     setSaving(true);
-    await downloadMedia(src, `nextext-ai-image-${Date.now()}.png`);
+    await downloadImage(src, `nextext-ai-image-${Date.now()}.png`);
     setSaving(false);
   };
   // Safety: if the image never fires onLoad/onError (e.g. the generator stalls),
@@ -147,6 +147,7 @@ function AIImage({ src, onOpen, style = {} }) {
       <img
         src={src}
         alt="AI Image"
+        crossOrigin="anonymous"
         onLoad={() => setLoaded(true)}
         onError={() => setErrored(true)}
         onClick={() => loaded && onOpen && onOpen(src)}
@@ -279,6 +280,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [podcastVoices, setPodcastVoices] = useState([]);
   const [podcastMode, setPodcastMode] = useState("auto");
   const [podcastTopic, setPodcastTopic] = useState("");
+  const [podcastLength, setPodcastLength] = useState("medium"); // short | medium | long
   const [podcastSpeakerNotes, setPodcastSpeakerNotes] = useState({}); // voiceId -> note
   const [podcastBusy, setPodcastBusy] = useState(false);
   const [podcastStatus, setPodcastStatus] = useState("");
@@ -287,6 +289,8 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isArchived, setIsArchived] = useState(false);
   const [fullscreenImage, setFullscreenImage] = useState(null);
+  const [fsScale, setFsScale] = useState(1);
+  const fsPinchRef = useRef(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState(null);
   const [activeMsgRect, setActiveMsgRect] = useState(null);
@@ -353,15 +357,17 @@ export default function AIChatScreen({ myUid, onBack }) {
         return `- ${v?.name || id}${prof.fullName ? ` (${prof.fullName})` : ""}${prof.prompt ? `\n  Persona: ${prof.prompt}` : ""}${note ? `\n  This speaker's direction: ${note}` : ""}`;
       }).join("\n");
       const modeLine = podcastMode === "auto"
-        ? "Invent a natural, engaging podcast/conversation topic that fits these speakers. You may use details and names you know about them."
+        ? "Invent a CONTROVERSIAL, debate-worthy, hot-button podcast topic that sparks strong, clashing opinions between the speakers. Pick something genuinely divisive and current — the kind of topic real people argue about. Do NOT pick something bland or neutral."
         : `Follow the user's direction below for what the conversation should be about and each speaker's opinion/style:\n${podcastTopic}`;
+      const lenRange = { short: [4, 6], medium: [7, 10], long: [11, 16] }[podcastLength] || [7, 10];
       const instruction =
         "You are producing a multi-speaker AI podcast script. Output STRICTLY a JSON array (no markdown, no code fences) of objects {\"voiceId\": string, \"text\": string}. " +
         "Each 'text' is one spoken turn of under 220 characters. Use Fish Audio bracket tags like [serious], [laughing], [slow], [whispering] for emotion — NEVER asterisks or italics. " +
         "Extend stressed vowels for emphasis. Keep it punchy and conversational.\n" +
         "Speakers (use the exact voiceId values):\n" + voiceMeta + "\n" +
+        "CRITICAL: Each speaker MUST stay strictly in character using the Persona description and direction provided above for that voice. Never break character or speak in another speaker's voice. " +
         "Mode: " + modeLine + "\n" +
-        "Produce 6-10 turns, alternating speakers naturally.";
+        `Produce between ${lenRange[0]} and ${lenRange[1]} turns, alternating speakers naturally.`;
       let raw = null;
       let lastErr = null;
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -439,6 +445,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [autoVoiceReplies, setAutoVoiceReplies] = useState(false);
   const [voiceAudios, setVoiceAudios] = useState({}); // { messageId: blobUrl }
   const [voiceBusy, setVoiceBusy] = useState(false);
+  const [generatingVoiceId, setGeneratingVoiceId] = useState(null);
   const syncedMsgRef = useRef(new Set());
 
   // Sync the toggle from the user's stored flag.
@@ -471,11 +478,19 @@ export default function AIChatScreen({ myUid, onBack }) {
   const generateOneVoice = async (msg) => {
     const msgId = msg.id;
     if (!msgId || voiceAudios[msgId] || syncedMsgRef.current.has(msgId)) return;
+    // Daily AI voice-reply limit (admins exempt).
+    if (!isAdmin) {
+      const limit = userDoc?.aiLimits?.voiceReply || sysConfig?.defaultVoiceReplyLimit || 0;
+      if (limit > 0) {
+        const res = await checkAndIncrementDailyLimit(myUid, "voiceReply", limit).catch(() => ({ allowed: true }));
+        if (!res.allowed) return;
+      }
+    }
     syncedMsgRef.current.add(msgId);
+    setGeneratingVoiceId(msgId);
     try {
       const tts = await import("../firebase/tts");
-      const adminHooked = sysConfig?.personaVoiceMap?.[currentPersonality];
-      const personaRef = adminHooked || PERSONALITIES[currentPersonality]?.voiceRef;
+      const personaRef = sysConfig?.personaVoiceMap?.[currentPersonality] || getPersonaMeta(currentPersonality, sysConfig).voiceRef || PERSONALITIES[currentPersonality]?.voiceRef;
       const voice = personaRef ? { referenceId: personaRef } : resolveVoice(sysConfig, voiceMode);
       let blob = await loadVoiceBlob(msgId);
       if (!blob) {
@@ -485,6 +500,8 @@ export default function AIChatScreen({ myUid, onBack }) {
       setVoiceAudios((prev) => ({ ...prev, [msgId]: URL.createObjectURL(blob) }));
     } catch (err) {
       console.error("[tts] voice synthesis failed for", msgId, err?.message);
+    } finally {
+      setGeneratingVoiceId((id) => (id === msgId ? null : id));
     }
   };
 
@@ -1049,7 +1066,7 @@ export default function AIChatScreen({ myUid, onBack }) {
         </div>
         <div onClick={() => setShowProfile(true)} style={{ flex: 1, cursor: "pointer" }}>
           <div style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>NexText AI</div>
-          <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>{PERSONALITIES[currentPersonality]?.icon} {PERSONALITIES[currentPersonality]?.label}</div>
+          <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>{getPersonaMeta(currentPersonality, sysConfig).icon} {getPersonaMeta(currentPersonality, sysConfig).label}</div>
         </div>
         <MoreVertical size={19} color="#fff" onClick={() => { setShowSettings(!showSettings); setShowPersonaTray(false); }} style={{ cursor: "pointer" }} />
         {showSettings && (
@@ -1252,7 +1269,7 @@ export default function AIChatScreen({ myUid, onBack }) {
           <div style={{ textAlign: "center", padding: 40, color: t.textMuted, fontSize: 13, lineHeight: 1.6 }}>
             <div style={{ fontSize: 40, marginBottom: 10 }}>🤖</div>
             <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4, color: t.text }}>NexText AI</div>
-            <div>{PERSONALITIES[currentPersonality]?.icon} Mode: {PERSONALITIES[currentPersonality]?.label}</div>
+            <div>{getPersonaMeta(currentPersonality, sysConfig).icon} Mode: {getPersonaMeta(currentPersonality, sysConfig).label}</div>
             <div style={{ marginTop: 8 }}>Ask me anything!</div>
           </div>
         )}
@@ -1291,7 +1308,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                          )}
                          {!expired && m.mediaURL && (
                            <div
-                             onClick={() => downloadMedia(m.mediaURL, `nextext-ai-image-${Date.now()}.png`)}
+                              onClick={() => downloadImage(m.mediaURL, `nextext-ai-image-${Date.now()}.png`)}
                              title="Download image"
                              style={{ position: "absolute", top: 4, left: 4, width: 26, height: 26, borderRadius: "50%", background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2 }}
                            >
@@ -1331,12 +1348,21 @@ export default function AIChatScreen({ myUid, onBack }) {
                         <AutoAudio src={voiceAudios[m.id]} canDownload={canDownloadVoice} />
                       )}
                       {voiceReplyAvailable && voiceEnabled && !voiceAudios[m.id] && !autoVoiceReplies && (
-                        <div
-                          onClick={() => generateOneVoice(m)}
-                          style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "6px 12px", borderRadius: 10, background: t.primary, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
-                        >
-                          🔊 Generate audio response
-                        </div>
+                        generatingVoiceId === m.id ? (
+                          <div style={{ marginTop: 8, padding: "6px 12px", borderRadius: 10, background: t.primaryLight, width: 170 }}>
+                            <div style={{ fontSize: 11.5, fontWeight: 700, color: t.primary, marginBottom: 5 }}>Generating…</div>
+                            <div style={{ height: 5, borderRadius: 3, background: t.border, overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: "40%", borderRadius: 3, background: t.primary, animation: "nextext-slide 1.1s ease-in-out infinite" }} />
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            onClick={() => generateOneVoice(m)}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "6px 12px", borderRadius: 10, background: t.primary, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+                          >
+                            🔊 Generate audio response
+                          </div>
+                        )
                       )}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                         <span style={{ fontSize: 10.5, opacity: 0.55 }}>
@@ -1582,11 +1608,46 @@ export default function AIChatScreen({ myUid, onBack }) {
         </div>
       )}
 
-      {/* Fullscreen image viewer */}
+      {/* Fullscreen image viewer with zoom + download + close */}
       {fullscreenImage && (
-        <div onClick={() => setFullscreenImage(null)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <X size={26} color="#fff" onClick={() => setFullscreenImage(null)} style={{ position: "absolute", top: 18, right: 18, cursor: "pointer" }} />
-          <img src={fullscreenImage} alt="Fullscreen" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 12, objectFit: "contain" }} />
+        <div
+          onClick={() => { setFullscreenImage(null); setFsScale(1); }}
+          style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflow: "hidden" }}
+        >
+          <X size={26} color="#fff" onClick={() => { setFullscreenImage(null); setFsScale(1); }} style={{ position: "absolute", top: 18, right: 18, cursor: "pointer", zIndex: 2 }} />
+          <div
+            onClick={(e) => e.stopPropagation()}
+            title="Download image"
+            style={{ position: "absolute", top: 16, right: 56, width: 34, height: 34, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2 }}
+            onClickCapture={async () => { await downloadImage(fullscreenImage, `nextext-image-${Date.now()}.png`); }}
+          >
+            <Download size={18} color="#fff" />
+          </div>
+          <img
+            src={fullscreenImage}
+            alt="Fullscreen"
+            crossOrigin="anonymous"
+            onDoubleClick={() => setFsScale((s) => (s > 1 ? 1 : 2.5))}
+            onTouchStart={(e) => {
+              if (e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                fsPinchRef.current = { dist: Math.hypot(dx, dy), scale: fsScale };
+              }
+            }}
+            onTouchMove={(e) => {
+              if (e.touches.length === 2 && fsPinchRef.current) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.hypot(dx, dy);
+                const next = Math.min(5, Math.max(1, fsPinchRef.current.scale * (dist / fsPinchRef.current.dist)));
+                setFsScale(next);
+              }
+            }}
+            onTouchEnd={() => { fsPinchRef.current = null; }}
+            style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 12, objectFit: "contain", transform: `scale(${fsScale})`, transition: fsScale > 1 ? "none" : "transform 0.15s", cursor: "zoom-in" }}
+          />
+          <div style={{ position: "absolute", bottom: 24, left: 0, right: 0, textAlign: "center", fontSize: 11.5, color: "rgba(255,255,255,0.55)" }}>Double-tap or pinch to zoom · tap outside to close</div>
         </div>
       )}
 
@@ -1630,6 +1691,12 @@ export default function AIChatScreen({ myUid, onBack }) {
                 <div onClick={() => setPodcastMode("auto")} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${podcastMode === "auto" ? t.primary : t.border}`, background: podcastMode === "auto" ? t.primary : t.bg, color: podcastMode === "auto" ? "#fff" : t.text }}>AI invents topic</div>
                 <div onClick={() => setPodcastMode("directed")} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${podcastMode === "directed" ? t.primary : t.border}`, background: podcastMode === "directed" ? t.primary : t.bg, color: podcastMode === "directed" ? "#fff" : t.text }}>I direct it</div>
               </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 8 }}>Length</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                {[["short", "Short"], ["medium", "Medium"], ["long", "Long"]].map(([val, label]) => (
+                  <div key={val} onClick={() => setPodcastLength(val)} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${podcastLength === val ? t.primary : t.border}`, background: podcastLength === val ? t.primary : t.bg, color: podcastLength === val ? "#fff" : t.text }}>{label}</div>
+                ))}
+              </div>
               {podcastMode === "directed" && (
                 <>
                   <div style={{ fontSize: 12.5, fontWeight: 700, color: t.text, marginBottom: 6 }}>General conversation direction</div>
@@ -1664,13 +1731,12 @@ export default function AIChatScreen({ myUid, onBack }) {
                 <div style={{ background: t.bg, borderRadius: 12, padding: 12, marginBottom: 10 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 8 }}>🎙️ AI Podcast ({podcastResult.turns} turns)</div>
                   <audio controls src={podcastResult.url} style={{ width: "100%", marginBottom: 8 }} />
-                  <a
-                    href={podcastResult.url}
-                    download={`nextext-ai-podcast-${Date.now()}.mp3`}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, background: t.primary, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none" }}
+                  <div
+                    onClick={async () => { await downloadMedia(podcastResult.url, `nextext-ai-podcast-${Date.now()}.mp3`); }}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, background: t.primary, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
                   >
                     ⬇️ Download recording
-                  </a>
+                  </div>
                 </div>
               )}
             </div>

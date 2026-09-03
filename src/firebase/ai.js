@@ -157,13 +157,33 @@ export const AI_PERSONA_TRAY = [
   ["roshYeshiva", "Rosh Yeshiva"],
 ];
 
+// Admin-added custom personas (stored in config/globalSettings.personas).
+export function getExtraPersonas(config) {
+  return (config?.personas || []).filter((p) => p && p.key && p.name);
+}
+
 // Returns the visible persona tray, excluding admin-hidden personas and the
-// Mizrachi mode when the admin has globally disabled it.
+// Mizrachi mode when the admin has globally disabled it. Admin-added custom
+// personas are appended to the end of the tray.
 export function getVisiblePersonaTray(config) {
   const hidden = config?.hiddenPersonas || [];
-  return AI_PERSONA_TRAY.filter(
+  const fixed = AI_PERSONA_TRAY.filter(
     ([key]) => !hidden.includes(key) && !(config?.hideMizrachiMode && key === "mizrachi")
   );
+  const extras = getExtraPersonas(config)
+    .filter((p) => !hidden.includes(p.key))
+    .map((p) => [p.key, `${p.icon || "🧠"} ${p.name}`]);
+  return [...fixed, ...extras];
+}
+
+// Unified lookup for any persona key (built-in or custom) — returns display
+// metadata used by the chat header and persona tray.
+export function getPersonaMeta(key, config) {
+  const builtin = PERSONALITIES[key];
+  if (builtin) return { key, label: builtin.label, icon: builtin.icon, voiceRef: builtin.voiceRef };
+  const extra = getExtraPersonas(config).find((p) => p.key === key);
+  if (extra) return { key, label: extra.name, icon: extra.icon || "🧠", voiceRef: extra.voiceRef };
+  return { key: key || "default", label: PERSONALITIES.default.label, icon: PERSONALITIES.default.icon, voiceRef: undefined };
 }
 
 const AI_CONTACT_OBJ = {
@@ -192,7 +212,14 @@ export function getAIChatId(userUid) { return `${AI_CHAT_PREFIX}${userUid}`; }
 // onto the existing identity block + personality so the AI retains its custom
 // name and app-specific knowledge while gaining live capabilities.
  export function getSystemPrompt(personalityKey, config, voiceEnabled = false) {
-   const base = `${AI_IDENTITY_BLOCK}\n\n${PERSONALITIES[personalityKey]?.systemPrompt || PERSONALITIES.default.systemPrompt}`;
+   const extra = getExtraPersonas(config).find((p) => p.key === personalityKey);
+   const persona = PERSONALITIES[personalityKey] || extra;
+   const sys = persona?.systemPrompt || PERSONALITIES.default.systemPrompt;
+   // Custom personas carry explicit "how to speak" and "how to answer" direction
+   // the admin enters per persona — inject it so the AI actually behaves that way.
+   const speakStyle = extra?.speakStyle ? `\n\nSPEAKING STYLE — follow this exactly for every reply: ${extra.speakStyle}` : "";
+   const answerStyle = extra?.answerStyle ? `\n\nHOW TO ANSWER — follow this exactly: ${extra.answerStyle}` : "";
+   const base = `${AI_IDENTITY_BLOCK}\n\n${sys}${speakStyle}${answerStyle}`;
    let formatted = base + FORMATTING_GUIDANCE;
    // Only speak like a TTS voice engine (Fish Audio bracket tags) when the user
    // actually has voice replies turned on — otherwise the brackets leak as text.

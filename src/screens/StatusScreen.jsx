@@ -5,11 +5,12 @@ import { useTheme, FONTS } from "../theme/ThemeContext";
 import { postStatus, useStatuses, usePublicStatuses, viewStatus, useStatusViewers, deleteStatus, updateStatusVisibility } from "../firebase/status";
 import { useSystemConfigHook } from "../firebase/ai";
 import { checkStatusAllowed, recordStatusUsage } from "../firebase/limits";
-import { useContacts } from "../firebase/contacts";
+import { useContacts, getContactDisplayName } from "../firebase/contacts";
 import { useChats, getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
 import { uploadChatFile, getSignedUrl } from "../supabase/media";
 import { uploadMediaFile, RawFileTooLargeError } from "../services/mediaUpload";
 import CameraCapture from "../components/CameraCapture";
+import { NativeCameraSheet } from "../components/NativeCameraLauncher";
 import { doc, onSnapshot, updateDoc, setDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
 import Avatar from "../components/Avatar";
@@ -320,6 +321,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const [viewStoryOwner, setViewStoryOwner] = useState(null);
   const [viewedMap, setViewedMap] = useState(() => getStoredViewed());
   const [showCamera, setShowCamera] = useState(false);
+  const [showNativeCamera, setShowNativeCamera] = useState(false);
   const [cameraCapture, setCameraCapture] = useState(null); // { target: "chat" | "builder" }
   const { chats } = useChats(myUid);
   const [cameraError, setCameraError] = useState("");
@@ -963,6 +965,40 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     if (cameraTimerRef.current) { clearTimeout(cameraTimerRef.current); cameraTimerRef.current = null; }
   };
 
+  // ── Native camera (Capacitor) + routing sheet ──────────────────
+  const nativeStatusChats = (chats || []).map((c) => {
+    let name = c.groupName;
+    if (!name) {
+      const other = c.participants?.find((p) => p !== myUid);
+      const contact = contacts.find((ct) => ct.uid === other);
+      name = contact ? getContactDisplayName(contact) : (other === myUid ? (myName || "Me") : (other ? other.slice(0, 8) : "Chat"));
+    }
+    return { id: c.id, name, isGroup: c.type === "group" };
+  });
+
+  const nativeSendStatus = async (file) => {
+    const result = await uploadMediaFile(`status-${myUid}`, myUid, file);
+    const postVisibility = (postPublic || userStatusVisibility === "everyone") ? "public" : "contacts";
+    await postStatus(myUid, {
+      text: null,
+      mediaURL: result.url,
+      mediaType: "image",
+      backgroundColor: null,
+      fontFamily: null,
+      durationMs: 8000,
+      textOverlay: null,
+      visibility: postVisibility,
+    });
+  };
+
+  const nativeSendChatTo = async (file, chatId) => {
+    const chat = (chats || []).find((c) => c.id === chatId);
+    const otherUid = chat?.participants?.find((p) => p !== myUid);
+    const targetChatId = chat?.type === "group" ? chatId : await getOrCreateDirectChat(myUid, otherUid);
+    const result = await uploadMediaFile(targetChatId, myUid, file);
+    await sendMediaMessage(targetChatId, myUid, "image", result, chat?.participants || [otherUid]);
+  };
+
   const stopVoiceRecording = async () => {
     const isNative = typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.();
     const NextextNative = isNative ? window.Capacitor?.Plugins?.NextextNative : null;
@@ -1143,7 +1179,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       <div style={{ display: "flex", alignItems: "center", padding: "calc(16px + var(--safe-top)) 16px 16px", gap: 12, background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
         <ChevronLeft size={22} color={t.text} onClick={onBack} style={{ cursor: "pointer" }} />
         <span style={{ color: t.text, fontWeight: 700, fontSize: 18 }}>Status</span>
-        <div onClick={() => setCameraCapture({ target: "chat" })} title="Camera" style={{ marginLeft: "auto", width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+        <div onClick={() => setShowNativeCamera(true)} title="Camera" style={{ marginLeft: "auto", width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <Camera size={20} color={t.primary} />
         </div>
         <select
@@ -1215,7 +1251,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             Post
           </div>
           {!hideStatusCamera && (
-            <div onClick={() => setCameraCapture({ target: "builder" })} title="Camera" style={{ width: 40, height: 40, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+            <div onClick={() => setShowNativeCamera(true)} title="Camera" style={{ width: 40, height: 40, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
               <Camera size={20} color={t.primary} />
             </div>
           )}
@@ -1470,6 +1506,14 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       {viewerModalStatusId && (
         <StatusViewerModal statusId={viewerModalStatusId} contacts={acceptedContacts} onClose={() => setViewerModalStatusId(null)} t={t} />
       )}
+
+      <NativeCameraSheet
+        open={showNativeCamera}
+        onClose={() => setShowNativeCamera(false)}
+        onSendStatus={nativeSendStatus}
+        onSendChatTo={nativeSendChatTo}
+        chats={nativeStatusChats}
+      />
 
       {/* Shared in-app camera (identical to the chats top-bar camera).
           Portaled to document.body so it always renders on top of every screen

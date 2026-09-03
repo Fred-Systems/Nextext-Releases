@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, useState, useEffect } from "react";
 import { doc, onSnapshot, getDoc, setDoc } from "firebase/firestore";
 import { db, auth } from "./config";
 import { onAuthStateChanged } from "firebase/auth";
@@ -128,4 +128,58 @@ export async function ensureGlobalSettingsExist() {
 
 export async function updateGlobalSettings(patch, adminUid) {
   await setDoc(doc(db, ...CONFIG_REF_PATH), { ...patch, updatedBy: adminUid, updatedAt: new Date() }, { merge: true });
+}
+
+// ── Announcements ──
+// Admin posts a site-wide announcement; it shows at the top of every user's chat
+// list until the user dismisses it (dismissal is per-user, stored on their doc).
+export async function setAnnouncement(text, myUid) {
+  const clean = String(text || "").trim();
+  if (!clean) return null;
+  const id = `ann_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  await setDoc(doc(db, ...CONFIG_REF_PATH), { announcement: { id, text: clean, ts: Date.now(), by: myUid } }, { merge: true });
+  return id;
+}
+
+export async function clearAnnouncement() {
+  await setDoc(doc(db, ...CONFIG_REF_PATH), { announcement: null }, { merge: true });
+}
+
+export async function dismissAnnouncement(myUid, id) {
+  if (!myUid || !id) return;
+  await setDoc(doc(db, "users", myUid), { dismissedAnnouncementId: id }, { merge: true });
+}
+
+// Reactive read of the current user's dismissed announcement id.
+export function useDismissedAnnouncement(myUid) {
+  const [id, setId] = useState(null);
+  useEffect(() => {
+    if (!myUid) return undefined;
+    const ref = doc(db, "users", myUid);
+    const unsub = onSnapshot(ref, (s) => setId(s.data()?.dismissedAnnouncementId || null), () => {});
+    return () => unsub();
+  }, [myUid]);
+  return id;
+}
+
+// ── Custom AI personas (admin-added) ──
+// Each persona: { key, name, icon, systemPrompt, speakStyle, answerStyle,
+// description, voiceRef? }. Stored in config/globalSettings.personas (array).
+export async function setPersona(p) {
+  if (!p || !p.key || !p.name) return;
+  const ref = doc(db, ...CONFIG_REF_PATH);
+  const snap = await getDoc(ref);
+  const arr = snap.exists() ? (snap.data()?.personas || []) : [];
+  const idx = arr.findIndex((x) => x.key === p.key);
+  if (idx >= 0) arr[idx] = { ...arr[idx], ...p };
+  else arr.push(p);
+  await setDoc(ref, { personas: arr }, { merge: true });
+}
+
+export async function deletePersona(key) {
+  if (!key) return;
+  const ref = doc(db, ...CONFIG_REF_PATH);
+  const snap = await getDoc(ref);
+  const arr = snap.exists() ? (snap.data()?.personas || []) : [];
+  await setDoc(ref, { personas: arr.filter((x) => x.key !== key) }, { merge: true });
 }
