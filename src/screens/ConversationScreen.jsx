@@ -1914,42 +1914,59 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
   // Step B of the voice-note composer: ask the LLM to turn the user's rough idea
   // into a dramatic, bracket-tagged script optimized for the spoken voice engine.
-  const formatVoiceScript = async () => {
-    const idea = yNoteIdea.trim();
-    if (!idea || yNoteFormatting) return;
-    if (!canUseAiVoiceNote) { setSendError("AI voice-note formatting is off. Ask an admin to enable it for your account."); return; }
-    setYNoteFormatting(true);
-    setSendError("");
-    try {
-      const voice = availableVoices.find((v) => v.id === yVoiceId) || availableVoices[0];
-      const voiceName = voice?.fullName || voice?.name || "the speaker";
-      const voiceExtra = voice?.prompt ? `\nContext about ${voiceName}: ${voice.prompt}` : "";
-      const instruction =
-        "You are an expert AI Audio Director specializing in script formatting for the Fish Audio S2.1 Pro Text-to-Speech system. " +
-        "Transform the user's raw concept into a dramatic, highly expressive script optimized for vocal synthesis.\n\n" +
-        "CRITICAL FORMATTING DIRECTIONS:\n" +
-        "1. NEVER use markdown symbols like asterisks (*) or italics (_) to denote action or emotion. The voice engine will try to read them literally.\n" +
-        "2. Use square brackets [] exclusively for inline emotion and prosody cues. Place tags exactly where the tone shifts.\n" +
-        "3. Keep the overall script tight, punchy, and strictly under 500 characters.\n\n" +
-        "VOCABULARY & STYLE GUIDE:\n" +
-        "- Layer expressions at the beginning of dramatic sentences using stacked brackets, e.g. '[furious][dark]'.\n" +
-        "- Inject natural conversational fillers like '[sigh] Oy vey...', '[gasp]', or '[clear throat]' to maximize human-like pacing.\n" +
-        "- Use explicit pacing tags like '[pause]', '[long pause]', or '[slow]' right before highly critical reveals.\n" +
-        "- Emphasize intense final words by typing them in ALL CAPS and extending vowel phonetics, e.g. 'goooo... straight... TO HELLLL!'.\n" +
-        "The script is voiced by: " + voiceName + "." + voiceExtra + "\n" +
-        "If the user's idea references a specific person by name, recognize the name and weave it naturally into the script; if a name is not recognized, simply ignore that detail.\n" +
-        "Return ONLY the formatted script text and nothing else.";
-      const out = await sendAIMessage(myUid, idea, [], instruction);
-      const formatted = (out || "").replace(/^["']|["']$/g, "").trim();
-      // Always produce something — fall back to the user's raw idea if the LLM fails.
-      setYNoteText(formatted || idea);
-    } catch (err) {
-      // Never leave the user stuck: fall back to their original text.
-      setYNoteText(idea);
-      setSendError("Couldn't auto-format — using your text as-is.");
-    }
-    setYNoteFormatting(false);
-  };
+   // Best-effort offline formatter used when the AI call fails: it weaves the
+   // user's own words together with the persona's name/prompt (provided by the
+   // admin) so the result still sounds like a voiced script rather than dumping
+   // the raw, unformatted text back at the user.
+   const buildLocalVoiceScript = (rawIdea, vName, vPrompt) => {
+     const clean = String(rawIdea || "").replace(/[*`_~#]/g, "").trim();
+     if (!clean) return clean;
+     const flavor = vPrompt ? ` ${vName}, ${String(vPrompt).split(/[.!?]/)[0]}.` : "";
+     let s = `[serious]${flavor} ${clean}`;
+     if (s.length > 480) s = s.slice(0, 477).trim() + "...";
+     return s.trim();
+   };
+
+   const formatVoiceScript = async () => {
+     const idea = yNoteIdea.trim();
+     if (!idea || yNoteFormatting) return;
+     if (!canUseAiVoiceNote) { setSendError("AI voice-note formatting is off. Ask an admin to enable it for your account."); return; }
+     setYNoteFormatting(true);
+     setSendError("");
+     try {
+       const voice = availableVoices.find((v) => v.id === yVoiceId) || availableVoices[0];
+       const voiceName = voice?.fullName || voice?.name || "the speaker";
+       const voiceExtra = voice?.prompt ? `\nContext about ${voiceName}: ${voice.prompt}` : "";
+       const instruction =
+         "You are an expert AI Audio Director specializing in script formatting for the Fish Audio S2.1 Pro Text-to-Speech system. " +
+         "Transform the user's raw concept into a dramatic, highly expressive script optimized for vocal synthesis.\n\n" +
+         "CRITICAL FORMATTING DIRECTIONS:\n" +
+         "1. NEVER use markdown symbols like asterisks (*) or italics (_) to denote action or emotion. The voice engine will try to read them literally.\n" +
+         "2. Use square brackets [] exclusively for inline emotion and prosody cues. Place tags exactly where the tone shifts.\n" +
+         "3. Keep the overall script tight, punchy, and strictly under 500 characters.\n\n" +
+         "VOCABULARY & STYLE GUIDE:\n" +
+         "- Layer expressions at the beginning of dramatic sentences using stacked brackets, e.g. '[furious][dark]'.\n" +
+         "- Inject natural conversational fillers like '[sigh] Oy vey...', '[gasp]', or '[clear throat]' to maximize human-like pacing.\n" +
+         "- Use explicit pacing tags like '[pause]', '[long pause]', or '[slow]' right before highly critical reveals.\n" +
+         "- Emphasize intense final words by typing them in ALL CAPS and extending vowel phonetics, e.g. 'goooo... straight... TO HELLLL!'.\n" +
+         "The script is voiced by: " + voiceName + "." + voiceExtra + "\n" +
+         "If the user's idea references a specific person by name, recognize the name and weave it naturally into the script; if a name is not recognized, simply ignore that detail.\n" +
+         "Return ONLY the formatted script text and nothing else.";
+       let out = null;
+       for (let attempt = 0; attempt < 2 && !out; attempt++) {
+         try { out = await sendAIMessage(myUid, idea, [], instruction); } catch { out = null; }
+       }
+       const formatted = (out || "").replace(/^["']|["']$/g, "").trim();
+       // Always produce something — fall back to a persona-aware script built
+       // from the user's words (never just the raw text).
+       setYNoteText(formatted || buildLocalVoiceScript(idea, voiceName, voice?.prompt));
+     } catch (err) {
+       const voice = availableVoices.find((v) => v.id === yVoiceId) || availableVoices[0];
+       const voiceName = voice?.fullName || voice?.name || "the speaker";
+       setYNoteText(buildLocalVoiceScript(idea, voiceName, voice?.prompt));
+     }
+     setYNoteFormatting(false);
+   };
 
   const handleFilePick = async (e) => {    const file = e.target.files?.[0];
     e.target.value = "";

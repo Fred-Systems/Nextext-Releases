@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef } from "react";
 import { ChevronLeft, Send, Plus, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive, Copy, Forward, MessageSquare } from "lucide-react";
 import VoiceToTextButton from "../components/VoiceToTextButton";
 import VoiceWaveform from "../components/VoiceWaveform";
-import { getAvailableVoices, resolveVoice, synthesizeSpeechBytes, Y_MIZRACHI_VOICE_ID } from "../firebase/tts";
+import { getAvailableVoices, resolveVoice, synthesizeSpeechBytes, Y_MIZRACHI_VOICE_ID, sanitizeForTTS } from "../firebase/tts";
+import { saveVoiceBlob, loadVoiceBlob } from "../utils/voiceCache";
+import { registerAudioPlay, unregisterAudioPlay } from "../utils/exclusiveAudio";
 import { useTheme } from "../theme/ThemeContext";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { doc, getDoc, setDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, updateDoc, getDocs, writeBatch, where, deleteDoc } from "firebase/firestore";
@@ -241,9 +243,9 @@ function AutoAudio({ src, canDownload }) {
         controls
         autoPlay
         playsInline
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
+        onPlay={() => { setPlaying(true); registerAudioPlay(ref.current); }}
+        onPause={() => { setPlaying(false); unregisterAudioPlay(ref.current); }}
+        onEnded={() => { setPlaying(false); unregisterAudioPlay(ref.current); }}
         style={{ width: "100%", maxWidth: 240, display: "block", borderRadius: 8 }}
       />
     </div>
@@ -384,17 +386,34 @@ export default function AIChatScreen({ myUid, onBack }) {
       }
       setPodcastStatus("Synthesizing voices…");
       const lines = parsePodcastScript(raw || "", voices);
+      const buffers = [];
+      let okTurns = 0;
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const v = availableVoices.find((x) => x.id === line.voiceId) || availableVoices.find((x) => x.id === voices[0]);
-        const text = line.text.trim();
+        const text = sanitizeForTTS(line.text);
         if (!text) continue;
         setPodcastStatus(`Synthesizing turn ${i + 1} of ${lines.length} (${v?.name || "voice"})…`);
-        const blob = await synthesizeSpeechBytes(text, v?.referenceId || Y_MIZRACHI_VOICE_ID);
-        const file = new File([blob], `podcast-${i}.mp3`, { type: "audio/mpeg" });
-        const uploadResult = await uploadChatFile(chatId, myUid, file);
-        await sendMediaMessage(chatId, myUid, "voice", uploadResult, [AI_CONTACT_UID], {});
+        try {
+          const blob = await synthesizeSpeechBytes(text, v?.referenceId || Y_MIZRACHI_VOICE_ID);
+          const buf = await blob.arrayBuffer();
+          buffers.push(new Uint8Array(buf));
+          okTurns += 1;
+        } catch (e) {
+          console.warn("[podcast] turn failed:", e?.message);
+        }
       }
+      if (okTurns === 0) throw new Error("All podcast turns failed to synthesize — check the voice key.");
+      // Concatenate every turn into ONE recording so the podcast plays as a
+      // single, continuous conversation between the selected voices.
+      const total = buffers.reduce((a, b) => a + b.length, 0);
+      const merged = new Uint8Array(total);
+      let off = 0;
+      for (const b of buffers) { merged.set(b, off); off += b.length; }
+      const file = new File([merged], "podcast.mp3", { type: "audio/mpeg" });
+      setPodcastStatus("Uploading podcast…");
+      const uploadResult = await uploadChatFile(chatId, myUid, file);
+      await sendMediaMessage(chatId, myUid, "voice", uploadResult, [AI_CONTACT_UID], { text: `🎙️ AI Podcast (${okTurns} turns)` });
       setPodcastStatus("Podcast posted! ✓");
       setTimeout(() => { setShowPodcast(false); setPodcastBusy(false); setPodcastStatus(""); }, 1200);
     } catch (err) {
@@ -445,21 +464,28 @@ export default function AIChatScreen({ myUid, onBack }) {
     // (the Y Mizrachi voice-note composer is unaffected by this flag).
     if (sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin) return;
     if (voiceBusy) return;
-    const candidate = (messages || []).find((m) => m.senderId === AI_CONTACT_UID && m.type !== "image" && (m.text || "").trim() && !syncedMsgRef.current.has(m.id) && !voiceAudios[m.id]);
+    const candidate = (messages || []).find((m) => m.senderId === AI_CONTACT_UID && m.type !== "image" && (m.text || "").trim() && !syncedMsgRef.current.has(m.id) && !voiceAudios[m.id] && !m.voiceUrl);
     if (!candidate) return;
     const msgId = candidate.id;
     setVoiceBusy(true);
     syncedMsgRef.current.add(msgId);
       (async () => {
         try {
-          const { synthesizeSpeech } = await import("../firebase/tts");
+          const tts = await import("../firebase/tts");
           // Admin can hook a specific Fish Audio voice to this persona (overrides
           // the persona's built-in voiceRef). Fall back to the persona's
           // voiceRef, then to the user's chosen voice.
           const adminHooked = sysConfig?.personaVoiceMap?.[currentPersonality];
           const personaRef = adminHooked || PERSONALITIES[currentPersonality]?.voiceRef;
           const voice = personaRef ? { referenceId: personaRef } : resolveVoice(sysConfig, voiceMode);
-          const url = await synthesizeSpeech(candidate.text, voice?.referenceId);
+          // Reuse a cached voice if we already generated one (survives reload /
+          // navigating away — kept until the chat is cleared).
+          let blob = await loadVoiceBlob(msgId);
+          if (!blob) {
+            blob = await tts.synthesizeSpeechBytes(sanitizeForTTS(candidate.text), voice?.referenceId);
+            await saveVoiceBlob(msgId, blob).catch(() => {});
+          }
+          const url = URL.createObjectURL(blob);
           setVoiceAudios((prev) => ({ ...prev, [msgId]: url }));
         } catch (err) {
           // Keep msgId in syncedMsgRef so a permanent failure (e.g. CORS on the
@@ -689,15 +715,22 @@ export default function AIChatScreen({ myUid, onBack }) {
     setShowSettings(false);
     setMessages([]);
     setFullscreenImage(null);
+    setVoiceAudios({});
     try {
       const snap = await getDocs(collection(db, "chats", chatId, "messages"));
-      const batch = writeBatch(db);
-      snap.docs.forEach((d) => {
-        const data = d.data();
-        if (data.mediaPath) deleteChatFile(data.mediaPath).catch(() => {});
-        batch.delete(d.ref);
-      });
-      await batch.commit();
+      const docs = snap.docs;
+      // Firestore writeBatch supports at most 500 operations — chunk so a long
+      // chat (which would otherwise throw and leave the old messages behind,
+      // making the cleared chat "come back") is fully wiped.
+      for (let i = 0; i < docs.length; i += 450) {
+        const batch = writeBatch(db);
+        docs.slice(i, i + 450).forEach((d) => {
+          const data = d.data();
+          if (data.mediaPath) deleteChatFile(data.mediaPath).catch(() => {});
+          batch.delete(d.ref);
+        });
+        await batch.commit();
+      }
     } catch {
       /* silent */
     }
@@ -1006,7 +1039,7 @@ export default function AIChatScreen({ myUid, onBack }) {
         </div>
         <MoreVertical size={19} color="#fff" onClick={() => { setShowSettings(!showSettings); setShowPersonaTray(false); }} style={{ cursor: "pointer" }} />
         {showSettings && (
-          <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 52, right: 10, background: t.surface, borderRadius: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.25)", overflow: "hidden", zIndex: 40, minWidth: 200 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", top: 52, right: 10, background: t.surface, borderRadius: 12, boxShadow: "0 4px 20px rgba(0,0,0,0.25)", overflowY: "auto", maxHeight: "75vh", zIndex: 40, minWidth: 200 }}>
             <div
               onClick={() => setShowPersonaTray(true)}
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer" }}

@@ -74,6 +74,28 @@ const isNativePlatform = () => !!(typeof window !== "undefined" && window.Capaci
 // system config doc which acts as the app-wide settings object).
 export const VOICE_SYSTEM_REF = ["config", "system"];
 
+// Strip markdown/emphasis that a TTS engine would read aloud, and keep only
+// recognized Fish Audio emotion brackets ([laughing], [serious], …) so the
+// spoken output isn't polluted with asterisks, italics or stray brackets.
+const FISH_EMOTIONS = new Set([
+  "laughing", "laugh", "serious", "slow", "whispering", "whisper", "angry",
+  "sad", "happy", "excited", "calm", "shouting", "surprised", "crying",
+  "sigh", "gasp", "gasps", "cough", "sniff", "yawn", "clear throat", "pause",
+  "long pause", "thinking", "sarcastic", "robotic", "nervous", "scared",
+  "disgusted", "whispering",
+]);
+export function sanitizeForTTS(text) {
+  if (!text) return "";
+  let s = String(text);
+  s = s.replace(/\*\*\*/g, "").replace(/\*\*/g, "").replace(/\*/g, "");
+  s = s.replace(/__/g, "").replace(/_/g, "").replace(/`/g, "").replace(/~{1,2}/g, "");
+  s = s.replace(/```[\s\S]*?```/g, "").replace(/```/g, "");
+  s = s.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+  s = s.replace(/\[([^\]]+)\]/g, (m, tag) => (FISH_EMOTIONS.has(String(tag).trim().toLowerCase()) ? m : ""));
+  s = s.replace(/\s+/g, " ").replace(/\s+([.,!?;:])/g, "$1").trim();
+  return s;
+}
+
 // Returns the global voice master switch (default true).
 export async function getGlobalVoiceEnabled() {
   try {
@@ -147,15 +169,20 @@ export async function getFishAudioKey() {
   }
 }
 
-// Core: turn text into raw MP3 bytes via the Worker proxy (primary) or the
-// native Android bridge (fallback). `referenceId` selects the Fish Audio voice
-// (defaults to Y Mizrachi). Throws a readable error on failure.
+// Core: turn text into raw MP3 bytes. Tries, in order:
+//   1) Cloudflare Worker proxy (key server-side),
+//   2) Native Android bridge (key compiled into the APK),
+//   3) Direct Fish Audio call using the admin-configured key (client-readable
+//      from config/fishAudioKey) — so podcasts/voice replies keep working even
+//      if the Worker proxy's key is stale or lacks permission for a voice.
+// `referenceId` selects the Fish Audio voice (defaults to Y Mizrachi).
 async function fetchVoiceBytes(text, referenceId) {
-  const clean = String(text || "").slice(0, 800).trim();
+  const clean = sanitizeForTTS(text);
   if (!clean) throw new Error("Nothing to speak.");
   const ref = referenceId || Y_MIZRACHI_VOICE_ID;
 
   // 1) Cloudflare Worker proxy — key stays server-side.
+  let workerErr = null;
   try {
     const resp = await fetch(VOICE_API, {
       method: "POST",
@@ -163,13 +190,11 @@ async function fetchVoiceBytes(text, referenceId) {
       body: JSON.stringify({ text: clean, referenceId: ref, model: FISH_MODEL }),
     });
     if (resp.ok) return await resp.arrayBuffer();
-    let msg = `Voice service error (${resp.status}).`;
-    try { const j = await resp.json(); if (j?.error) msg = j.error; } catch {}
-    throw new Error(msg);
+    try { const j = await resp.json(); workerErr = j?.error || `Voice service error (${resp.status}).`; } catch { workerErr = `Voice service error (${resp.status}).`; }
   } catch (e) {
-    if (e.message && /Voice service/.test(e.message)) throw e;
-    console.error("[tts] worker synthesis failed, trying native fallback:", e?.message);
+    workerErr = e?.message || "Voice worker unreachable.";
   }
+  console.error("[tts] worker synthesis failed:", workerErr);
 
   // 2) Native Android bridge fallback — key is compiled into the APK.
   if (isNativePlatform()) {
@@ -178,17 +203,37 @@ async function fetchVoiceBytes(text, referenceId) {
       try {
         const res = await native.tts({ text: clean, referenceId: ref, model: FISH_MODEL });
         const b64 = res?.base64;
-        if (!b64) throw new Error("Voice service returned no audio.");
-        const bin = atob(b64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        return bytes.buffer;
+        if (b64) {
+          const bin = atob(b64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          return bytes.buffer;
+        }
       } catch (e2) {
         console.error("[tts] native synthesis failed:", e2?.message);
       }
     }
   }
-  throw new Error("Voice generation unavailable. The voice worker may not be deployed.");
+
+  // 3) Direct Fish Audio call with the admin-configured key. This is the path
+  // that fixes "Missing or insufficient permissions" when the Worker's key is
+  // wrong/stale — the admin's own key (set in the dashboard) is used directly.
+  try {
+    const key = (await getFishAudioKey() || "").trim();
+    if (key) {
+      const resp = await fetch("https://api.fish.audio/v1/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ text: clean, reference_id: ref, model: FISH_MODEL }),
+      });
+      if (resp.ok) return await resp.arrayBuffer();
+      try { const j = await resp.json(); workerErr = j?.error || workerErr; } catch {}
+    }
+  } catch (e3) {
+    console.error("[tts] direct fish synthesis failed:", e3?.message);
+  }
+
+  throw new Error(workerErr ? `Voice generation failed: ${workerErr}` : "Voice generation unavailable. The voice worker may not be deployed.");
 }
 
 // POST to Fish Audio (via Worker) and return a playable Blob URL of the MP3.
