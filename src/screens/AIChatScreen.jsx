@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ChevronLeft, Send, Plus, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive, Copy, Forward, MessageSquare } from "lucide-react";
+import { ChevronLeft, Send, Plus, MoreVertical, Trash2, Image as ImageIcon, Users, X, Smile, Archive, Copy, Forward, MessageSquare, Download } from "lucide-react";
 import VoiceToTextButton from "../components/VoiceToTextButton";
 import VoiceWaveform from "../components/VoiceWaveform";
 import { getAvailableVoices, resolveVoice, synthesizeSpeechBytes, Y_MIZRACHI_VOICE_ID, sanitizeForTTS } from "../firebase/tts";
+import { uploadToCloudinary } from "../services/mediaUpload";
 import { saveVoiceBlob, loadVoiceBlob } from "../utils/voiceCache";
 import { registerAudioPlay, unregisterAudioPlay } from "../utils/exclusiveAudio";
 import { useTheme } from "../theme/ThemeContext";
@@ -281,6 +282,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [podcastSpeakerNotes, setPodcastSpeakerNotes] = useState({}); // voiceId -> note
   const [podcastBusy, setPodcastBusy] = useState(false);
   const [podcastStatus, setPodcastStatus] = useState("");
+  const [podcastResult, setPodcastResult] = useState(null); // { url, publicId }
   const [summarizingExternal, setSummarizingExternal] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isArchived, setIsArchived] = useState(false);
@@ -364,7 +366,7 @@ export default function AIChatScreen({ myUid, onBack }) {
       let lastErr = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const r = await sendAIMessage(myUid, "Generate the podcast script now.", [], instruction);
+          const r = await sendAIMessage(myUid, "Generate the podcast script now.", [], instruction, null, null, true);
           if (r && r.trim()) { raw = r; break; }
         } catch (e) { lastErr = e; }
       }
@@ -412,10 +414,13 @@ export default function AIChatScreen({ myUid, onBack }) {
       for (const b of buffers) { merged.set(b, off); off += b.length; }
       const file = new File([merged], "podcast.mp3", { type: "audio/mpeg" });
       setPodcastStatus("Uploading podcast…");
-      const uploadResult = await uploadChatFile(chatId, myUid, file);
-      await sendMediaMessage(chatId, myUid, "voice", uploadResult, [AI_CONTACT_UID], { text: `🎙️ AI Podcast (${okTurns} turns)` });
-      setPodcastStatus("Podcast posted! ✓");
-      setTimeout(() => { setShowPodcast(false); setPodcastBusy(false); setPodcastStatus(""); }, 1200);
+      // Upload the conversation recording to Cloudinary (audio is the "video"
+      // resource type) and keep it in the builder area with a download button —
+      // it is NOT posted back into the chat.
+      const cloud = await uploadToCloudinary(file, { resourceType: "video" });
+      setPodcastResult({ url: cloud.url, publicId: cloud.path, turns: okTurns });
+      setPodcastStatus("Podcast ready! ✓");
+      setPodcastBusy(false);
     } catch (err) {
       setPodcastStatus("Error: " + (err?.message || "failed"));
       setPodcastBusy(false);
@@ -426,7 +431,12 @@ export default function AIChatScreen({ myUid, onBack }) {
   const voiceMasterOn = sysConfig?.global_voice_enabled !== false;
   const isAdmin = userDoc?.role === "admin";
   const canDownloadVoice = isAdmin || sysConfig?.allowVoiceDownload === true;
+  // AI voice replies / podcasts are OFF by default and must be enabled by an admin
+  // (globally via systemConfig, or per-user via users/{uid}.aiFeatures).
+  const voiceReplyAvailable = (sysConfig?.aiVoiceReplyEnabled === true || userDoc?.aiFeatures?.voiceReply === true) && voiceMasterOn && !sysConfig?.aiVoiceReplyGloballyDisabled;
+  const podcastAvailable = sysConfig?.aiPodcastEnabled === true || userDoc?.aiFeatures?.podcast === true;
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [autoVoiceReplies, setAutoVoiceReplies] = useState(false);
   const [voiceAudios, setVoiceAudios] = useState({}); // { messageId: blobUrl }
   const [voiceBusy, setVoiceBusy] = useState(false);
   const syncedMsgRef = useRef(new Set());
@@ -455,13 +465,34 @@ export default function AIChatScreen({ myUid, onBack }) {
     } catch {}
   };
 
-  // When a NEW assistant text message arrives, and the global + user voice
-  // switches are both ON, synthesize the reply with the Y Mizrachi voice and
-  // render an autoplaying <audio> player inside that bubble.
+  // Synthesize a single AI message into a voice note (used both for auto-reply
+  // and for the per-message "Generate audio response" button). Cached via
+  // IndexedDB so it survives reload and is kept until the chat is cleared.
+  const generateOneVoice = async (msg) => {
+    const msgId = msg.id;
+    if (!msgId || voiceAudios[msgId] || syncedMsgRef.current.has(msgId)) return;
+    syncedMsgRef.current.add(msgId);
+    try {
+      const tts = await import("../firebase/tts");
+      const adminHooked = sysConfig?.personaVoiceMap?.[currentPersonality];
+      const personaRef = adminHooked || PERSONALITIES[currentPersonality]?.voiceRef;
+      const voice = personaRef ? { referenceId: personaRef } : resolveVoice(sysConfig, voiceMode);
+      let blob = await loadVoiceBlob(msgId);
+      if (!blob) {
+        blob = await tts.synthesizeSpeechBytes(sanitizeForTTS(msg.text), voice?.referenceId);
+        await saveVoiceBlob(msgId, blob).catch(() => {});
+      }
+      setVoiceAudios((prev) => ({ ...prev, [msgId]: URL.createObjectURL(blob) }));
+    } catch (err) {
+      console.error("[tts] voice synthesis failed for", msgId, err?.message);
+    }
+  };
+
+  // When a NEW assistant text message arrives AND the user has opted into
+  // auto-play ("Generate audio automatically"), synthesize it. Otherwise the user
+  // taps "Generate audio response" on each message.
   useEffect(() => {
-    if (!voiceMasterOn || !voiceEnabled) return;
-    // Admin can globally silence AI voice replies for everyone except admins
-    // (the Y Mizrachi voice-note composer is unaffected by this flag).
+    if (!voiceMasterOn || !voiceEnabled || !autoVoiceReplies) return;
     if (sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin) return;
     if (voiceBusy) return;
     const candidate = (messages || []).find((m) => m.senderId === AI_CONTACT_UID && m.type !== "image" && (m.text || "").trim() && !syncedMsgRef.current.has(m.id) && !voiceAudios[m.id] && !m.voiceUrl);
@@ -471,30 +502,13 @@ export default function AIChatScreen({ myUid, onBack }) {
     syncedMsgRef.current.add(msgId);
       (async () => {
         try {
-          const tts = await import("../firebase/tts");
-          // Admin can hook a specific Fish Audio voice to this persona (overrides
-          // the persona's built-in voiceRef). Fall back to the persona's
-          // voiceRef, then to the user's chosen voice.
-          const adminHooked = sysConfig?.personaVoiceMap?.[currentPersonality];
-          const personaRef = adminHooked || PERSONALITIES[currentPersonality]?.voiceRef;
-          const voice = personaRef ? { referenceId: personaRef } : resolveVoice(sysConfig, voiceMode);
-          // Reuse a cached voice if we already generated one (survives reload /
-          // navigating away — kept until the chat is cleared).
-          let blob = await loadVoiceBlob(msgId);
-          if (!blob) {
-            blob = await tts.synthesizeSpeechBytes(sanitizeForTTS(candidate.text), voice?.referenceId);
-            await saveVoiceBlob(msgId, blob).catch(() => {});
-          }
-          const url = URL.createObjectURL(blob);
-          setVoiceAudios((prev) => ({ ...prev, [msgId]: url }));
+          await generateOneVoice(candidate);
         } catch (err) {
-          // Keep msgId in syncedMsgRef so a permanent failure (e.g. CORS on the
-          // web build, where there is no native bridge) is not retried forever.
           console.error("[tts] voice synthesis failed for", msgId, err?.message);
         }
         setVoiceBusy(false);
       })();
-  }, [messages, voiceMasterOn, voiceEnabled, voiceBusy, voiceAudios, currentPersonality]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [messages, voiceMasterOn, voiceEnabled, autoVoiceReplies, voiceBusy, voiceAudios, currentPersonality]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pinchEnabled = () => {
     try { return localStorage.getItem("nextext_pinch_zoom") !== "false"; } catch { return true; }
@@ -674,7 +688,7 @@ export default function AIChatScreen({ myUid, onBack }) {
         senderId: myUid, type: "text", text, replyTo,
       }));
       const customInstructions = (typeof window !== "undefined" && localStorage.getItem("nextext_ai_custom_instructions_enabled") !== "off") ? (localStorage.getItem("nextext_ai_custom_instructions") || "") : "";
-      const aiResponse = await sendAIMessage(myUid, text, messages, customInstructions, null, geminiModel);
+      const aiResponse = await sendAIMessage(myUid, text, messages, customInstructions, null, geminiModel, voiceEnabled);
       setThinking(false);
       await addDoc(collection(db, "chats", chatId, "messages"), buildMsg({
         senderId: AI_CONTACT_UID, type: "text", text: aiResponse,
@@ -1048,23 +1062,37 @@ export default function AIChatScreen({ myUid, onBack }) {
               <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>AI Assistant Persona</span>
               <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
             </div>
-            <div
-              onClick={() => { setShowSettings(false); setShowPodcast(true); }}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
-            >
-              <span style={{ fontSize: 16 }}>🎙️</span>
-              <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Start AI Podcast</span>
-              <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
-            </div>
-            {voiceMasterOn && (
+            {podcastAvailable && (
               <div
-                onClick={sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin ? undefined : toggleVoiceReplies}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin ? "not-allowed" : "pointer", borderTop: `1px solid ${t.border}`, opacity: sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin ? 0.5 : 1 }}
+                onClick={() => { setShowSettings(false); setPodcastResult(null); setPodcastStatus(""); setShowPodcast(true); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
+              >
+                <span style={{ fontSize: 16 }}>🎙️</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Start AI Podcast</span>
+                <span style={{ marginLeft: "auto", color: t.textMuted }}>›</span>
+              </div>
+            )}
+            {voiceReplyAvailable && (
+              <div
+                onClick={toggleVoiceReplies}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
               >
                 <span style={{ fontSize: 16 }}>{voiceEnabled ? "🔊" : "🔇"}</span>
-                <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Enable Voice Replies{sysConfig?.aiVoiceReplyGloballyDisabled && !isAdmin ? " (disabled by admin)" : ""}</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Enable Voice Replies</span>
                 <span style={{ marginLeft: "auto", width: 40, height: 22, borderRadius: 11, background: voiceEnabled ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
                   <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: voiceEnabled ? 20 : 2, transition: "left 0.15s" }} />
+                </span>
+              </div>
+            )}
+            {voiceReplyAvailable && voiceEnabled && (
+              <div
+                onClick={() => setAutoVoiceReplies((v) => !v)}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}
+              >
+                <span style={{ fontSize: 16 }}>🔁</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Auto-play voice replies</span>
+                <span style={{ marginLeft: "auto", width: 40, height: 22, borderRadius: 11, background: autoVoiceReplies ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
+                  <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: autoVoiceReplies ? 20 : 2, transition: "left 0.15s" }} />
                 </span>
               </div>
             )}
@@ -1258,16 +1286,25 @@ export default function AIChatScreen({ myUid, onBack }) {
                               onClick={() => setFullscreenImage(m.mediaURL)}
                             />
                           </div>
-                        ) : (
-                          <div style={{ padding: "18px 22px", borderRadius: 10, background: t.bubbleThem, color: t.bubbleThemText, fontSize: 13, opacity: 0.8 }}>📷 Media expired</div>
-                        )}
-                        <div
-                          onClick={() => deleteAIMediaMessage(m.id, m.mediaPath)}
-                          title="Delete image"
-                          style={{ position: "absolute", top: 4, right: 4, width: 26, height: 26, borderRadius: "50%", background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2 }}
-                        >
-                          <Trash2 size={14} color="#fff" />
-                        </div>
+                         ) : (
+                           <div style={{ padding: "18px 22px", borderRadius: 10, background: t.bubbleThem, color: t.bubbleThemText, fontSize: 13, opacity: 0.8 }}>📷 Media expired</div>
+                         )}
+                         {!expired && m.mediaURL && (
+                           <div
+                             onClick={() => downloadMedia(m.mediaURL, `nextext-ai-image-${Date.now()}.png`)}
+                             title="Download image"
+                             style={{ position: "absolute", top: 4, left: 4, width: 26, height: 26, borderRadius: "50%", background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2 }}
+                           >
+                             <Download size={14} color="#fff" />
+                           </div>
+                         )}
+                         <div
+                           onClick={() => deleteAIMediaMessage(m.id, m.mediaPath)}
+                           title="Delete image"
+                           style={{ position: "absolute", top: 4, right: 4, width: 26, height: 26, borderRadius: "50%", background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2 }}
+                         >
+                           <Trash2 size={14} color="#fff" />
+                         </div>
                       </div>
                     </div>
                   );
@@ -1292,6 +1329,14 @@ export default function AIChatScreen({ myUid, onBack }) {
                       {renderAIBold(m.text, (url) => setFullscreenImage(url))}
                       {voiceAudios[m.id] && (
                         <AutoAudio src={voiceAudios[m.id]} canDownload={canDownloadVoice} />
+                      )}
+                      {voiceReplyAvailable && voiceEnabled && !voiceAudios[m.id] && !autoVoiceReplies && (
+                        <div
+                          onClick={() => generateOneVoice(m)}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "6px 12px", borderRadius: 10, background: t.primary, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}
+                        >
+                          🔊 Generate audio response
+                        </div>
                       )}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
                         <span style={{ fontSize: 10.5, opacity: 0.55 }}>
@@ -1614,6 +1659,19 @@ export default function AIChatScreen({ myUid, onBack }) {
               )}
               {podcastStatus && (
                 <div style={{ fontSize: 12.5, color: t.primary, fontWeight: 600, marginBottom: 8 }}>{podcastStatus}</div>
+              )}
+              {podcastResult && (
+                <div style={{ background: t.bg, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 8 }}>🎙️ AI Podcast ({podcastResult.turns} turns)</div>
+                  <audio controls src={podcastResult.url} style={{ width: "100%", marginBottom: 8 }} />
+                  <a
+                    href={podcastResult.url}
+                    download={`nextext-ai-podcast-${Date.now()}.mp3`}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, background: t.primary, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none" }}
+                  >
+                    ⬇️ Download recording
+                  </a>
+                </div>
               )}
             </div>
             <div style={{ padding: 14, borderTop: `1px solid ${t.border}` }}>

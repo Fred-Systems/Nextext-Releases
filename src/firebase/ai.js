@@ -51,11 +51,16 @@ const AI_IDENTITY_BLOCK =
   "AI features (chat with AI, chat summarization, persona switching, image analysis) " +
   "are available on request — users must be granted AI access by an admin. " +
   "You are the in-app AI assistant; you do not have direct access to the user's private " +
-  "data unless they explicitly share it with you (e.g., by asking you to summarize a chat).\n\n" +
+  "data unless they explicitly share it with you (e.g., by asking you to summarize a chat).\n\n";
+
+// Appended to the identity block ONLY when the user has AI voice replies enabled.
+// When voice is OFF the assistant must NOT emit Fish Audio bracket tags, because
+// they would otherwise appear as literal text in the chat bubble.
+const VOICE_ENGINE_BLOCK =
   "CRITICAL OUTPUT RULE: You are a spoken-word voice engine. You must NEVER use asterisks " +
   "(like *this*) or italics for actions or expressions. Instead, natively speak in a dramatic " +
   "tone and format your emotional delivery using explicit Fish Audio bracket tags, weaving " +
-  "them directly into your conversational responses based on the mood. Available tags to use " +
+  "them directly into your conversational responses based the mood. Available tags to use " +
   "frequently: [serious], [furious], [dark], [slow], [intense], [firm], [whispering], " +
   "[laughter], [gasp], [sigh]. If you want to deeply stress or drag out a critical word, spell " +
   "it phonetically with extra vowels (e.g., 'goooo... straight... TO HELLLL!'). " +
@@ -186,12 +191,15 @@ export function getAIChatId(userUid) { return `${AI_CHAT_PREFIX}${userUid}`; }
 // Builds the system prompt. In Live Mode the tool-use instructions are appended
 // onto the existing identity block + personality so the AI retains its custom
 // name and app-specific knowledge while gaining live capabilities.
-export function getSystemPrompt(personalityKey, config) {
-  const base = `${AI_IDENTITY_BLOCK}\n\n${PERSONALITIES[personalityKey]?.systemPrompt || PERSONALITIES.default.systemPrompt}`;
-  const formatted = base + FORMATTING_GUIDANCE;
-  if (config?.aiMode === "live") return formatted + LIVE_TOOL_INSTRUCTIONS;
-  return formatted;
-}
+ export function getSystemPrompt(personalityKey, config, voiceEnabled = false) {
+   const base = `${AI_IDENTITY_BLOCK}\n\n${PERSONALITIES[personalityKey]?.systemPrompt || PERSONALITIES.default.systemPrompt}`;
+   let formatted = base + FORMATTING_GUIDANCE;
+   // Only speak like a TTS voice engine (Fish Audio bracket tags) when the user
+   // actually has voice replies turned on — otherwise the brackets leak as text.
+   if (voiceEnabled) formatted += "\n\n" + VOICE_ENGINE_BLOCK;
+   if (config?.aiMode === "live") return formatted + LIVE_TOOL_INSTRUCTIONS;
+   return formatted;
+ }
 
 // ── Groq chat model selection (admin-controlled) ──
 // The admin can pin a specific Groq chat model in the Admin Dashboard; the
@@ -495,9 +503,9 @@ export function describeAIError(error) {
   return detail ? `AI error: ${detail}` : "Something went wrong with the AI. Please try again.";
 }
 
-export async function sendAIMessage(userUid, messageText, chatHistory = [], customInstructions = "", attachment = null, modelOverride = null) {
-  const config = await getSystemConfigForCall();
-  const personalityKey = await getPersonalityKey(userUid);
+ export async function sendAIMessage(userUid, messageText, chatHistory = [], customInstructions = "", attachment = null, modelOverride = null, voiceEnabled = false) {
+   const config = await getSystemConfigForCall();
+   const personalityKey = await getPersonalityKey(userUid);
   // Live Mode (groq/compound) has a tighter practical input limit, so feed it a
   // smaller, trimmed history. Old Mode can take a bit more. Either way every
   // message is truncated so a single huge paste can't blow the request size
@@ -526,7 +534,7 @@ export async function sendAIMessage(userUid, messageText, chatHistory = [], cust
     "2. You must URL-encode the prompt string dynamically. Replace spaces with %20 and strip out illegal punctuation characters like commas, question marks, and quotation marks.",
   ].join("\n");
 
-  const systemPrompt = truncate(safeCustom ? `${safeCustom}\n\n${getSystemPrompt(personalityKey, config)}\n\n${IMAGE_GEN_CONTEXT}` : `${getSystemPrompt(personalityKey, config)}\n\n${IMAGE_GEN_CONTEXT}`, MAX_SYS_CHARS + 700);
+  const systemPrompt = truncate(safeCustom ? `${safeCustom}\n\n${getSystemPrompt(personalityKey, config, voiceEnabled)}\n\n${IMAGE_GEN_CONTEXT}` : `${getSystemPrompt(personalityKey, config, voiceEnabled)}\n\n${IMAGE_GEN_CONTEXT}`, MAX_SYS_CHARS + 700);
 
   // ── Gemini provider path ──
   if (config.provider === "gemini") {

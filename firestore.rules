@@ -199,6 +199,15 @@ service cloud.firestore {
       allow write: if isSelf(uid);
     }
 
+    // ── daily usage counters (media bytes + status count, client-updated, self-only) ──
+    // Previously missing: status/media limit checks read/write usage/{uid}, which
+    // default-denied and surfaced as "Missing or insufficient permissions" on
+    // every status post (and media-limit check).
+    match /usage/{uid} {
+      allow read: if isSelf(uid);
+      allow write: if isSelf(uid);
+    }
+
     // ── status ─────────────────────────────────────────────
     match /status/{statusId} {
       // A status is viewable if it is public, owned by the viewer, or the viewer is

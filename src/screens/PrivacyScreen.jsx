@@ -157,6 +157,14 @@ export default function PrivacyScreen({ myUid, onBack }) {
           <CheckRow t={t} title="Require full username" sub="Only appear in results when someone types your complete @username (no smart/prefix search)" on={searchVis.exactUsername} disabled={savingVis} onClick={() => updateSearchVis({ exactUsername: !searchVis.exactUsername })} />
         </div>
 
+        {/* Data security / encryption notice */}
+        <div style={{ fontWeight: 700, color: t.text, fontSize: 14, marginBottom: 8, marginTop: 14 }}>Data security</div>
+        <div style={{ background: t.surface, borderRadius: 14, padding: 14, marginBottom: 14 }}>
+          <div style={{ fontSize: 12.5, color: t.text, lineHeight: 1.6 }}>
+            NexText uses encryption to protect data in transit and at rest, but NexText is not end-to-end encrypted. Messages are processed by NexText's servers to provide features such as AI, translation, synchronization, and web access. This means NexText's infrastructure may technically be capable of accessing message content. NexText should not be considered a zero-knowledge or E2EE messenger.
+          </div>
+        </div>
+
         {/* My Contacts Except... */}
         <div style={{ fontWeight: 700, color: t.text, fontSize: 14, marginBottom: 8, marginTop: 10 }}>My Contacts Except...</div>
         <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>

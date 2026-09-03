@@ -439,9 +439,13 @@ export async function incrementForwardedCount(sourceChatId, sourceMid) {
 // `forwardedFrom` pointer so the receiver sees a "Forwarded" badge. Keeps every
 // type-specific field so images/videos/voice/location/contact render exactly
 // like the original. Returns true on success.
-export async function sendForwardedMessage(targetChatId, senderUid, sourceMsg, otherParticipants) {
+export async function sendForwardedMessage(targetChatId, senderUid, sourceMsg, otherParticipants, options = {}) {
   const sender = await snapshotSenderName(senderUid);
   const { type } = sourceMsg;
+  const { replyTo = null, disappearing = null } = options;
+  const disappearingData = disappearing
+    ? { viewsAllowed: Math.max(1, Number(disappearing.viewsAllowed) || (disappearing.viewOnce ? 1 : 1)), views: {} }
+    : null;
 
   const payload = {
     senderId: senderUid,

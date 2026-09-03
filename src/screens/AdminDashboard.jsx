@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, Check, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound, ImageIcon, RefreshCw, Video } from "lucide-react";
+import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, Check, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound, ImageIcon, RefreshCw, Video, Radio, Volume2 } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -174,6 +174,25 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [allUsers, setAllUsers] = useState([]);
   const [allUsersLoading, setAllUsersLoading] = useState(false);
   const [directorySearch, setDirectorySearch] = useState("");
+  const [activeProvider, setActiveProvider] = useState("supabase");
+  const [providerInput, setProviderInput] = useState("");
+  useEffect(() => {
+    let alive = true;
+    getActiveStorageProviderFromDb().then((p) => { if (alive) setActiveProvider(p === "cloudinary" ? "cloudinary" : "supabase"); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const toggleStorageProvider = async () => {
+    if (providerInput.trim().toLowerCase() !== "change") { setError("Type the word 'change' to switch providers."); return; }
+    setError("");
+    try {
+      const next = activeProvider === "cloudinary" ? "supabase" : "cloudinary";
+      await setActiveStorageProviderDb(next);
+      setActiveProvider(next);
+      setProviderInput("");
+    } catch (e) {
+      setError("Couldn't switch provider: " + e.message);
+    }
+  };
   const [fishKey, setFishKey] = useState("");
   const [fishKeySaved, setFishKeySaved] = useState(false);
   const [mediaLimitMB, setMediaLimitMB] = useState("0");
@@ -512,6 +531,29 @@ export default function AdminDashboard({ myUid, onBack }) {
       await updateDoc(doc(db, "users", uid), { aiVoiceNoteEnabled: !currentVal });
     } catch (e) {
       setError("Couldn't update voice-note access: " + e.message);
+    }
+  };
+
+  // Per-user AI feature grants for podcast + voice replies (off by default; admin
+  // opts specific users in). Stored under users/{uid}.aiFeatures.
+  const toggleUserAiFeature = async (uid, field, currentVal) => {
+    setError("");
+    try {
+      const snap = await getDoc(doc(db, "users", uid));
+      const cur = snap.data()?.aiFeatures || {};
+      await updateDoc(doc(db, "users", uid), { aiFeatures: { ...cur, [field]: !currentVal } });
+    } catch (e) {
+      setError("Couldn't update AI feature access: " + e.message);
+    }
+  };
+  const setUserDailyLimit = async (uid, field, value) => {
+    setError("");
+    try {
+      const snap = await getDoc(doc(db, "users", uid));
+      const cur = snap.data()?.aiLimits || {};
+      await updateDoc(doc(db, "users", uid), { aiLimits: { ...cur, [field]: Math.max(0, parseInt(value || "0", 10) || 0) } });
+    } catch (e) {
+      setError("Couldn't set daily limit: " + e.message);
     }
   };
 
@@ -1229,6 +1271,30 @@ export default function AdminDashboard({ myUid, onBack }) {
                   <Mic size={12} color={u.aiVoiceNoteEnabled ? "#1DA1F2" : t.textMuted} />
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: u.aiVoiceNoteEnabled ? "#1DA1F2" : t.textMuted }}>{u.aiVoiceNoteEnabled ? "AI Voice Note" : "Voice Note Off"}</span>
                 </div>
+                <div onClick={(e) => { e.stopPropagation(); toggleUserAiFeature(u.uid, "podcast", !!u.aiFeatures?.podcast); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.aiFeatures?.podcast ? "#E5F0FF" : t.bg, border: `1px solid ${u.aiFeatures?.podcast ? "#1DA1F2" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
+                  <Radio size={12} color={u.aiFeatures?.podcast ? "#1DA1F2" : t.textMuted} />
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: u.aiFeatures?.podcast ? "#1DA1F2" : t.textMuted }}>{u.aiFeatures?.podcast ? "Podcast" : "No Podcast"}</span>
+                </div>
+                <div onClick={(e) => { e.stopPropagation(); toggleUserAiFeature(u.uid, "voiceReply", !!u.aiFeatures?.voiceReply); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.aiFeatures?.voiceReply ? "#E5F0FF" : t.bg, border: `1px solid ${u.aiFeatures?.voiceReply ? "#1DA1F2" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
+                  <Volume2 size={12} color={u.aiFeatures?.voiceReply ? "#1DA1F2" : t.textMuted} />
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: u.aiFeatures?.voiceReply ? "#1DA1F2" : t.textMuted }}>{u.aiFeatures?.voiceReply ? "Voice Reply" : "No V-Reply"}</span>
+                </div>
+                <input
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setUserDailyLimit(u.uid, "voiceNote", e.target.value)}
+                  value={u.aiLimits?.voiceNote ?? ""}
+                  placeholder="VN/day"
+                  inputMode="numeric"
+                  style={{ width: 64, fontSize: 10.5, padding: "4px 6px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.bg, color: t.text, outline: "none" }}
+                />
+                <input
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setUserDailyLimit(u.uid, "voiceReply", e.target.value)}
+                  value={u.aiLimits?.voiceReply ?? ""}
+                  placeholder="VR/day"
+                  inputMode="numeric"
+                  style={{ width: 64, fontSize: 10.5, padding: "4px 6px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.bg, color: t.text, outline: "none" }}
+                />
                 {u.aiApproved && (
                   <div onClick={(e) => { e.stopPropagation(); resetSingleAIAccess(u.uid); }} title="Reset AI: revoke access and delete AI chats" style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 8, background: "#FFE5E5", border: "1px solid #FF3B30", cursor: "pointer", flexShrink: 0 }}>
                     <RefreshCw size={11} color="#FF3B30" />
@@ -1616,6 +1682,28 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
              </div>
 
+             {/* AI Podcast + Voice Reply master switches — OFF by default so users
+                 don't see these features until an admin enables them globally
+                 (or per-user via the directory). */}
+             <div onClick={() => { setSystemConfig({ aiPodcastEnabled: !(sysConfig?.aiPodcastEnabled === true) }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.aiPodcastEnabled === true ? t.primaryLight : "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginTop: 12, marginBottom: 12 }}>
+               <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.aiPodcastEnabled === true ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
+                 <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.aiPodcastEnabled === true ? 23 : 3, transition: "left 0.15s" }} />
+               </div>
+               <div>
+                 <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>AI Podcasts: {sysConfig?.aiPodcastEnabled === true ? "ENABLED for all" : "OFF (admin only)"}</div>
+                 <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>When OFF, the AI Podcast option is hidden for users. Enable globally, or grant per-user in the directory.</div>
+               </div>
+             </div>
+             <div onClick={() => { setSystemConfig({ aiVoiceReplyEnabled: !(sysConfig?.aiVoiceReplyEnabled === true) }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.aiVoiceReplyEnabled === true ? t.primaryLight : "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginBottom: 12 }}>
+               <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.aiVoiceReplyEnabled === true ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
+                 <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sysConfig?.aiVoiceReplyEnabled === true ? 23 : 3, transition: "left 0.15s" }} />
+               </div>
+               <div>
+                 <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>AI Voice Replies: {sysConfig?.aiVoiceReplyEnabled === true ? "ENABLED for all" : "OFF (admin only)"}</div>
+                 <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 1.4 }}>When OFF, voice replies are hidden. Enable globally, or grant per-user in the directory. Voice replies still require Master Voice Features ON.</div>
+               </div>
+             </div>
+
              {/* Allow all users to download AI voice replies as .mp3 voice notes */}
              <div onClick={() => { setSystemConfig({ allowVoiceDownload: !(sysConfig?.allowVoiceDownload === true) }, myUid); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: sysConfig?.allowVoiceDownload === true ? t.primaryLight : "transparent", border: `1px solid ${t.border}`, cursor: "pointer", marginBottom: 12 }}>
                <div style={{ width: 46, height: 26, borderRadius: 13, background: sysConfig?.allowVoiceDownload === true ? t.primary : t.border, position: "relative", flexShrink: 0 }}>
@@ -1629,9 +1717,29 @@ export default function AdminDashboard({ myUid, onBack }) {
                    When ON, every user gets a "Save" button on AI voice replies. Admins can always download regardless of this switch.
                  </div>
                </div>
-             </div>
+              </div>
 
-             {/* Fish Audio API key — stored server-side (Worker reads it from Firestore), never shipped to clients */}
+              {/* Storage provider switch: Cloudinary <-> Supabase. Admin must type the
+                  confirmation word "change" to flip the active provider. */}
+              <div style={{ padding: "12px 14px", borderRadius: 10, border: `1px solid ${t.border}`, marginBottom: 14, background: t.bg }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 4 }}>Media Storage Provider</div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 8, lineHeight: 1.4 }}>
+                  Currently using <strong>{activeProvider === "cloudinary" ? "Cloudinary" : "Supabase"}</strong>. To switch to {activeProvider === "cloudinary" ? "Supabase" : "Cloudinary"}, type <code style={{ background: t.surface, padding: "1px 5px", borderRadius: 4 }}>change</code> below and press Switch.
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    value={providerInput}
+                    onChange={(e) => setProviderInput(e.target.value)}
+                    placeholder='type "change"'
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.surface, color: t.text, fontSize: 13, outline: "none" }}
+                  />
+                  <div onClick={toggleStorageProvider} style={{ padding: "8px 16px", borderRadius: 8, background: t.primary, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center" }}>
+                    Switch
+                  </div>
+                </div>
+              </div>
+
+              {/* Fish Audio API key — stored server-side (Worker reads it from Firestore), never shipped to clients */}
              <div style={{ padding: "12px 14px", borderRadius: 10, border: `1px solid ${t.border}`, marginBottom: 14, background: t.bg }}>
                <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Fish Audio API Key</div>
                <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 8, lineHeight: 1.4 }}>

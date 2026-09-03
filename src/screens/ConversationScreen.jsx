@@ -3805,7 +3805,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 </div>
                 {sysConfig?.global_voice_enabled !== false && (
                   <div onClick={() => { closeAttach(); setShowYNote(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
-                    <Mic size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Send Y Mizrachi Voice Note</span>
+                    <Mic size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Send cloned voice note</span>
                   </div>
                 )}
                 {!(parentalBlockedType("image") && parentalBlockedType("video")) && (
