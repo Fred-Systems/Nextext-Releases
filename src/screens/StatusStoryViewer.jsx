@@ -9,7 +9,7 @@ import { getOrCreateDirectChat, sendTextMessage } from "../firebase/chats";
 import Avatar from "../components/Avatar";
 import ZoomableMedia from "../components/ZoomableMedia";
 import { getProxyMediaUrl } from "../media/mediaProxy";
-import { getTrackPreviewUrl } from "../media/musicCatalog";
+import { getPreviewUrl, getYoutubeVideoId } from "../media/musicService";
 import HlsVideo from "../components/HlsVideo";
 import { getSignedUrl } from "../supabase/media";
 import NextextNative from "../native/nextextNative";
@@ -17,6 +17,37 @@ import { Capacitor } from "@capacitor/core";
 
 const DEFAULT_DURATION_MS = 5000;
 const QUICK_REACTION_EMOJIS = ["❤️", "😂", "😮", "🔥", "👍", "🙏"];
+
+// Lazily inject + wait for the YouTube IFrame Player API. Resolves with the
+// global `YT` namespace once `YT.Player` is available, or `null` if YouTube
+// can't be reached in the WebView (so callers can fail gracefully).
+function ensureYouTubeAPI() {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && window.YT && window.YT.Player) {
+      resolve(window.YT);
+      return;
+    }
+    try {
+      if (!document.getElementById("youtube-iframe-api")) {
+        const tag = document.createElement("script");
+        tag.id = "youtube-iframe-api";
+        tag.src = "https://www.youtube.com/iframe_api";
+        document.head.appendChild(tag);
+      }
+    } catch { /* can't inject — resolve null below */ }
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries++;
+      if (typeof window !== "undefined" && window.YT && window.YT.Player) {
+        clearInterval(iv);
+        resolve(window.YT);
+      } else if (tries > 100) {
+        clearInterval(iv);
+        resolve(null);
+      }
+    }, 100);
+  });
+}
 
 // Renders movable, colored text stickers (stored on a status) positioned over
 // the media. `x`/`y` are relative (0..1) within the media container.
@@ -135,6 +166,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     if (videoRef.current) { try { videoRef.current.pause(); } catch { /* noop */ } }
     if (bgAudioRef.current) { try { bgAudioRef.current.pause(); } catch { /* noop */ } }
     if (bgMusicRef.current) { try { bgMusicRef.current.pause(); } catch { /* noop */ } }
+    if (ytPlayerRef.current) { try { ytPlayerRef.current.destroy(); } catch { /* noop */ } ytPlayerRef.current = null; }
     if (onExit) onExit();
     else onClose?.();
   }, [onExit, onClose]);
@@ -148,6 +180,9 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const voiceRef = useRef(null);
   const bgAudioRef = useRef(null);
   const bgMusicRef = useRef(null);
+  // Zemer background music plays via the YouTube IFrame API in a hidden 1x1 player.
+  const ytMountRef = useRef(null);
+  const ytPlayerRef = useRef(null);
   const replyInputRef = useRef(null);
   const initialAnimDoneRef = useRef(false);
   const durationRef = useRef(0);
@@ -276,6 +311,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     if (videoRef.current) { try { videoRef.current.pause(); videoRef.current.currentTime = 0; } catch { /* noop */ } }
     if (bgAudioRef.current) { try { bgAudioRef.current.pause(); bgAudioRef.current.currentTime = 0; } catch { /* noop */ } }
     if (bgMusicRef.current) { try { bgMusicRef.current.pause(); bgMusicRef.current.currentTime = 0; } catch { /* noop */ } }
+    if (ytPlayerRef.current) { try { ytPlayerRef.current.destroy(); } catch { /* noop */ } ytPlayerRef.current = null; }
     setIdx(initialIndex);
     initializedRef.current = true;
   }, [ownerUid]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -557,17 +593,75 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     return () => { audio.pause(); audio.currentTime = 0; };
   }, [current?.bgAudioURL, current?.bgAudioVolume, idx, paused]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Background music (Status Builder): stream the source's preview clip in sync
-  // with the active slide. Reset to start/volume on each slide change and respect
-  // the viewer's paused state. Cleanup stops + unloads so no player runs on.
+  // Background music (Status Builder). Apple streams a 30s <audio> preview; Zemer
+  // plays via the YouTube IFrame API (audio-only, hidden 1x1 player). Both reset to
+  // start/volume on each slide change and respect the viewer's paused state; cleanup
+  // stops + unloads so no player keeps running after advance/close.
+  const bgMusic = current?.backgroundMusic;
+  const bgMusicIsApple = bgMusic?.provider === "apple" || bgMusic?.source === "apple";
+  const bgMusicIsZemer = bgMusic?.provider === "zemer" || bgMusic?.source === "zemer";
+
+  // ── Apple: <audio> preview (30s AAC) ──
   useEffect(() => {
-    if (!current?.backgroundMusic?.previewUrl || !bgMusicRef.current) return;
+    if (!bgMusicIsApple || !bgMusic?.previewUrl || !bgMusicRef.current) return;
     const audio = bgMusicRef.current;
-    audio.volume = current.backgroundMusic.volume ?? 1;
-    try { audio.currentTime = current.backgroundMusic.start || 0; } catch { /* not seekable yet */ }
+    audio.volume = bgMusic.volume != null ? bgMusic.volume : 1;
+    try { audio.currentTime = bgMusic.start || 0; } catch { /* not seekable yet */ }
     if (!paused) audio.play().catch(() => {});
     return () => { audio.pause(); try { audio.currentTime = 0; } catch { /* noop */ } };
-  }, [current?.backgroundMusic?.previewUrl, current?.backgroundMusic?.start, current?.backgroundMusic?.volume, idx, paused]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bgMusicIsApple, bgMusic?.previewUrl, bgMusic?.start, bgMusic?.volume, idx, paused]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Zemer: YouTube IFrame player (audio only) ──
+  useEffect(() => {
+    if (!bgMusicIsZemer || !bgMusic) return;
+    const videoId = getYoutubeVideoId(bgMusic);
+    if (!videoId || !ytMountRef.current) return;
+    let cancelled = false;
+    let player = null;
+    const vol = bgMusic.volume != null ? bgMusic.volume : 1;
+    ensureYouTubeAPI().then((YT) => {
+      if (cancelled || !YT || !ytMountRef.current) return;
+      try {
+        player = new YT.Player(ytMountRef.current, {
+          videoId,
+          playerVars: { controls: 0, disablekb: 1, autoplay: paused ? 0 : 1, start: Math.floor(bgMusic.start || 0) },
+          events: {
+            onReady: (e) => {
+              if (cancelled) return;
+              try {
+                e.target.mute(); // audio only — we don't show the video
+                e.target.setVolume(Math.round(vol * 100));
+                if (!paused) e.target.playVideo();
+              } catch { /* noop */ }
+            },
+          },
+        });
+        ytPlayerRef.current = player;
+      } catch { /* YT failed to init — fail gracefully */ }
+    });
+    return () => {
+      cancelled = true;
+      try { if (player && player.destroy) player.destroy(); } catch { /* noop */ }
+      ytPlayerRef.current = null;
+    };
+  }, [bgMusicIsZemer, bgMusic?.videoId, bgMusic?.start, idx]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Zemer: follow the viewer's paused state without re-creating the player.
+  useEffect(() => {
+    const p = ytPlayerRef.current;
+    if (!bgMusicIsZemer || !p || !p.playVideo) return;
+    try {
+      if (paused) p.pauseVideo();
+      else p.playVideo();
+    } catch { /* noop */ }
+  }, [bgMusicIsZemer, paused]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Zemer: follow the viewer's volume state.
+  useEffect(() => {
+    const p = ytPlayerRef.current;
+    if (!bgMusicIsZemer || !p || !p.setVolume) return;
+    try { p.setVolume(Math.round((bgMusic?.volume != null ? bgMusic.volume : 1) * 100)); } catch { /* noop */ }
+  }, [bgMusicIsZemer, bgMusic?.volume]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendReply = async (text) => {
     if (!text?.trim() || !myUid || !ownerUid || isOwner) return;
@@ -684,7 +778,9 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 20px 40px", boxSizing: "border-box", overflow: "hidden" }}>
         {current.bgAudioURL && <audio ref={bgAudioRef} src={current.bgAudioURL} loop />}
-        {current.backgroundMusic?.previewUrl && <audio ref={bgMusicRef} src={getTrackPreviewUrl(current.backgroundMusic)} loop />}
+        {bgMusicIsApple && bgMusic?.previewUrl && <audio ref={bgMusicRef} src={getPreviewUrl(bgMusic)} loop />}
+        {/* Hidden offscreen mount for the Zemer (YouTube) background-music player */}
+        <div ref={ytMountRef} style={{ position: "absolute", width: 1, height: 1, left: -9999, top: -9999, overflow: "hidden", opacity: 0, pointerEvents: "none" }} />
         {(current.state === "queued" || current.state === "processing") ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, color: "#fff" }}>
             <RefreshCw size={28} color="#fff" style={{ animation: "nextext-spin 1s linear infinite" }} />

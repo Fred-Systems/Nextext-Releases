@@ -555,6 +555,32 @@ export default function JewishStatusesTab({ onStoryViewerChange }) {
         renderLayout()
       )}
 
+      {/* Attribution footer */}
+      <div
+        style={{
+          fontSize: 11,
+          color: t.textMuted,
+          textAlign: "center",
+          paddingTop: 14,
+          maxWidth: 320,
+          margin: "0 auto",
+          lineHeight: 1.4,
+        }}
+      >
+        Jewish Statuses is powered by content from JewishStatus and YidStatus.
+        <br />
+        A big thank-you to both platforms and the creators who share their content with the Jewish community.
+        <br />
+        Visit{" "}
+        <a href="https://jewishstatus.com" target="_blank" rel="noopener noreferrer" style={{ color: t.textMuted, textDecoration: "underline" }}>
+          JewishStatus
+        </a>{" "}
+        · Visit{" "}
+        <a href="https://yidstatus.com" target="_blank" rel="noopener noreferrer" style={{ color: t.textMuted, textDecoration: "underline" }}>
+          YidStatus
+        </a>
+      </div>
+
       {viewerIndex != null && creators[viewerIndex] && (
         <StoryViewer
           creators={creators}

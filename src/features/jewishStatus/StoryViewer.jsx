@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, ChevronRight } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Play, Pause, SkipForward } from "lucide-react";
 import { useTheme } from "../../theme/ThemeContext";
 
 const DEFAULT_DURATION_MS = 5000;
@@ -199,6 +199,108 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
   const audioRef = useRef(null);
   const [capExpanded, setCapExpanded] = useState(false);
 
+  // Viewer controls state.
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [rate, setRate] = useState(1);
+  const SPEEDS = [0.5, 1, 1.5, 2];
+
+  // Refs that always point at the latest player/gesture state so the
+  // async helper functions below operate on current values.
+  const playerRef = useRef(player);
+  playerRef.current = player;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const panRef = useRef(pan);
+  panRef.current = pan;
+  const pinchRef = useRef(null);
+  const lastTapRef = useRef(0);
+
+  // Apply playback rate to any active media element.
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.playbackRate = rate;
+    if (audioRef.current) audioRef.current.playbackRate = rate;
+  }, [rate, player.post]);
+
+  const cycleRate = () => {
+    setRate((r) => {
+      const i = SPEEDS.indexOf(r);
+      return SPEEDS[(i + 1) % SPEEDS.length];
+    });
+  };
+
+  // Jump to the next creator's first post (not just the next post).
+  const skipToNextCreator = () => {
+    const startCi = playerRef.current.ci;
+    const step = () => {
+      const p = playerRef.current;
+      if (p.ci !== startCi) return;
+      if (p.ci >= creators.length - 1 && p.pi >= p.posts.length - 1) {
+        p.advance();
+        return;
+      }
+      p.advance();
+      requestAnimationFrame(step);
+    };
+    step();
+  };
+
+  // Seek the media element by a relative number of seconds.
+  const seekRelative = (delta) => {
+    const el =
+      playerRef.current.post?.kind === "audio" ? audioRef.current : videoRef.current;
+    if (el && el.duration && isFinite(el.duration)) {
+      el.currentTime = Math.max(0, Math.min(el.duration, el.currentTime + delta));
+    }
+  };
+
+  // Pinch-to-zoom gesture handlers (two-finger distance).
+  const onTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      const [a, b] = [e.touches[0], e.touches[1]];
+      pinchRef.current = {
+        startDist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
+        startZoom: zoomRef.current,
+        startPan: { ...panRef.current },
+        startMid: { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
+      };
+    }
+  };
+
+  const onTouchMove = (e) => {
+    const p = pinchRef.current;
+    if (!p || e.touches.length !== 2) return;
+    if (e.cancelable) e.preventDefault();
+    const [a, b] = [e.touches[0], e.touches[1]];
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const nz = Math.max(1, Math.min(4, p.startZoom * (dist / p.startDist)));
+    setZoom(nz);
+    const mid = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+    setPan({
+      x: p.startPan.x + (mid.x - p.startMid.x),
+      y: p.startPan.y + (mid.y - p.startMid.y),
+    });
+  };
+
+  const onTouchEnd = (e) => {
+    if (e.touches.length < 2) pinchRef.current = null;
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    }
+    lastTapRef.current = now;
+  };
+
+  const mediaTouchProps = { onTouchStart, onTouchMove, onTouchEnd };
+  const mediaTransform = `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`;
+  const withZoom = (base) => ({
+    ...base,
+    transform: mediaTransform,
+    transformOrigin: "center center",
+    touchAction: "none",
+  });
+
   // Pause/resume the media element to match the player's paused state.
   useEffect(() => {
     const v = videoRef.current;
@@ -363,7 +465,8 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
             poster={post.thumbnailUrl || undefined}
             autoPlay
             playsInline
-            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            style={withZoom({ width: "100%", height: "100%", objectFit: "contain" })}
+            {...mediaTouchProps}
             onTimeUpdate={player.onVideoTimeUpdate}
             onEnded={() => player.handleMediaEnded()}
             onError={() => player.setMediaError(true)}
@@ -372,11 +475,12 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
           <img
             src={post.mediaUrl}
             alt=""
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+            style={withZoom({ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" })}
+            {...mediaTouchProps}
             onError={() => player.setMediaError(true)}
           />
         ) : kind === "audio" ? (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, color: "#fff" }}>
+          <div {...mediaTouchProps} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, color: "#fff" }}>
             <div style={{ fontSize: 40 }}>🎵</div>
             <audio
               key={post.id}
@@ -391,7 +495,8 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
           </div>
         ) : (
           <div
-            style={{
+            {...mediaTouchProps}
+            style={withZoom({
               color: "#fff",
               fontWeight: 700,
               textAlign: "center",
@@ -402,7 +507,7 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
               overflowY: "auto",
               maxHeight: "100%",
               fontSize: Math.max(28, Math.min(64, Math.round(200 / Math.max(1, (post.text || " ").length / 3)))),
-            }}
+            })}
           >
             {post.text || post.caption || "No text"}
           </div>
@@ -527,6 +632,95 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
           <ChevronRight size={18} color="#fff" />
         </div>
       )}
+
+      {/* Viewer control bar (bottom-center, above the caption) */}
+      {(() => {
+        const ctrlBtn = {
+          width: 38,
+          height: 38,
+          borderRadius: "50%",
+          background: "rgba(0,0,0,0.55)",
+          border: "1px solid rgba(255,255,255,0.25)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          color: "#fff",
+          pointerEvents: "auto",
+        };
+        return (
+          <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: caption ? 100 : 16,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 10,
+          zIndex: 14,
+          pointerEvents: "none",
+        }}
+      >
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            player.setPaused(!player.paused);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          style={ctrlBtn}
+        >
+          {player.paused ? <Play size={18} color="#fff" /> : <Pause size={18} color="#fff" />}
+        </div>
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            seekRelative(-10);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          style={{ ...ctrlBtn, fontSize: 11, fontWeight: 700 }}
+        >
+          -10s
+        </div>
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            skipToNextCreator();
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          style={ctrlBtn}
+        >
+          <SkipForward size={18} color="#fff" />
+        </div>
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            seekRelative(10);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          style={{ ...ctrlBtn, fontSize: 11, fontWeight: 700 }}
+        >
+          +10s
+        </div>
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            cycleRate();
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          style={{ ...ctrlBtn, fontSize: 12, fontWeight: 700 }}
+        >
+          {rate}x
+        </div>
+      </div>
+        );
+      })()}
     </div>,
     document.body
   );

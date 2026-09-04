@@ -1081,7 +1081,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   // un-delete it (clear deletedForSelf) so it stays readable and re-surfaces in
   // the list. getOrCreateDirectChat already performs this clear for direct chats.
   useEffect(() => {
-    if (isGroup || !otherUid || otherUid === myUid) return;
+    // Self-chats (otherUid === myUid) must also be created/resolved here so the
+    // doc exists before the first send (the messages `create` rule requires a
+    // live participants array). getOrCreateDirectChat already builds the
+    // [myUid, myUid] participant array for self-chats.
+    if (isGroup || !otherUid) return;
     getOrCreateDirectChat(myUid, otherUid).catch(() => {});
   }, [chatId, myUid, otherUid, isGroup]);
   const { contacts: convoContacts } = useContacts(myUid);
@@ -2599,6 +2603,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setVcBlob(null); setVcUrl(null); setVcDuration(0); setVcTranscript(""); setVcError("");
   };
   const vcSend = async () => {
+    // GENERATION ONLY. This NEVER sends the note — it only transcribes,
+    // re-synthesizes, and stashes a preview (genBlob/genUrl). The only path
+    // that sends is vcConfirmSend (triggered by the "Send" button). Do not
+    // call vcConfirmSend from here, or the cloned note will auto-send.
     if (!vcBlob || vcSending) return;
     // Enforce global + per-user daily cloned-voice-note limit before sending.
     const sys = sysConfig;

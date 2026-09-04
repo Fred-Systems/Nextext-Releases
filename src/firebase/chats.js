@@ -80,7 +80,13 @@ function buildTextPayload(sender, text, options, senderUid) {
 async function sendTextMessageRaw(chatId, senderUid, text, otherParticipants, options) {
   const sender = await snapshotSenderName(senderUid);
   if (otherParticipants && otherParticipants.length === 1) {
-    try { getOrCreateDirectChat(senderUid, otherParticipants[0]); } catch { /* non-fatal */ }
+    // MUST await: the chat doc (with its `participants` array) must exist before
+    // we write into its messages subcollection, or the messages `create` rule's
+    // isChatParticipant(chatId) check fails with "Missing or insufficient
+    // permissions" (the chat doc is null → get(...).data.participants throws).
+    // This is the exact path that broke self-chats (senderUid === the sole
+    // otherParticipant), where no earlier code had created the doc yet.
+    try { await getOrCreateDirectChat(senderUid, otherParticipants[0]); } catch { /* non-fatal */ }
   }
   await addDoc(collection(db, "chats", chatId, "messages"), buildTextPayload(sender, text, options, senderUid));
   const { scheduledFor = null } = options || {};

@@ -451,24 +451,25 @@ export default function AIChatScreen({ myUid, onBack }) {
           if (r && r.trim()) { raw = r; break; }
         } catch (e) { lastErr = e; }
       }
-      // Graceful fallback: if the model returned empty (or errored) after retries,
-      // synthesize a simple alternating script so the podcast never hard-fails.
+      // NOTE: we deliberately do NOT synthesize a fake fallback script here. If
+      // the model returns empty / errors / or returns a safety refusal (e.g.
+      // "I'm sorry, but I can't help with that"), we surface that as a clear
+      // error instead of handing it to the TTS engine and producing a 1-second
+      // clip of the refusal.
       if (!raw || !raw.trim()) {
-        const names = voices.map((id) => availableVoices.find((x) => x.id === id)?.name || id);
-        const topic = podcastMode === "directed" && podcastTopic.trim() ? podcastTopic.trim() : "something we both care about";
-        const fallbackLines = [
-          `Let's dive into ${topic}.`,
-          names[1] ? `I've been wanting to talk about that — it's been on my mind.` : `I've been wanting to talk about that.`,
-          `Here's how I see it.`,
-          names[1] ? `I hear you, but there's another side worth considering.` : `Tell me more.`,
-          `[laughing] Okay, fair point!`,
-          names[1] ? `Let's agree to keep exploring this.` : `Let's keep going.`,
-        ];
-        raw = JSON.stringify(fallbackLines.map((l, i) => ({ voiceId: voices[i % voices.length], text: l })));
-        if (lastErr) console.warn("[podcast] using fallback script:", lastErr?.message);
+        throw new Error(lastErr?.message || "The AI didn't return a podcast script. Try a different topic or angle.");
+      }
+      const lines = parsePodcastScript(raw, voices);
+      // parsePodcastScript only yields multiple turns when the model actually
+      // emitted a JSON array. If it returned plain text (a refusal or a non-JSON
+      // reply), it collapses to a single entry whose text IS the raw reply — do
+      // not synthesize that as the podcast. The full script (all turns) is
+      // synthesized only when the model returned a real array.
+      const modelReturnedScript = lines.length > 1 || (lines.length === 1 && /\[[\s\S]*\]/.test(raw));
+      if (!modelReturnedScript) {
+        throw new Error("The AI returned a reply instead of a podcast script (it may have refused the topic). Try a different topic or angle.");
       }
       setPodcastStatus("Synthesizing voices…");
-      const lines = parsePodcastScript(raw || "", voices);
       const buffers = [];
       let okTurns = 0;
       for (let i = 0; i < lines.length; i++) {

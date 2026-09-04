@@ -595,6 +595,40 @@ export default function AdminDashboard({ myUid, onBack }) {
     updateJewish({ blockedCreators: list.filter((x) => x !== c) });
   };
 
+  // ── Music admin config (lives under globalSettings.music) ──
+  const [whitelistType, setWhitelistType] = useState("artist");
+  const [whitelistValue, setWhitelistValue] = useState("");
+  const updateMusic = (patch) => {
+    updateGlobalSettings({ music: { ...(settings?.music || {}), ...patch } }, myUid);
+  };
+  const musicProvider = settings?.music?.provider || "apple";
+  const setMusicProvider = (p) => updateMusic({ provider: p });
+  const appleEnabled = settings?.music?.providers?.apple?.enabled !== false;
+  const toggleAppleEnabled = () =>
+    updateMusic({ providers: { ...(settings?.music?.providers || {}), apple: { ...(settings?.music?.providers?.apple || {}), enabled: !appleEnabled } } });
+  const appleWhitelist = settings?.music?.apple?.whitelist || { mode: "all", rules: [] };
+  const updateAppleWhitelist = (wl) => updateMusic({ apple: { ...(settings?.music?.apple || {}), whitelist: wl } });
+  const toggleAppleWhitelistMode = () =>
+    updateAppleWhitelist({ ...appleWhitelist, mode: appleWhitelist.mode === "whitelist" ? "all" : "whitelist" });
+  const addWhitelistRule = () => {
+    const v = whitelistValue.trim();
+    if (!v) return;
+    const rule = { id: `rule_${Date.now()}_${Math.floor(Math.random() * 1e6)}`, type: whitelistType, value: v, enabled: true };
+    updateAppleWhitelist({ ...appleWhitelist, rules: [...(appleWhitelist.rules || []), rule] });
+    setWhitelistValue("");
+  };
+  const toggleWhitelistRule = (id) => {
+    const rules = (appleWhitelist.rules || []).map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r));
+    updateAppleWhitelist({ ...appleWhitelist, rules });
+  };
+  const deleteWhitelistRule = (id) => {
+    const rules = (appleWhitelist.rules || []).filter((r) => r.id !== id);
+    updateAppleWhitelist({ ...appleWhitelist, rules });
+  };
+  const downloadsEnabled = settings?.music?.downloads?.enabled === true;
+  const toggleDownloads = () =>
+    updateMusic({ downloads: { ...(settings?.music?.downloads || {}), enabled: !downloadsEnabled } });
+
   const [aiResetStatus, setAiResetStatus] = useState("");
 
   const toggleUserAIAccess = async (uid, currentVal) => {
@@ -1027,6 +1061,36 @@ export default function AdminDashboard({ myUid, onBack }) {
                         setSelectedUser((prev) => ({ ...prev, jewishStatusesOverride: val }));
                       } catch (e) {
                         setError("Couldn't update override: " + e.message);
+                      }
+                    }}
+                    style={{ flex: 1, textAlign: "center", padding: "10px 6px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text, border: `1px solid ${active ? t.primary : t.border}` }}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Apple Music Access</div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Per-user Apple Music access. "Inherit" follows the global setting above; the other options force it on or off for this account only.
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[["inherit", "Inherit"], ["enabled", "Enabled"], ["disabled", "Disabled"]].map(([val, label]) => {
+                const cur = selectedUser.musicAccess?.apple || "inherit";
+                const active = cur === val;
+                return (
+                  <div
+                    key={val}
+                    onClick={() => {
+                      setError("");
+                      try {
+                        updateDoc(doc(db, "users", selectedUser.uid), { "musicAccess.apple": val });
+                        setSelectedUser((prev) => ({ ...prev, musicAccess: { ...(prev?.musicAccess || {}), apple: val } }));
+                      } catch (e) {
+                        setError("Couldn't update Apple Music access: " + e.message);
                       }
                     }}
                     style={{ flex: 1, textAlign: "center", padding: "10px 6px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text, border: `1px solid ${active ? t.primary : t.border}` }}
@@ -3097,22 +3161,120 @@ export default function AdminDashboard({ myUid, onBack }) {
             </div>
           </div>
 
-          {/* Background Music Downloads (global toggle, separate from Jewish Statuses) */}
+          {/* ── Music admin section (lives under globalSettings.music) ── */}
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <Volume2 size={18} color={t.primary} />
-              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Background Music Downloads</span>
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Music</span>
             </div>
-            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
-              Allow users to download the licensed 30-second music preview to their device from the status composer. This is separate from the status feature and from Jewish Statuses. Global default, with per-user overrides (see a user's detail page).
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
+              Choose the active background-music provider for status posts. "Disabled" turns music off for everyone.
             </div>
-            <div onClick={() => updateGlobalSettings({ musicDownloads: { ...(settings?.musicDownloads || {}), enabled: !(settings?.musicDownloads?.enabled === true) } }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.musicDownloads?.enabled === true ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
-              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.musicDownloads?.enabled === true ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.musicDownloads?.enabled === true ? 23 : 3, transition: "left 0.15s" }} />
+
+            {/* Active Provider 3-way selector */}
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, marginBottom: 6 }}>Active Provider</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[["disabled", "Disabled"], ["zemer", "Zemer"], ["apple", "Apple"]].map(([key, label]) => (
+                <div
+                  key={key}
+                  onClick={() => setMusicProvider(key)}
+                  style={{ flex: 1, textAlign: "center", padding: "11px 8px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${musicProvider === key ? t.primary : t.border}`, background: musicProvider === key ? t.primary : t.bg, color: musicProvider === key ? "#fff" : t.text }}
+                >
+                  {label}
+                </div>
+              ))}
+            </div>
+
+            {/* Zemer note (always present) */}
+            <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 10, background: t.bg, border: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: t.text, marginBottom: 4 }}>Zemer</div>
+              <div style={{ fontSize: 12, color: t.textMuted, lineHeight: 1.5 }}>
+                Zemer search uses search.zemer.io and playback is via YouTube embeds. No extra toggles required.
               </div>
-              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.musicDownloads?.enabled === true ? "#fff" : t.text }}>
-                {settings?.musicDownloads?.enabled === true ? "MUSIC DOWNLOADS ON" : "MUSIC DOWNLOADS OFF"}
-              </span>
+            </div>
+
+            {/* Apple settings (always present) */}
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: t.text, marginBottom: 6 }}>Apple Music</div>
+              <div onClick={toggleAppleEnabled} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: appleEnabled ? "#34C759" : t.primaryLight, cursor: "pointer", marginBottom: 8 }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: appleEnabled ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: appleEnabled ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: appleEnabled ? "#fff" : t.text }}>
+                  {appleEnabled ? "APPLE MUSIC ACCESS ON" : "APPLE MUSIC ACCESS OFF"}
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                Per-user Apple access overrides live on each user's detail page (Apple Music Access selector).
+              </div>
+
+              {/* Apple Search Whitelist */}
+              <div style={{ fontWeight: 600, fontSize: 13, color: t.text, margin: "14px 0 6px" }}>Apple Search Whitelist</div>
+              <div onClick={toggleAppleWhitelistMode} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: appleWhitelist.mode === "whitelist" ? "#34C759" : t.primaryLight, cursor: "pointer", marginBottom: 8 }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: appleWhitelist.mode === "whitelist" ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: appleWhitelist.mode === "whitelist" ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: appleWhitelist.mode === "whitelist" ? "#fff" : t.text }}>
+                  {appleWhitelist.mode === "whitelist" ? "WHITELIST ONLY" : "ALL RESULTS"}
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+                {appleWhitelist.mode === "whitelist"
+                  ? `Whitelist mode ON — ${((appleWhitelist.rules || []).filter((r) => r.enabled !== false)).length} enabled rule(s). Only matching tracks appear in Apple search.`
+                  : `Whitelist mode OFF — all Apple search results are shown (${(appleWhitelist.rules || []).length} rule(s) defined but inactive).`}
+              </div>
+
+              {/* Add rule form */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                <select value={whitelistType} onChange={(e) => setWhitelistType(e.target.value)} style={{ padding: "9px 8px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.bg, color: t.text, cursor: "pointer" }}>
+                  {["artist", "album", "track", "genre", "keyword", "artistId", "trackId"].map((tp) => (
+                    <option key={tp} value={tp}>{tp}</option>
+                  ))}
+                </select>
+                <input
+                  value={whitelistValue}
+                  onChange={(e) => setWhitelistValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") addWhitelistRule(); }}
+                  placeholder={whitelistType.endsWith("Id") ? "ID" : "Value"}
+                  style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.bg, color: t.text, outline: "none" }}
+                />
+                <button onClick={addWhitelistRule} style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Add</button>
+              </div>
+
+              {/* Rule list */}
+              <div>
+                {((appleWhitelist.rules || []).length === 0) && (
+                  <div style={{ fontSize: 12, color: t.textMuted }}>No rules yet.</div>
+                )}
+                {(appleWhitelist.rules || []).map((r) => (
+                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: t.bg, border: `1px solid ${t.border}`, marginTop: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: t.text, fontWeight: 600 }}>{r.type}</div>
+                      <div style={{ fontSize: 12, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.value}</div>
+                    </div>
+                    <div onClick={() => toggleWhitelistRule(r.id)} style={{ padding: "5px 9px", borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: "pointer", background: r.enabled !== false ? "#E5F9E7" : t.border, color: r.enabled !== false ? "#28A745" : t.textMuted }}>
+                      {r.enabled !== false ? "ON" : "OFF"}
+                    </div>
+                    <Trash2 size={15} color="#FF3B30" onClick={() => deleteWhitelistRule(r.id)} style={{ cursor: "pointer", flexShrink: 0 }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Music Downloads */}
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: t.text, marginBottom: 6 }}>Music Downloads</div>
+              <div onClick={toggleDownloads} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: downloadsEnabled ? "#34C759" : t.primaryLight, cursor: "pointer", marginBottom: 8 }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: downloadsEnabled ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: downloadsEnabled ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 14, color: downloadsEnabled ? "#fff" : t.text }}>
+                  {downloadsEnabled ? "DOWNLOADS ON" : "DOWNLOADS OFF"}
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: t.textMuted, lineHeight: 1.5 }}>
+                This only grants the <em>permission</em>. Both Apple and Zemer forbid downloading their streams (Apple preview terms; YouTube ToS), so the UI shows why a download isn't available per provider. Per-user overrides live on each user's detail page.
+              </div>
             </div>
           </div>
         </div>

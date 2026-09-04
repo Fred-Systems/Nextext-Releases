@@ -17,8 +17,9 @@ import Avatar from "../components/Avatar";
 import StatusStoryViewer from "./StatusStoryViewer";
 import { getMicrophoneStream } from "../media/microphone";
 import { base64ToBlob } from "../media/base64";
-import { useGlobalSettings, resolveMusicDownloadAllowed } from "../firebase/config-settings";
-import { searchMusic, fetchTrackBlob } from "../media/musicCatalog";
+import { useGlobalSettings } from "../firebase/config-settings";
+import { getActiveProvider, resolveMusicAccess, searchMusic, getPreviewUrl, resolveDownload } from "../media/musicService";
+import { fetchTrackBlob } from "../media/musicCatalog";
 import { getProxyMediaUrl, getVideoPosterUrl } from "../media/mediaProxy";
 import JewishStatusesTab from "../features/jewishStatus/JewishStatusesTab";
 
@@ -257,6 +258,10 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   // Admin can globally disable video thumbnails in the feed (shows a blank
   // placeholder instead of the heavy video stream). Defaults to ON.
   const showVideoThumbs = globalSettings?.show_video_thumbnails !== false;
+  // Active music provider + whether this account may use it (drives the Add Music
+  // button visibility and the composer's provider label).
+  const musicProviderActive = getActiveProvider(globalSettings);
+  const musicAccessAllowed = resolveMusicAccess(globalSettings, myUserDoc);
   // Live snapshot of this user's own doc (for per-user feature overrides).
   const [myUserDoc, setMyUserDoc] = useState(null);
   // Jewish Statuses tab visibility (mirrors the admin + per-user override logic).
@@ -527,11 +532,14 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   };
 
     const handleSelectMusic = (track) => {
-      // Store metadata ONLY — never an audio blob. The licensed preview URL is
-      // streamed on-device by the viewer. originalVolume captures the video's own
-      // volume so the "Mute original" toggle can restore it later.
+      // Store metadata ONLY — never an audio blob. The licensed preview URL (Apple)
+      // or YouTube videoId (Zemer) is streamed on-device by the viewer. Include
+      // `provider` and `videoId` so the viewer knows how to play the track.
+      const provider = track.source || musicProviderActive;
       setBgMusic({
         ...track,
+        provider,
+        videoId: track.videoId || null,
         start: 0,
         volume: 1,
         originalVolume: postMediaType === "video" ? (videoVolume / 100) : 1,
@@ -571,12 +579,14 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     const snapMuteOriginal = muteOriginal;
     const snapBgMusic = bgMusic
       ? {
+          provider: bgMusic.provider,
           trackId: bgMusic.trackId,
           title: bgMusic.title,
           artist: bgMusic.artist,
           album: bgMusic.album,
           artwork: bgMusic.artwork,
           previewUrl: bgMusic.previewUrl,
+          videoId: bgMusic.videoId || null,
           source: bgMusic.source,
           start: bgMusic.start,
           volume: bgMusic.volume,
@@ -2094,8 +2104,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
               </div>
             )}
 
-            {/* Background Music (iTunes preview streaming — metadata only, never an audio file) */}
-            {((postMode === "media" && postMedia) || postMode === "text") && (
+            {/* Background Music (metadata only — preview streamed on-device by the viewer) */}
+            {musicProviderActive !== "disabled" && musicAccessAllowed && ((postMode === "media" && postMedia) || postMode === "text") && (
               <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 10, background: t.bg, border: `1px solid ${t.border}` }}>
                 <div onClick={() => setMusicModalOpen(true)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: t.primary, fontSize: 13, fontWeight: 600 }}>
                   <Music size={16} /> Add Music
@@ -2111,6 +2121,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgMusic.title}</div>
                         <div style={{ fontSize: 12, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgMusic.artist}</div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: t.primary, marginTop: 2 }}>{bgMusic.provider === "apple" ? "🎵 Apple Music" : bgMusic.provider === "zemer" ? "🎵 Zemer" : ""}</div>
                       </div>
                       <div onClick={() => { const a = bgMusicChipAudioRef.current; if (a) { a.currentTime = bgMusic.start || 0; a.volume = bgMusic.volume ?? 1; a.play().catch(() => {}); } }} title="Preview" style={{ width: 32, height: 32, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
                         <Play size={14} color={t.primary} />
@@ -2188,6 +2199,7 @@ function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [playingId, setPlayingId] = useState(null);
+  const [searchProvider, setSearchProvider] = useState(null);
   const previewRef = useRef(null);
   const debounceRef = useRef(null);
 
@@ -2196,10 +2208,13 @@ function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
     if (!term) { setResults([]); setLoading(false); return; }
     setLoading(true); setError("");
     try {
-      const res = await searchMusic(term, { limit: 20 });
-      setResults(res || []);
-    } catch {
-      setError("Search failed. Please try again.");
+      const { provider, tracks } = await searchMusic(term, { globalSettings, userDoc, limit: 20 });
+      setSearchProvider(provider);
+      setResults(tracks || []);
+    } catch (e) {
+      // Surface the provider-specific error message (disabled / no access / unavailable)
+      // rather than silently substituting another source.
+      setError(e?.message || "Search failed. Please try again.");
       setResults([]);
     } finally {
       setLoading(false);
@@ -2219,16 +2234,22 @@ function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
   const playPreview = (track) => {
     const a = previewRef.current;
     if (!a) return;
+    // Zemer has no native preview URL; playback is via YouTube in the viewer.
+    const url = getPreviewUrl(track);
+    if (!url) return;
     if (playingId === track.trackId) { a.pause(); setPlayingId(null); return; }
-    a.src = track.previewUrl;
+    a.src = url;
     a.currentTime = 0;
     a.volume = 1;
     a.play().then(() => setPlayingId(track.trackId)).catch(() => setPlayingId(null));
   };
 
-  const downloadAllowed = resolveMusicDownloadAllowed(globalSettings, userDoc);
-
   const handleDownload = async (track) => {
+    // Gate every download through the service — it returns {allowed, reason}
+    // honoring both the admin toggle and the provider's own terms. Never call
+    // saveToNexTextFolder when the download isn't permitted.
+    const res = resolveDownload(globalSettings, userDoc, track);
+    if (!res.allowed) return;
     try {
       const blob = await fetchTrackBlob(track);
       if (!blob) return;
@@ -2247,33 +2268,46 @@ function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
           <Search size={16} color={t.textMuted} />
           <input autoFocus value={q} onChange={onChange} placeholder="Search songs, artists…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 14, color: t.text }} />
         </div>
+        {searchProvider && (
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: t.primary, marginBottom: 8 }}>
+            {searchProvider === "apple" ? "🎵 Apple Music" : searchProvider === "zemer" ? "🎵 Zemer" : ""}
+          </div>
+        )}
         <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
           {loading && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>Searching…</div>}
           {!loading && error && <div style={{ color: "#FF3B30", fontSize: 13, textAlign: "center", padding: 20 }}>{error}</div>}
           {!loading && !error && q.trim() && results.length === 0 && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No results.</div>}
           {!loading && !q.trim() && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>Search for a song to add as background music. Previews stream from the source; only metadata is stored with your status.</div>}
-          {results.map((track) => (
+          {results.map((track) => {
+            const previewUrl = getPreviewUrl(track);
+            const canPreview = !!previewUrl;
+            const dl = resolveDownload(globalSettings, userDoc, track);
+            return (
             <div key={track.trackId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", borderBottom: `1px solid ${t.border}` }}>
               {track.artwork ? (
                 <img src={track.artwork} alt="" style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover", flexShrink: 0, background: t.primaryLight }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
               ) : (
                 <div style={{ width: 44, height: 44, borderRadius: 8, background: t.primaryLight, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: t.primary }}>{(track.title || "?")[0]}</div>
               )}
-              <div style={{ flex: 1, minWidth: 0 }} onClick={() => playPreview(track)}>
+              <div style={{ flex: 1, minWidth: 0 }} onClick={() => canPreview && playPreview(track)}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.title}</div>
                 <div style={{ fontSize: 12, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.artist}{track.album ? ` · ${track.album}` : ""}</div>
               </div>
-              <div onClick={() => playPreview(track)} title="Preview" style={{ width: 34, height: 34, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-                {playingId === track.trackId ? <Pause size={16} color={t.primary} /> : <Play size={16} color={t.primary} />}
+              <div onClick={() => canPreview && playPreview(track)} title={canPreview ? "Preview" : "No preview"} style={{ width: 34, height: 34, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", opacity: canPreview ? 1 : 0.4, cursor: canPreview ? "pointer" : "default", flexShrink: 0 }}>
+                {canPreview ? (playingId === track.trackId ? <Pause size={16} color={t.primary} /> : <Play size={16} color={t.primary} />) : <Music size={16} color={t.textMuted} />}
               </div>
               <div onClick={() => onSelect(track)} style={{ padding: "7px 12px", borderRadius: 8, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 12.5, cursor: "pointer", flexShrink: 0 }}>Add</div>
-              {downloadAllowed && (
+              {dl.allowed && (
                 <div onClick={() => handleDownload(track)} title="Download preview to device" style={{ width: 34, height: 34, borderRadius: "50%", background: t.bg, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
                   <Download size={16} color={t.primary} />
                 </div>
               )}
+              {!dl.allowed && dl.reason && (
+                <div title={dl.reason} style={{ fontSize: 10.5, color: t.textMuted, maxWidth: 90, flexShrink: 0, lineHeight: 1.2 }}>{dl.reason}</div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
         <audio ref={previewRef} style={{ display: "none" }} onEnded={() => setPlayingId(null)} />
       </div>
