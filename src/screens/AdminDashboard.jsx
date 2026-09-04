@@ -603,6 +603,7 @@ export default function AdminDashboard({ myUid, onBack }) {
   };
   const musicProvider = settings?.music?.provider || "apple";
   const setMusicProvider = (p) => updateMusic({ provider: p });
+  const allowUserChoice = settings?.music?.allowUserProviderChoice === true;
   const appleEnabled = settings?.music?.providers?.apple?.enabled !== false;
   const toggleAppleEnabled = () =>
     updateMusic({ providers: { ...(settings?.music?.providers || {}), apple: { ...(settings?.music?.providers?.apple || {}), enabled: !appleEnabled } } });
@@ -3183,6 +3184,17 @@ export default function AdminDashboard({ myUid, onBack }) {
                   {label}
                 </div>
               ))}
+            </div>
+
+            {/* Allow users to pick provider */}
+            <div onClick={() => updateMusic({ allowUserProviderChoice: !allowUserChoice })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: allowUserChoice ? "#34C759" : t.primaryLight, cursor: "pointer", margin: "12px 0" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: allowUserChoice ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: allowUserChoice ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: allowUserChoice ? "#fff" : t.text }}>Let users choose provider</span>
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 4, lineHeight: 1.4 }}>
+              When ON, the Add Music picker lets each user switch between the enabled providers (Zemer / Apple) instead of being forced to use the active one above.
             </div>
 
             {/* Zemer note (always present) */}

@@ -18,7 +18,7 @@ import StatusStoryViewer from "./StatusStoryViewer";
 import { getMicrophoneStream } from "../media/microphone";
 import { base64ToBlob } from "../media/base64";
 import { useGlobalSettings } from "../firebase/config-settings";
-import { getActiveProvider, resolveMusicAccess, searchMusic, getPreviewUrl, resolveDownload } from "../media/musicService";
+import { getActiveProvider, resolveMusicAccess, resolveAllowUserProviderChoice, resolveSelectableProviders, searchMusic, getPreviewUrl, resolveDownload } from "../media/musicService";
 import { fetchTrackBlob } from "../media/musicCatalog";
 import { getProxyMediaUrl, getVideoPosterUrl } from "../media/mediaProxy";
 import JewishStatusesTab from "../features/jewishStatus/JewishStatusesTab";
@@ -258,12 +258,12 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   // Admin can globally disable video thumbnails in the feed (shows a blank
   // placeholder instead of the heavy video stream). Defaults to ON.
   const showVideoThumbs = globalSettings?.show_video_thumbnails !== false;
+  // Live snapshot of this user's own doc (for per-user feature overrides).
+  const [myUserDoc, setMyUserDoc] = useState(null);
   // Active music provider + whether this account may use it (drives the Add Music
   // button visibility and the composer's provider label).
   const musicProviderActive = getActiveProvider(globalSettings);
   const musicAccessAllowed = resolveMusicAccess(globalSettings, myUserDoc);
-  // Live snapshot of this user's own doc (for per-user feature overrides).
-  const [myUserDoc, setMyUserDoc] = useState(null);
   // Jewish Statuses tab visibility (mirrors the admin + per-user override logic).
   const jsSettings = globalSettings?.jewishStatuses || {};
   const jsEnabled = jsSettings.enabled === true;
@@ -2200,16 +2200,22 @@ function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
   const [error, setError] = useState("");
   const [playingId, setPlayingId] = useState(null);
   const [searchProvider, setSearchProvider] = useState(null);
+  const [chosenProvider, setChosenProvider] = useState(getActiveProvider(globalSettings));
   const previewRef = useRef(null);
   const debounceRef = useRef(null);
 
-  const runSearch = async (query) => {
+  // Which providers the user may pick between (admin's active + any other enabled
+  // provider when per-user provider choice is enabled).
+  const selectableProviders = resolveSelectableProviders(globalSettings, userDoc);
+
+  const runSearch = async (query, providerOverride) => {
     const term = (query || "").trim();
+    const provider = providerOverride || chosenProvider;
     if (!term) { setResults([]); setLoading(false); return; }
     setLoading(true); setError("");
     try {
-      const { provider, tracks } = await searchMusic(term, { globalSettings, userDoc, limit: 20 });
-      setSearchProvider(provider);
+      const { provider: usedProvider, tracks } = await searchMusic(term, { globalSettings, userDoc, limit: 20, provider });
+      setSearchProvider(usedProvider);
       setResults(tracks || []);
     } catch (e) {
       // Surface the provider-specific error message (disabled / no access / unavailable)
@@ -2268,6 +2274,19 @@ function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
           <Search size={16} color={t.textMuted} />
           <input autoFocus value={q} onChange={onChange} placeholder="Search songs, artists…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 14, color: t.text }} />
         </div>
+        {selectableProviders.length > 1 && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            {selectableProviders.map((p) => (
+              <div
+                key={p}
+                onClick={() => { setChosenProvider(p); if (q.trim()) runSearch(q, p); }}
+                style={{ flex: 1, textAlign: "center", padding: "8px 0", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: `1px solid ${chosenProvider === p ? t.primary : t.border}`, background: chosenProvider === p ? t.primaryLight : t.bg, color: chosenProvider === p ? t.primary : t.textMuted }}
+              >
+                {p === "apple" ? "🎵 Apple" : p === "zemer" ? "🎵 Zemer" : ""}
+              </div>
+            ))}
+          </div>
+        )}
         {searchProvider && (
           <div style={{ fontSize: 11.5, fontWeight: 700, color: t.primary, marginBottom: 8 }}>
             {searchProvider === "apple" ? "🎵 Apple Music" : searchProvider === "zemer" ? "🎵 Zemer" : ""}

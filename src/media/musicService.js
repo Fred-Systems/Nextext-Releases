@@ -100,6 +100,29 @@ export function getActiveProvider(globalSettings) {
   return p === "zemer" || p === "apple" || p === "disabled" ? p : "apple";
 }
 
+// When true, the Add Music UI lets the user pick between the available providers
+// (Zemer / Apple) instead of forcing the admin's active provider.
+export function resolveAllowUserProviderChoice(globalSettings) {
+  return globalSettings?.music?.allowUserProviderChoice === true;
+}
+
+// Providers the user is allowed to pick from in the Add Music UI: the admin's
+// active provider (unless "disabled"), plus any other enabled providers when the
+// admin has enabled per-user provider choice.
+export function resolveSelectableProviders(globalSettings, userDoc) {
+  const active = getActiveProvider(globalSettings);
+  if (active === "disabled") return [];
+  const list = [active];
+  if (resolveAllowUserProviderChoice(globalSettings)) {
+    for (const p of ["zemer", "apple"]) {
+      if (p !== active && resolveProviderAccess(globalSettings, userDoc, p)) {
+        if (!list.includes(p)) list.push(p);
+      }
+    }
+  }
+  return list;
+}
+
 function resolveOverride(globalEnabled, override) {
   if (override === "enabled") return true;
   if (override === "disabled") return false;
@@ -156,8 +179,8 @@ function applyAppleWhitelist(tracks, whitelist) {
 // Top-level search used by the Status Builder. Honors active provider + per-user
 // access + (Apple) whitelist. Throws a clear, provider-specific error if unavailable
 // (never silently falls back to the other provider).
-export async function searchMusic(query, { globalSettings, userDoc, limit = 20 } = {}) {
-  const provider = getActiveProvider(globalSettings);
+export async function searchMusic(query, { globalSettings, userDoc, limit = 20, provider: overrideProvider } = {}) {
+  const provider = overrideProvider || getActiveProvider(globalSettings);
   if (provider === "disabled") {
     const err = new Error("Music is disabled.");
     err.code = "disabled";

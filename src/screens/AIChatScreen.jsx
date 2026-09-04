@@ -346,19 +346,34 @@ export default function AIChatScreen({ myUid, onBack }) {
       return [...prev, id];
     });
   };
-  // Parse the AI's script output into a list of {voiceId, text} turns.
-  const parsePodcastScript = (raw, fallbackVoices) => {
+  // Parse the AI's script output into a list of {voiceId, text} segment objects.
+  // Robustly extracts the JSON array even when the model wraps it in markdown
+  // fences or adds surrounding prose: strip code fences, then take the slice
+  // from the first '[' to the last ']', and JSON.parse that. Returns null (not a
+  // single-blob fallback) when the response can't be turned into a non-empty
+  // array of segments — callers treat that as a failed/refused attempt.
+  const parsePodcastScript = (raw) => {
+    if (!raw || typeof raw !== "string") return null;
+    let s = raw;
+    // Strip ```json … ``` (or plain ``` … ```) fences if present.
+    s = s.replace(/```(?:json)?\s*([\s\S]*?)\s*```/gi, "$1");
+    const start = s.indexOf("[");
+    const end = s.lastIndexOf("]");
+    if (start === -1 || end === -1 || end <= start) return null;
+    const candidate = s.slice(start, end + 1);
     try {
-      const match = raw.match(/\[[\s\S]*\]/);
-      const arr = JSON.parse(match ? match[0] : raw);
-      if (Array.isArray(arr)) {
-        return arr
-          .filter((l) => l && (l.text || l.line))
-          .map((l) => ({ voiceId: l.voiceId || fallbackVoices[0], text: (l.text || l.line || "").toString() }));
-      }
-    } catch {}
-    // Fallback: one line for the first selected voice.
-    return [{ voiceId: fallbackVoices[0], text: raw.trim() }];
+      const arr = JSON.parse(candidate);
+      if (!Array.isArray(arr)) return null;
+      const segments = arr
+        .filter((l) => l && typeof l === "object" && (l.text || l.line))
+        .map((l) => ({
+          voiceId: l.voiceId != null ? l.voiceId : (l.speaker != null ? l.speaker : (l.id != null ? l.id : null)),
+          text: (l.text || l.line || "").toString(),
+        }));
+      return segments.length ? segments : null;
+    } catch {
+      return null;
+    }
   };
   const generatePodcast = async () => {
     const voices = podcastVoices.length ? podcastVoices : [availableVoices[0]?.id].filter(Boolean);
@@ -443,43 +458,71 @@ export default function AIChatScreen({ myUid, onBack }) {
         "Tone / confrontational intensity: " + heatEntry.label + " — " + heatEntry.desc + ".\n" +
         `Randomize the specific angle and seed (${seed}) — do NOT repeat a previous generic topic; pick a fresh, surprising take every time.\n` +
         `Produce EXACTLY between ${lenEntry.range[0]} and ${lenEntry.range[1]} short spoken turns, alternating speakers naturally.`;
-      let raw = null;
-      let lastErr = null;
+      // Build the ordered list of selected voice objects (id + Fish Audio
+      // referenceId) so each segment can be mapped to the exact voice it should
+      // be spoken in. We map by id, by display name, and by "Speaker N" index
+      // (the labels the model is given), and only fall back to the first
+      // selected voice when nothing matches — never silently to a wrong one.
+      const selectedVoiceObjs = voices
+        .map((id) => availableVoices.find((x) => x.id === id))
+        .filter(Boolean);
+      const norm = (v) => String(v == null ? "" : v).trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+      const findVoiceForSegment = (seg) => {
+        const key = seg && (seg.voiceId != null ? seg.voiceId : (seg.speaker != null ? seg.speaker : seg.id));
+        if (key != null && key !== "") {
+          const k = norm(key);
+          // 1) exact id match
+          let hit = selectedVoiceObjs.find((v) => norm(v.id) === k);
+          // 2) display-name match (either direction contains the other)
+          if (!hit) hit = selectedVoiceObjs.find((v) => {
+            const n = norm(v.name);
+            return n === k || (n && k.includes(n)) || (n && n.includes(k));
+          });
+          // 3) "Speaker N" label → Nth selected voice (1-based)
+          if (!hit) {
+            const m = String(key).match(/\d+/);
+            if (m) {
+              const idx = Number(m[0]) - 1;
+              if (idx >= 0 && idx < selectedVoiceObjs.length) hit = selectedVoiceObjs[idx];
+            }
+          }
+          if (hit) return hit;
+        }
+        // No match: fall back to the FIRST selected voice (consistent, not random).
+        return selectedVoiceObjs[0] || null;
+      };
+      // ── Generation + robust parse, with retry ──
+      // The model may return empty text, a safety refusal (prose, not JSON), or a
+      // malformed/empty array. Retry up to 2 extra times (3 attempts total)
+      // before surfacing a clear, friendly error. We never synthesize a fake
+      // "I'm sorry" fallback clip — a failed script is surfaced as an error.
+      let segments = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const r = await sendAIMessage(myUid, "Generate the podcast script now.", [], instruction, null, null, true);
-          if (r && r.trim()) { raw = r; break; }
-        } catch (e) { lastErr = e; }
+          if (r && r.trim()) {
+            const parsed = parsePodcastScript(r);
+            if (parsed && parsed.length > 0) { segments = parsed; break; }
+          }
+        } catch {}
       }
-      // NOTE: we deliberately do NOT synthesize a fake fallback script here. If
-      // the model returns empty / errors / or returns a safety refusal (e.g.
-      // "I'm sorry, but I can't help with that"), we surface that as a clear
-      // error instead of handing it to the TTS engine and producing a 1-second
-      // clip of the refusal.
-      if (!raw || !raw.trim()) {
-        throw new Error(lastErr?.message || "The AI didn't return a podcast script. Try a different topic or angle.");
-      }
-      const lines = parsePodcastScript(raw, voices);
-      // parsePodcastScript only yields multiple turns when the model actually
-      // emitted a JSON array. If it returned plain text (a refusal or a non-JSON
-      // reply), it collapses to a single entry whose text IS the raw reply — do
-      // not synthesize that as the podcast. The full script (all turns) is
-      // synthesized only when the model returned a real array.
-      const modelReturnedScript = lines.length > 1 || (lines.length === 1 && /\[[\s\S]*\]/.test(raw));
-      if (!modelReturnedScript) {
-        throw new Error("The AI returned a reply instead of a podcast script (it may have refused the topic). Try a different topic or angle.");
+      if (!segments) {
+        throw new Error("The AI couldn't generate a podcast. Please try again.");
       }
       setPodcastStatus("Synthesizing voices…");
       const buffers = [];
       let okTurns = 0;
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const v = availableVoices.find((x) => x.id === line.voiceId) || availableVoices.find((x) => x.id === voices[0]);
-        const text = sanitizeForTTS(line.text);
-        if (!text) continue;
-        setPodcastStatus(`Synthesizing turn ${i + 1} of ${lines.length} (${v?.name || "voice"})…`);
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const text = sanitizeForTTS(seg.text || "");
+        if (!text) continue; // skip empty-text segments
+        // Each segment is synthesized with ITS OWN mapped voice's Fish Audio
+        // referenceId — not a single captured first voice.
+        const v = findVoiceForSegment(seg);
+        const referenceId = v?.referenceId || Y_MIZRACHI_VOICE_ID;
+        setPodcastStatus(`Synthesizing turn ${i + 1} of ${segments.length} (${v?.name || "voice"})…`);
         try {
-          const blob = await synthesizeSpeechBytes(text, v?.referenceId || Y_MIZRACHI_VOICE_ID);
+          const blob = await synthesizeSpeechBytes(text, referenceId);
           const buf = await blob.arrayBuffer();
           buffers.push(new Uint8Array(buf));
           okTurns += 1;

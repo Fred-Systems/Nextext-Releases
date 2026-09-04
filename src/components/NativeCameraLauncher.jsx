@@ -109,14 +109,26 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
   const [step, setStep] = useState("type"); // "type" | "capturing" | "chooser" | "pick"
   const [busy, setBusy] = useState(false);
   const [pendingFile, setPendingFile] = useState(null);
+  const [captureType, setCaptureType] = useState("photo");
   const cancelledRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
     cancelledRef.current = false;
-    setStep("type");
     setBusy(false);
     setPendingFile(null);
+    setCaptureType("photo");
+    // On a device with the Capacitor Camera plugin, skip the Photo/Video chooser
+    // and open the camera immediately (photo by default). The user can switch to
+    // video from the sheet if they back out of the OS camera. In the browser (no
+    // plugin) we keep the chooser because a file <input> can't be auto-opened
+    // without a user gesture.
+    if (window.Capacitor?.Plugins?.Camera?.getPhoto) {
+      setStep("capturing");
+      startCapture("photo");
+    } else {
+      setStep("type");
+    }
     return () => { cancelledRef.current = true; };
   }, [open]);
 
@@ -125,11 +137,12 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
   const startCapture = async (type) => {
     if (busy) return;
     setBusy(true);
+    setCaptureType(type);
     setStep("capturing");
     const file = await openNativeCamera(type);
     if (cancelledRef.current) { setBusy(false); return; }
     setBusy(false);
-    if (!file) { onClose(); return; }
+    if (!file) { setStep("type"); return; }
     setPendingFile(file);
     setStep("chooser");
   };
@@ -214,6 +227,14 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "24px 0" }}>
             <Camera size={34} color={t.primary} />
             <span style={{ color: t.textMuted, fontSize: 14 }}>Opening camera…</span>
+            <div
+              onClick={() => startCapture(captureType === "photo" ? "video" : "photo")}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 10, background: t.primaryLight, color: t.primary, fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+            >
+              {captureType === "photo" ? <Video size={16} color={t.primary} /> : <Camera size={16} color={t.primary} />}
+              {captureType === "photo" ? "Switch to Video" : "Switch to Photo"}
+            </div>
+            <div onClick={onClose} style={{ color: t.textMuted, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</div>
           </div>
         )}
         {step === "chooser" && renderChooser()}

@@ -775,6 +775,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     try { localStorage.setItem("nextext_settings_layout", next); } catch {}
   };
   const [appearanceSubs, setAppearanceSubs] = useState({});
+  const [hideEmojisOn, setHideEmojisOn] = useState(() => localStorage.getItem("nextext_hide_emojis") === "on");
   const [resetPasswordModal, setResetPasswordModal] = useState(false);
   const [resetPasswordInput, setResetPasswordInput] = useState("");
   const [disableLockModal, setDisableLockModal] = useState(false);
@@ -855,6 +856,9 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const SectionCard = useMemo(() => ({ title, emoji, children, sectionKey }) => {
     const ctx = React.useContext(SettingsSearchContext) || { query: "", revamped: false };
     const q = (ctx.query || "").trim().toLowerCase();
+    // When the user hides emojis (Appearance & Interface), drop the decorative
+    // emoji glyph from every settings section header.
+    const showEmoji = !hideEmojisOn;
     const bodyRef = React.useRef(null);
     const [bodyText, setBodyText] = React.useState("");
     React.useLayoutEffect(() => {
@@ -876,7 +880,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
       return (
         <div style={{ marginBottom: 22, ...(hide ? { display: "none" } : null) }}>
           <div onClick={sectionKey ? () => toggleSection(sectionKey) : undefined} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, cursor: sectionKey ? "pointer" : "default", padding: "6px 4px" }}>
-            <span style={{ fontSize: 18, width: 26, textAlign: "center" }}>{emoji}</span>
+            <span style={{ fontSize: 18, width: 26, textAlign: "center" }}>{showEmoji ? emoji : ""}</span>
             <span style={{ fontWeight: 800, fontSize: 16, color: t.text, flex: 1, letterSpacing: 0.2 }}>{title}</span>
             {sectionKey && <span style={{ fontSize: 12, color: t.textMuted, transition: "transform 0.2s", transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>⌄</span>}
           </div>
@@ -896,7 +900,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     return (
       <div style={{ marginBottom: 18, ...(hide ? { display: "none" } : null) }}>
         <div onClick={sectionKey ? () => toggleSection(sectionKey) : undefined} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, cursor: sectionKey ? "pointer" : "default" }}>
-          <span style={{ fontSize: 14 }}>{emoji}</span>
+          <span style={{ fontSize: 14 }}>{showEmoji ? emoji : ""}</span>
           <span style={{ fontWeight: 700, fontSize: 14, color: headerColor, flex: 1 }}>{title}</span>
           {sectionKey && <span style={{ fontSize: 11, color: t.textMuted, transition: "transform 0.2s", transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>}
         </div>
@@ -907,7 +911,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         )}
       </div>
     );
-  }, [t, openSections]);
+  }, [t, openSections, hideEmojisOn]);
 
   // ── Bottom bar customizer helpers ──
   const ALL_TABS = [
@@ -1327,6 +1331,12 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             label="Settings layout"
             sub={altSettingsView === "revamped" ? "Revamped — searchable & modern" : "Classic"}
             right={<Toggle on={altSettingsView === "revamped"} onClick={toggleAltSettingsView} />}
+          />
+          <Row
+            icon={<Smile size={18} color={t.primary} />}
+            label="Hide emojis in Settings"
+            sub={hideEmojisOn ? "Section emoji icons hidden" : "Emoji icons shown"}
+            right={<Toggle on={hideEmojisOn} onClick={() => { const next = !hideEmojisOn; setHideEmojisOn(next); localStorage.setItem("nextext_hide_emojis", next ? "on" : "off"); }} />}
           />
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
             <div style={{ flex: 1 }}>
