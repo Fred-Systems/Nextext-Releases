@@ -1310,7 +1310,9 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           </div>
         </SectionCard>
 
-        <VoiceSampleSubmitSection t={t} myUid={myUid} userDoc={userDoc} />
+        <SectionCard title="Submit Voice Sample (cloned voice)" emoji="🎙️" sectionKey="voiceSampleSubmit">
+          <VoiceSampleSubmitSection t={t} myUid={myUid} userDoc={userDoc} />
+        </SectionCard>
 
         {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}
         <SectionCard title="Notification Sound & Vibration" emoji="🔔" sectionKey="notifprefs">
@@ -3889,6 +3891,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const pagerTouchStart = (e) => {
     if (screen !== "list" && screen !== "status" && screen !== "settings") return;
     if (storyViewerOpen) return;
+    // The Status screen has its own horizontally-swipeable content (story rails,
+    // the Jewish Statuses creator row). Don't let a horizontal drag there be
+    // interpreted as a screen swipe — let the inner scroller handle it. Users
+    // still switch screens by tapping the bottom bar.
+    if (screen === "status") return;
     // A new drag interrupts any in-flight snap animation — snap back to the
     // tap transition immediately.
     if (snapTimerRef.current) { clearTimeout(snapTimerRef.current); snapTimerRef.current = null; }

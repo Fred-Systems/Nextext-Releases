@@ -233,7 +233,7 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
         right: 0,
         bottom: 0,
         background: bg,
-        zIndex: 300,
+        zIndex: 2147483641,
         display: "flex",
         flexDirection: "column",
         userSelect: "none",

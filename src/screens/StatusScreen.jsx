@@ -1235,7 +1235,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       </div>
 
       <div className="nx-scroll" style={{ flex: 1, paddingBottom: 70, minHeight: 0 }}>
-        {statusTab === "jewish" && <JewishStatusesTab />}
+        {statusTab === "jewish" && <JewishStatusesTab onStoryViewerChange={onStoryViewerChange} />}
         {statusTab === "updates" && (<>
         <SectionHeader label="My Status" />
         <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", borderBottom: `1px solid ${t.border}` }}>

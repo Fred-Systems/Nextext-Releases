@@ -64,20 +64,25 @@ async function openNativePhoto() {
         source: "CAMERA",
         correctOrientation: true,
       });
-      if (!photo || !photo.dataUrl) return null;
-      const dataUrl = photo.dataUrl;
-      const comma = dataUrl.indexOf(",");
-      const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-      let bin;
-      try { bin = atob(b64); } catch { return null; }
-      const len = bin.length;
-      const u8 = new Uint8Array(len);
-      for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i);
-      return new File([u8], "camera.jpg", { type: "image/jpeg" });
+      if (photo && photo.dataUrl) {
+        const dataUrl = photo.dataUrl;
+        const comma = dataUrl.indexOf(",");
+        const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+        let bin;
+        try { bin = atob(b64); } catch { bin = null; }
+        if (bin) {
+          const len = bin.length;
+          const u8 = new Uint8Array(len);
+          for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i);
+          return new File([u8], "camera.jpg", { type: "image/jpeg" });
+        }
+      }
     } catch {
-      return null;
+      // Plugin unavailable/denied/errored — fall through to the file-input path.
     }
   }
+  // Fallback: hidden <input capture> opens the device camera on mobile WebViews
+  // where the Capacitor Camera plugin isn't registered or was rejected.
   return pickFile("image/*", "environment");
 }
 
@@ -202,7 +207,7 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
   );
 
   return createPortal(
-    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 90, display: "flex", alignItems: "flex-end" }} onClick={busy ? undefined : onClose}>
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147483640, display: "flex", alignItems: "flex-end" }} onClick={busy ? undefined : onClose}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 390, margin: "0 auto", background: t.surface, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: "18px 18px 26px", boxSizing: "border-box" }}>
         {step === "type" && renderType()}
         {step === "capturing" && (
