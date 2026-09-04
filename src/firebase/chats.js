@@ -182,7 +182,11 @@ export async function getOrCreateDirectChat(myUid, theirUid) {
     try { if (snap.data()?.deletedForSelf?.[myUid]) await updateDoc(ref, { [`deletedForSelf.${myUid}`]: deleteField() }); } catch {}
   }
   if (!snap.exists()) {
-    const participants = myUid === theirUid ? [myUid] : [myUid, theirUid];
+    // Self-chats (user opens a chat with themselves) use two entries of the
+    // same uid so every participant-based read/update rule still matches the
+    // signed-in user (a single-element [myUid] array previously failed those
+    // checks and surfaced as "Missing or insufficient permissions").
+    const participants = myUid === theirUid ? [myUid, myUid] : [myUid, theirUid];
     const unreadCount = {};
     participants.forEach((uid) => { unreadCount[uid] = 0; });
     await setDoc(ref, {

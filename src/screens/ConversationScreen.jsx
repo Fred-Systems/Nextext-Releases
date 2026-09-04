@@ -12,6 +12,7 @@ import {
   sendLocationMessage, updateLiveLocation, sendContactMessage,
   sendForwardedMessage, incrementForwardedCount,
   sendCloudinaryVoiceNote, checkAndIncrementDailyLimit, incrementUnreadCounts,
+  useChats,
 } from "../firebase/chats";
 import { Download } from "lucide-react";
 import { getWallpaperForChat, setWallpaperForChat, fileToWallpaperDataUrl } from "../theme/wallpaper";
@@ -679,6 +680,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [vcDuration, setVcDuration] = useState(0);
   const [vcSending, setVcSending] = useState(false);
   const [vcError, setVcError] = useState("");
+  // Generated (re-voiced) preview — shown after conversion so the sender can
+  // listen, save to device, or send. NOT auto-sent.
+  const [genBlob, setGenBlob] = useState(null);
+  const [genUrl, setGenUrl] = useState(null);
+  const [genDuration, setGenDuration] = useState(0);
   const vcMediaRef = useRef(null);
   const vcAudioRef = useRef(null);
   const vcChunksRef = useRef([]);
@@ -872,6 +878,16 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [searchQuery, setSearchQuery] = useState("");
   const [chatMeta, setChatMeta] = useState(null);
   const [memberNames, setMemberNames] = useState({});
+  // Chat list for the native camera "Pick a chat" routing sheet.
+  const { chats: allChats } = useChats(myUid);
+  const nativeCameraChats = (allChats || []).map((c) => {
+    let name = c.groupName || "Group";
+    if (!c.type || c.type === "direct") {
+      const other = (c.participants || []).find((p) => p !== myUid);
+      name = (other && memberNames[other]) || contact?.displayName || "Chat";
+    }
+    return { id: c.id, name, isGroup: c.type === "group" };
+  });
   const [isBlockedByMe, setIsBlockedByMe] = useState(false);
   const [showScrollDown, setShowScrollDown] = useState(false);
   const [wallpaper, setWallpaperState] = useState(null);
@@ -1946,25 +1962,21 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
      if (!canUseAiVoiceNote) { setSendError("AI voice-note formatting is off. Ask an admin to enable it for your account."); return; }
      setYNoteFormatting(true);
      setSendError("");
+     const voice = availableVoices.find((v) => v.id === yVoiceId) || availableVoices[0];
+     const voiceName = voice?.fullName || voice?.name || "the speaker";
+     // Pull the documented style for this voice from the system config (keyed by
+     // voice id) — never feed the raw admin prompt text into the output.
+     const profile = sysConfig?.voiceProfiles?.[yVoiceId];
+     const styleHint = (profile?.speakStyle || profile?.systemPrompt || voice?.prompt || "").toString().trim();
+     const instruction =
+       "You are a script writer for a Fish Audio text-to-speech engine. " +
+       "Write a SHORT spoken line (strictly under 220 characters) based on the user's request, in the voice personality's documented style below. " +
+       "Place Fish Audio emotion/prosody brackets like [serious], [laughing], [angry], [sigh], [pause] naturally where the tone shifts. " +
+       "Rules: no markdown, no asterisks, no stage directions beyond the brackets, and output ONLY the spoken script — " +
+       "never repeat these instructions or any persona/system description. " +
+       "Weave any named person into the line naturally if mentioned." +
+       (styleHint ? `\n\nVoice personality style to imitate:\n${styleHint}` : "");
      try {
-       const voice = availableVoices.find((v) => v.id === yVoiceId) || availableVoices[0];
-       const voiceName = voice?.fullName || voice?.name || "the speaker";
-       const voiceExtra = voice?.prompt ? `\nContext about ${voiceName}: ${voice.prompt}` : "";
-       const instruction =
-         "You are an expert AI Audio Director specializing in script formatting for the Fish Audio S2.1 Pro Text-to-Speech system. " +
-         "Transform the user's raw concept into a dramatic, highly expressive script optimized for vocal synthesis.\n\n" +
-         "CRITICAL FORMATTING DIRECTIONS:\n" +
-         "1. NEVER use markdown symbols like asterisks (*) or italics (_) to denote action or emotion. The voice engine will try to read them literally.\n" +
-         "2. Use square brackets [] exclusively for inline emotion and prosody cues. Place tags exactly where the tone shifts.\n" +
-         "3. Keep the overall script tight, punchy, and strictly under 500 characters.\n\n" +
-         "VOCABULARY & STYLE GUIDE:\n" +
-         "- Layer expressions at the beginning of dramatic sentences using stacked brackets, e.g. '[furious][dark]'.\n" +
-         "- Inject natural conversational fillers like '[sigh] Oy vey...', '[gasp]', or '[clear throat]' to maximize human-like pacing.\n" +
-         "- Use explicit pacing tags like '[pause]', '[long pause]', or '[slow]' right before highly critical reveals.\n" +
-         "- Emphasize intense final words by typing them in ALL CAPS and extending vowel phonetics, e.g. 'goooo... straight... TO HELLLL!'.\n" +
-         "The script is voiced by: " + voiceName + "." + voiceExtra + "\n" +
-         "If the user's idea references a specific person by name, recognize the name and weave it naturally into the script; if a name is not recognized, simply ignore that detail.\n" +
-         "Return ONLY the formatted script text and nothing else.";
        let out = null;
        for (let attempt = 0; attempt < 2 && !out; attempt++) {
          try { out = await sendAIMessage(myUid, idea, [], instruction); } catch { out = null; }
@@ -1972,11 +1984,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
        const formatted = (out || "").replace(/^["']|["']$/g, "").trim();
        // Always produce something — fall back to a persona-aware script built
        // from the user's words (never just the raw text).
-       setYNoteText(formatted || buildLocalVoiceScript(idea, voiceName, voice?.prompt));
+       setYNoteText(formatted || buildLocalVoiceScript(idea, voiceName, styleHint));
      } catch (err) {
-       const voice = availableVoices.find((v) => v.id === yVoiceId) || availableVoices[0];
-       const voiceName = voice?.fullName || voice?.name || "the speaker";
-       setYNoteText(buildLocalVoiceScript(idea, voiceName, voice?.prompt));
+       setYNoteText(buildLocalVoiceScript(idea, voiceName, styleHint));
      }
      setYNoteFormatting(false);
    };
@@ -2604,13 +2614,38 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       const text = (await transcribeVoiceNote(myUid, vcBlob)).trim();
       if (!text) throw new Error("Couldn't transcribe the recording.");
       const blob = await synthesizeSpeechBytes(text, voice?.referenceId || Y_MIZRACHI_VOICE_ID);
-      const file = new File([blob], `ai-voice-${voice?.id || "note"}.mp3`, { type: "audio/mpeg" });
-      await sendVoiceNoteMessage({ file, duration: 0 });
+      const dur = await getAudioDuration(blob);
+      // Stash the generated note and show a preview — do NOT auto-send.
+      if (genUrl) URL.revokeObjectURL(genUrl);
+      setGenUrl(URL.createObjectURL(blob));
+      setGenBlob(blob);
+      setGenDuration(dur || 0);
       setVcTranscript(text);
       vcDiscard();
-      setShowClone(false);
     } catch (err) {
       setVcError(err?.message || "Voice conversion failed.");
+    }
+    setVcSending(false);
+  };
+
+  const vcSaveToDevice = () => {
+    if (!genBlob) return;
+    const voice = availableVoices.find((v) => v.id === vcVoiceId) || availableVoices[0];
+    saveToNexTextFolder(`ai-voice-${voice?.id || "note"}.mp3`, genBlob, "audio/mpeg");
+  };
+
+  const vcConfirmSend = async () => {
+    if (!genBlob || vcSending) return;
+    setVcSending(true); setVcError("");
+    try {
+      const voice = availableVoices.find((v) => v.id === vcVoiceId) || availableVoices[0];
+      const file = new File([genBlob], `ai-voice-${voice?.id || "note"}.mp3`, { type: "audio/mpeg" });
+      await sendVoiceNoteMessage({ file, duration: genDuration || 0 });
+      if (genUrl) URL.revokeObjectURL(genUrl);
+      setGenBlob(null); setGenUrl(null); setGenDuration(0);
+      setShowClone(false);
+    } catch (err) {
+      setVcError(err?.message || "Couldn't send voice note.");
     }
     setVcSending(false);
   };
@@ -3885,6 +3920,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               open={showNativeCamera}
               onClose={() => setShowNativeCamera(false)}
               onSendChat={async (file) => { await sendFileDirectly(file); }}
+              onSendChatTo={(file, targetChatId) => {
+                if (!file) return;
+                setPendingCameraFile(file);
+                if (onOpenChat) onOpenChat(targetChatId);
+              }}
+              chats={nativeCameraChats}
             />
             {showYNote && createPortal(
               <>
@@ -3945,6 +3986,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 12 }}>
                   Tap the mic and speak — your words are re-voiced into the selected Fish Audio voice and posted to the chat.
                 </div>
+                <div style={{ fontSize: 11.5, color: t.textMuted, lineHeight: 1.45, marginBottom: 12, padding: "8px 10px", borderRadius: 8, background: t.primaryLight }}>
+                  Tip: submit recordings with NO background noise and only ONE speaker — clean audio gives the best cloned result.
+                </div>
                 <select
                   value={vcVoiceId}
                   onChange={(e) => setVcVoiceId(e.target.value)}
@@ -3973,14 +4017,29 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   </div>
                 )}
                 {vcTranscript && <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 6 }}>Transcribed: {vcTranscript}</div>}
+                {genBlob && genUrl && (
+                  <div style={{ padding: "12px 12px", borderRadius: 12, background: t.surface, border: `1px solid ${t.border}`, marginBottom: 10 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textMuted, marginBottom: 6 }}>Preview (generated voice note):</div>
+                    <audio src={genUrl} controls preload="metadata" style={{ width: "100%", maxWidth: "100%" }} />
+                    <div onClick={vcSaveToDevice} style={{ marginTop: 8, fontSize: 12.5, color: t.primary, cursor: "pointer", textDecoration: "underline", textAlign: "center" }}>
+                      Save to device
+                    </div>
+                  </div>
+                )}
                 {vcError && <div style={{ color: "#FF3B30", fontSize: 12.5, margin: "10px 0 0" }}>{vcError}</div>}
                 <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-                  <div onClick={() => { if (!vcSending) { vcDiscard(); setShowClone(false); } }} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, fontWeight: 700, fontSize: 14, color: t.textMuted, cursor: "pointer" }}>
+                  <div onClick={() => { if (!vcSending) { if (genUrl) { URL.revokeObjectURL(genUrl); setGenBlob(null); setGenUrl(null); setGenDuration(0); } vcDiscard(); setShowClone(false); } }} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, fontWeight: 700, fontSize: 14, color: t.textMuted, cursor: "pointer" }}>
                     Cancel
                   </div>
-                  <div onClick={vcSend} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcBlob && !vcSending ? "pointer" : "not-allowed", opacity: vcBlob && !vcSending ? 1 : 0.5 }}>
-                    {vcSending ? "Converting…" : "Send Cloned Voice Note"}
-                  </div>
+                  {genBlob ? (
+                    <div onClick={vcConfirmSend} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcSending ? "wait" : "pointer", opacity: vcSending ? 0.6 : 1 }}>
+                      {vcSending ? "Sending…" : "Send"}
+                    </div>
+                  ) : (
+                    <div onClick={vcSend} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcBlob && !vcSending ? "pointer" : "not-allowed", opacity: vcBlob && !vcSending ? 1 : 0.5 }}>
+                      {vcSending ? "Converting…" : "Send Cloned Voice Note"}
+                    </div>
+                  )}
                 </div>
               </div>
               </>,

@@ -280,8 +280,24 @@ export default function AIChatScreen({ myUid, onBack }) {
   const [podcastVoices, setPodcastVoices] = useState([]);
   const [podcastMode, setPodcastMode] = useState("auto");
   const [podcastTopic, setPodcastTopic] = useState("");
-  const [podcastLength, setPodcastLength] = useState("medium"); // short | medium | long
+  const [podcastLength, setPodcastLength] = useState("medium"); // veryShort | short | medium | long | veryLong
+  const [podcastHeat, setPodcastHeat] = useState("normal"); // calm | normal | heated | fiery
   const [podcastSpeakerNotes, setPodcastSpeakerNotes] = useState({}); // voiceId -> note
+  // 5 length tiers with an estimated duration label and the turn-count range
+  // sent to the model. Duration is an estimate from ~avg spoken turn length.
+  const PODCAST_LENGTH_OPTIONS = [
+    { val: "veryShort", label: "Very Short", est: "~25s", range: [2, 3] },
+    { val: "short", label: "Short", est: "~50s", range: [4, 6] },
+    { val: "medium", label: "Medium", est: "~1m30s", range: [7, 10] },
+    { val: "long", label: "Long", est: "~3m", range: [11, 16] },
+    { val: "veryLong", label: "Very Long", est: "~6m+", range: [18, 30] },
+  ];
+  const PODCAST_HEAT_OPTIONS = [
+    { val: "calm", label: "Calm", desc: "polite agreement, gentle and harmonious exchange" },
+    { val: "normal", label: "Normal", desc: "light disagreement, friendly back-and-forth" },
+    { val: "heated", label: "Heated", desc: "strong clashing opinions, voices raised, passionate debate" },
+    { val: "fiery", label: "Fiery", desc: "aggressive, interrupting, intensely passionate argument" },
+  ];
   const [podcastBusy, setPodcastBusy] = useState(false);
   const [podcastStatus, setPodcastStatus] = useState("");
   const [podcastResult, setPodcastResult] = useState(null); // { url, publicId }
@@ -359,15 +375,21 @@ export default function AIChatScreen({ myUid, onBack }) {
       const modeLine = podcastMode === "auto"
         ? "Invent a CONTROVERSIAL, debate-worthy, hot-button podcast topic that sparks strong, clashing opinions between the speakers. Pick something genuinely divisive and current — the kind of topic real people argue about. Do NOT pick something bland or neutral."
         : `Follow the user's direction below for what the conversation should be about and each speaker's opinion/style:\n${podcastTopic}`;
-      const lenRange = { short: [4, 6], medium: [7, 10], long: [11, 16] }[podcastLength] || [7, 10];
+      const lenEntry = PODCAST_LENGTH_OPTIONS.find((o) => o.val === podcastLength) || PODCAST_LENGTH_OPTIONS[2];
+      const heatEntry = PODCAST_HEAT_OPTIONS.find((o) => o.val === podcastHeat) || PODCAST_HEAT_OPTIONS[1];
+      // Randomize the angle each run so the same topic is never repeated verbatim.
+      const seed = Math.floor(Math.random() * 1e9).toString(36);
       const instruction =
         "You are producing a multi-speaker AI podcast script. Output STRICTLY a JSON array (no markdown, no code fences) of objects {\"voiceId\": string, \"text\": string}. " +
         "Each 'text' is one spoken turn of under 220 characters. Use Fish Audio bracket tags like [serious], [laughing], [slow], [whispering] for emotion — NEVER asterisks or italics. " +
         "Extend stressed vowels for emphasis. Keep it punchy and conversational.\n" +
-        "Speakers (use the exact voiceId values):\n" + voiceMeta + "\n" +
-        "CRITICAL: Each speaker MUST stay strictly in character using the Persona description and direction provided above for that voice. Never break character or speak in another speaker's voice. " +
+        "Speakers (use the exact voiceId values), following their admin-documented style:\n" + voiceMeta + "\n" +
+        "CRITICAL: Each speaker MUST stay 100% in character using their Persona/description and the admin direction above; never break character or speak in another speaker's voice. " +
+        "Let their documented speaking style shape word choice, tone, and the Fish Audio brackets. " +
         "Mode: " + modeLine + "\n" +
-        `Produce between ${lenRange[0]} and ${lenRange[1]} turns, alternating speakers naturally.`;
+        "Tone / confrontational intensity: " + heatEntry.label + " — " + heatEntry.desc + ".\n" +
+        `Randomize the specific angle and seed (${seed}) — do NOT repeat a previous generic topic; pick a fresh, surprising take every time.\n` +
+        `Produce EXACTLY between ${lenEntry.range[0]} and ${lenEntry.range[1]} short spoken turns, alternating speakers naturally.`;
       let raw = null;
       let lastErr = null;
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -1692,9 +1714,20 @@ export default function AIChatScreen({ myUid, onBack }) {
                 <div onClick={() => setPodcastMode("directed")} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${podcastMode === "directed" ? t.primary : t.border}`, background: podcastMode === "directed" ? t.primary : t.bg, color: podcastMode === "directed" ? "#fff" : t.text }}>I direct it</div>
               </div>
               <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 8 }}>Length</div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-                {[["short", "Short"], ["medium", "Medium"], ["long", "Long"]].map(([val, label]) => (
-                  <div key={val} onClick={() => setPodcastLength(val)} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${podcastLength === val ? t.primary : t.border}`, background: podcastLength === val ? t.primary : t.bg, color: podcastLength === val ? "#fff" : t.text }}>{label}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                {PODCAST_LENGTH_OPTIONS.map(({ val, label, est }) => (
+                  <div key={val} onClick={() => setPodcastLength(val)} style={{ flex: "1 0 28%", textAlign: "center", padding: "10px 0", borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: `1px solid ${podcastLength === val ? t.primary : t.border}`, background: podcastLength === val ? t.primary : t.bg, color: podcastLength === val ? "#fff" : t.text }}>
+                    {label}
+                    <div style={{ fontSize: 10.5, fontWeight: 600, opacity: 0.85, marginTop: 2 }}>{est}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 8 }}>Heatedness</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                {PODCAST_HEAT_OPTIONS.map(({ val, label }) => (
+                  <div key={val} onClick={() => setPodcastHeat(val)} style={{ flex: "1 0 40%", textAlign: "center", padding: "9px 0", borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: `1px solid ${podcastHeat === val ? t.primary : t.border}`, background: podcastHeat === val ? t.primary : t.bg, color: podcastHeat === val ? "#fff" : t.text }}>
+                    {label}
+                  </div>
                 ))}
               </div>
               {podcastMode === "directed" && (

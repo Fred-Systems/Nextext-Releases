@@ -9,7 +9,6 @@ import { useContacts, getContactDisplayName } from "../firebase/contacts";
 import { useChats, getOrCreateDirectChat, sendMediaMessage } from "../firebase/chats";
 import { uploadChatFile, getSignedUrl } from "../supabase/media";
 import { uploadMediaFile, RawFileTooLargeError } from "../services/mediaUpload";
-import CameraCapture from "../components/CameraCapture";
 import { NativeCameraSheet } from "../components/NativeCameraLauncher";
 import { doc, onSnapshot, updateDoc, setDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -19,6 +18,7 @@ import { getMicrophoneStream } from "../media/microphone";
 import { base64ToBlob } from "../media/base64";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { getProxyMediaUrl, getVideoPosterUrl } from "../media/mediaProxy";
+import JewishStatusesTab from "../features/jewishStatus/JewishStatusesTab";
 
 // Resolve the thumbnail shown in the status feed for a video item. Prefers a
 // generated poster; when none exists, derive a Cloudinary still-frame poster from
@@ -322,7 +322,6 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const [viewedMap, setViewedMap] = useState(() => getStoredViewed());
   const [showCamera, setShowCamera] = useState(false);
   const [showNativeCamera, setShowNativeCamera] = useState(false);
-  const [cameraCapture, setCameraCapture] = useState(null); // { target: "chat" | "builder" }
   const { chats } = useChats(myUid);
   const [cameraError, setCameraError] = useState("");
   const [postError, setPostError] = useState("");
@@ -444,7 +443,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     }
   }, [initialViewStatuses, statuses, viewStoryOwner, onStoryViewerChange, onConsumeInitialView]);
 
-  const sourceStatuses = statusTab === "public" ? publicStatuses : statuses;
+  const sourceStatuses = statusTab === "jewish" ? [] : (statusTab === "public" ? publicStatuses : statuses);
   const myStatuses = sourceStatuses.filter((s) => s.ownerId === myUid);
   const contactStatuses = sourceStatuses.filter((s) => s.ownerId !== myUid);
 
@@ -977,26 +976,29 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   });
 
   const nativeSendStatus = async (file) => {
+    const isVideo = !!file?.type && file.type.startsWith("video");
     const result = await uploadMediaFile(`status-${myUid}`, myUid, file);
     const postVisibility = (postPublic || userStatusVisibility === "everyone") ? "public" : "contacts";
     await postStatus(myUid, {
       text: null,
       mediaURL: result.url,
-      mediaType: "image",
+      mediaType: isVideo ? "video" : "image",
       backgroundColor: null,
       fontFamily: null,
-      durationMs: 8000,
+      durationMs: isVideo ? 10000 : 8000,
       textOverlay: null,
       visibility: postVisibility,
     });
   };
 
-  const nativeSendChatTo = async (file, chatId) => {
-    const chat = (chats || []).find((c) => c.id === chatId);
-    const otherUid = chat?.participants?.find((p) => p !== myUid);
-    const targetChatId = chat?.type === "group" ? chatId : await getOrCreateDirectChat(myUid, otherUid);
-    const result = await uploadMediaFile(targetChatId, myUid, file);
-    await sendMediaMessage(targetChatId, myUid, "image", result, chat?.participants || [otherUid]);
+  // Open the existing status composer/builder with the captured file pre-filled.
+  const nativeStatusBuilder = (file) => {
+    const isVideo = !!file?.type && file.type.startsWith("video");
+    setPostMedia(file);
+    setPostMediaType(isVideo ? "video" : "image");
+    setPostMode("media");
+    setWaitForVideo(isVideo);
+    setShowPost(true);
   };
 
   const stopVoiceRecording = async () => {
@@ -1202,10 +1204,11 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
 
       {/* Tab bar: Updates (contacts) vs Public */}
       <div style={{ display: "flex", background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
-        {[
-          { id: "updates", label: "Updates" },
-          { id: "public", label: `Public${publicStatuses.length ? ` (${publicStatuses.length})` : ""}` },
-        ].map((tab) => (
+         {[
+           { id: "updates", label: "Updates" },
+           { id: "public", label: `Public${publicStatuses.length ? ` (${publicStatuses.length})` : ""}` },
+           { id: "jewish", label: "Jewish Statuses" },
+         ].map((tab) => (
           <div
             key={tab.id}
             onClick={() => setStatusTab(tab.id)}
@@ -1232,6 +1235,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       </div>
 
       <div className="nx-scroll" style={{ flex: 1, paddingBottom: 70, minHeight: 0 }}>
+        {statusTab === "jewish" && <JewishStatusesTab />}
         {statusTab === "updates" && (<>
         <SectionHeader label="My Status" />
         <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", borderBottom: `1px solid ${t.border}` }}>
@@ -1511,32 +1515,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
         open={showNativeCamera}
         onClose={() => setShowNativeCamera(false)}
         onSendStatus={nativeSendStatus}
-        onSendChatTo={nativeSendChatTo}
+        onStatusBuilder={nativeStatusBuilder}
         chats={nativeStatusChats}
       />
-
-      {/* Shared in-app camera (identical to the chats top-bar camera).
-          Portaled to document.body so it always renders on top of every screen
-          in the stack (previously it was nested inside the status screen, which
-          left it hidden behind other mounted screens). */}
-      {cameraCapture && createPortal(
-        <CameraCapture
-          t={t}
-          myUid={myUid}
-          acceptedContacts={acceptedContacts}
-          chats={chats}
-          target={cameraCapture.target}
-          onClose={() => setCameraCapture(null)}
-          onCaptured={({ blob, type, caption }) => {
-            setPostMedia(blob);
-            setPostMediaType(type);
-            setPostMode("media");
-            setWaitForVideo(type === "video");
-            if (caption) setPostText((prev) => (prev ? prev + " " + caption : caption));
-          }}
-        />,
-        document.body
-      )}
 
       {/* Camera overlay — portaled to document.body so it escapes the scaled
           app shell (a position:fixed inside a transformed ancestor is sized
@@ -1772,7 +1753,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     <span style={{ fontSize: 13, fontWeight: 600, color: t.primary }}>Video</span>
                   </div>
                   {!hideStatusCamera && (
-                    <div onClick={() => setCameraCapture({ target: "builder" })} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
+                    <div onClick={() => setShowNativeCamera(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
                       <Camera size={16} color={t.primary} />
                       <span style={{ fontSize: 13, fontWeight: 600, color: t.primary }}>Camera</span>
                     </div>

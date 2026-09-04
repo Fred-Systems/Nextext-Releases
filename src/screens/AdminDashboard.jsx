@@ -14,6 +14,9 @@ import { getActiveStorageProviderFromDb, setActiveStorageProviderDb, getSystemSe
 import { invalidateStorageProviderCache } from "../services/mediaUpload";
 import { supabase, MEDIA_BUCKET } from "../supabase/config";
 
+// Categories used by the admin "Jewish Statuses" controls (mirror of App.jsx).
+const JEWISH_CATEGORIES = ["music", "news", "entertainment", "business", "community", "events", "influencers", "organizations", "other"];
+
 // Recursively sum file sizes within the Supabase media bucket. Best-effort:
 // anonymous keys are usually blocked by RLS from listing, in which case we report
 // a clear message rather than fake numbers.
@@ -234,6 +237,8 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [expiryNever, setExpiryNever] = useState(false);
   const [allGroups, setAllGroups] = useState([]);
   const [allGroupsLoading, setAllGroupsLoading] = useState(false);
+  const [pendingSamples, setPendingSamples] = useState([]);
+  const [creatorInput, setCreatorInput] = useState("");
   const [splashLine1, setSplashLine1] = useState(settings?.specialIconSplashLine1 ?? "If you will not use this app....");
   const [splashLine2, setSplashLine2] = useState(settings?.specialIconSplashLine2 ?? "You will go to .....");
   const [splashSaved, setSplashSaved] = useState(false);
@@ -410,6 +415,16 @@ export default function AdminDashboard({ myUid, onBack }) {
     return unsub;
   }, [tab]);
 
+  useEffect(() => {
+    if (tab !== "voices") return;
+    setPendingSamples([]);
+    const q = query(collection(db, "voiceSamples"), where("status", "==", "pending"));
+    const unsub = onSnapshot(q, (snap) => {
+      setPendingSamples(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }, () => setPendingSamples([]));
+    return unsub;
+  }, [tab]);
+
   const runSearch = async (val) => {
     setSearch(val);
     if (val.trim().length < 2) { setResults([]); return; }
@@ -530,6 +545,54 @@ export default function AdminDashboard({ myUid, onBack }) {
     } catch (e) {
       setError("Couldn't delete feedback: " + e.message);
     }
+  };
+
+  // ── Voice sample review (admin) ──
+  const deleteVoiceSample = async (s) => {
+    setError("");
+    try {
+      if (s.storagePath) {
+        await supabase.storage.from(MEDIA_BUCKET).remove([s.storagePath]);
+      }
+      await deleteDoc(doc(db, "voiceSamples", s.id));
+    } catch (e) {
+      setError("Couldn't delete voice sample: " + e.message);
+    }
+  };
+  const approveVoiceSample = async (s) => {
+    setError("");
+    try {
+      await updateDoc(doc(db, "voiceSamples", s.id), { status: "approved" });
+    } catch (e) {
+      setError("Couldn't approve voice sample: " + e.message);
+    }
+  };
+
+  // ── Jewish Statuses admin config (lives under globalSettings.jewishStatuses) ──
+  const updateJewish = (patch) => {
+    const cur = settings?.jewishStatuses || {};
+    updateGlobalSettings({ jewishStatuses: { ...cur, ...patch } }, myUid);
+  };
+  const toggleJewishSource = (key) => {
+    const cur = settings?.jewishStatuses?.sources || {};
+    const src = cur[key] || {};
+    updateJewish({ sources: { ...cur, [key]: { ...src, enabled: !(src.enabled === true) } } });
+  };
+  const toggleJewishCategory = (cat) => {
+    const cur = settings?.jewishStatuses?.categories || {};
+    updateJewish({ categories: { ...cur, [cat]: !(cur[cat] === true) } });
+  };
+  const addBlockedCreator = () => {
+    const v = creatorInput.trim();
+    if (!v) return;
+    const list = settings?.jewishStatuses?.blockedCreators || [];
+    if (list.includes(v)) { setCreatorInput(""); return; }
+    updateJewish({ blockedCreators: [...list, v] });
+    setCreatorInput("");
+  };
+  const removeBlockedCreator = (c) => {
+    const list = settings?.jewishStatuses?.blockedCreators || [];
+    updateJewish({ blockedCreators: list.filter((x) => x !== c) });
   };
 
   const [aiResetStatus, setAiResetStatus] = useState("");
@@ -945,6 +1008,35 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
             )}
           </div>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Jewish Statuses</div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Control this user's access to the Jewish status feed. "Follow global" uses the admin setting above; the other options force it on or off for this account only.
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[["inherit", "Follow global"], ["enabled", "Enabled"], ["disabled", "Disabled"]].map(([val, label]) => {
+                const cur = selectedUser.jewishStatusesOverride || "inherit";
+                const active = cur === val;
+                return (
+                  <div
+                    key={val}
+                    onClick={() => {
+                      setError("");
+                      try {
+                        updateDoc(doc(db, "users", selectedUser.uid), { jewishStatusesOverride: val });
+                        setSelectedUser((prev) => ({ ...prev, jewishStatusesOverride: val }));
+                      } catch (e) {
+                        setError("Couldn't update override: " + e.message);
+                      }
+                    }}
+                    style={{ flex: 1, textAlign: "center", padding: "10px 6px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text, border: `1px solid ${active ? t.primary : t.border}` }}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -958,7 +1050,7 @@ export default function AdminDashboard({ myUid, onBack }) {
         <span style={{ color: t.text, fontWeight: 700, fontSize: 17 }}>Admin Dashboard</span>
       </div>
       <div style={{ display: "flex", overflowX: "auto", borderBottom: `1px solid ${t.border}`, flexShrink: 0, WebkitOverflowScrolling: "touch" }}>
-        {[["users", "Users"], ["directory", "Directory"], ["groups", "Groups"], ["analytics", "Analytics"], ["reports", "Reports"], ["feedback", "Feedback"], ["broadcast", "Broadcast"], ["system", "System"], ["ai", "AI"]].map(([key, label]) => (
+        {[["users", "Users"], ["directory", "Directory"], ["groups", "Groups"], ["voices", "Voice Samples"], ["jewish", "Jewish Statuses"], ["analytics", "Analytics"], ["reports", "Reports"], ["feedback", "Feedback"], ["broadcast", "Broadcast"], ["system", "System"], ["ai", "AI"]].map(([key, label]) => (
           <div key={key} onClick={() => setTab(key)} style={{ flex: "0 0 auto", textAlign: "center", padding: "12px 14px", fontSize: 11, fontWeight: 600, color: tab === key ? t.primary : t.textMuted, borderBottom: tab === key ? `2px solid ${t.primary}` : "2px solid transparent", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</div>
         ))}
       </div>
@@ -2874,6 +2966,106 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === "voices" && (
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <Volume2 size={18} color={t.primary} />
+            <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>Pending Voice Samples ({pendingSamples.length})</span>
+          </div>
+          {pendingSamples.length === 0 && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 30 }}>No pending voice samples.</div>}
+          {pendingSamples.map((s) => (
+            <div key={s.id} style={{ background: t.surface, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{s.name || "Untitled"}</div>
+              <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10 }}>Submitted by {s.displayName || s.uid}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <a href={s.mediaURL} download target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: 90, textAlign: "center", padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.bg, color: t.primary, fontWeight: 700, fontSize: 12.5 }}>Download / Play</a>
+                <button onClick={() => approveVoiceSample(s)} style={{ flex: 1, minWidth: 90, padding: "9px 12px", borderRadius: 8, border: "none", background: t.primaryLight, color: t.primary, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Approve</button>
+                <button onClick={() => deleteVoiceSample(s)} style={{ flex: 1, minWidth: 90, padding: "9px 12px", borderRadius: 8, border: "none", background: "#FFE5E5", color: "#FF3B30", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "jewish" && (
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Radio size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Jewish Statuses</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Global feed of curated Jewish status updates. Toggle the feature globally, per source, and per category. The status feed also honors the blocked creators / blocked statuses lists below.
+            </div>
+
+            {/* Global feature enable/disable */}
+            <div onClick={() => updateJewish({ enabled: !(settings?.jewishStatuses?.enabled === true) })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.jewishStatuses?.enabled === true ? "#34C759" : t.primaryLight, cursor: "pointer", marginBottom: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.jewishStatuses?.enabled === true ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.jewishStatuses?.enabled === true ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.jewishStatuses?.enabled === true ? "#fff" : t.text }}>
+                {settings?.jewishStatuses?.enabled === true ? "JEWISH STATUSES ON" : "JEWISH STATUSES OFF"}
+              </span>
+            </div>
+
+            {/* Per-source toggles */}
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, marginBottom: 6 }}>Sources</div>
+            {[["jewishStatus", "JewishStatus"], ["yidStatus", "YidStatus"]].map(([key, label]) => {
+              const on = settings?.jewishStatuses?.sources?.[key]?.enabled === true;
+              return (
+                <div key={key} onClick={() => toggleJewishSource(key)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 10, background: on ? "#34C759" : t.primaryLight, cursor: "pointer", marginTop: 6 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: on ? "#fff" : t.text }}>{label}</span>
+                  <div style={{ width: 42, height: 24, borderRadius: 12, background: on ? "#fff" : t.border, position: "relative", flexShrink: 0 }}>
+                    <div style={{ width: 18, height: 18, borderRadius: "50%", background: on ? "#34C759" : "#fff", position: "absolute", top: 3, left: on ? 21 : 3, transition: "left 0.15s" }} />
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Category toggles */}
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, margin: "16px 0 6px" }}>Categories</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {JEWISH_CATEGORIES.map((cat) => {
+                const on = settings?.jewishStatuses?.categories?.[cat] !== false;
+                return (
+                  <div
+                    key={cat}
+                    onClick={() => toggleJewishCategory(cat)}
+                    style={{ padding: "7px 12px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: on ? t.primary : t.bg, color: on ? t.bubbleMeText : t.text, border: `1px solid ${on ? t.primary : t.border}`, textTransform: "capitalize" }}
+                  >
+                    {cat}{on ? "" : " (hidden)"}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Blocked creators manager */}
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, margin: "16px 0 6px" }}>Blocked creators</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                value={creatorInput}
+                onChange={(e) => setCreatorInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addBlockedCreator(); }}
+                placeholder="Creator id / name"
+                style={{ flex: 1, padding: "9px 12px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 13, boxSizing: "border-box", color: t.text, background: t.bg, outline: "none" }}
+              />
+              <button onClick={addBlockedCreator} style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Add</button>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              {(settings?.jewishStatuses?.blockedCreators || []).length === 0 && (
+                <div style={{ fontSize: 12, color: t.textMuted }}>No blocked creators.</div>
+              )}
+              {(settings?.jewishStatuses?.blockedCreators || []).map((c) => (
+                <div key={c} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, background: t.bg, border: `1px solid ${t.border}`, marginTop: 6 }}>
+                  <span style={{ flex: 1, fontSize: 13, color: t.text }}>{c}</span>
+                  <span onClick={() => removeBlockedCreator(c)} style={{ fontSize: 18, color: "#FF3B30", cursor: "pointer", lineHeight: 1 }}>×</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
       </div>

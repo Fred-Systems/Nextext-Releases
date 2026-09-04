@@ -49,7 +49,7 @@ import { FONTS } from "./theme/ThemeContext";
 import Avatar from "./components/Avatar";
 import AvatarColorPicker from "./components/AvatarColorPicker";
 import { uploadChatFile } from "./supabase/media";
-import { doc, getDoc, updateDoc, setDoc, onSnapshot, collection, query, where, orderBy } from "firebase/firestore";
+import { doc, getDoc, updateDoc, setDoc, onSnapshot, collection, query, where, orderBy, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "./firebase/config";
 import AuthScreen from "./screens/AuthScreen";
 import CompleteProfileScreen from "./screens/CompleteProfileScreen";
@@ -497,6 +497,109 @@ function NotificationPrefsRow({ t, auth, myUid }) {
         Note: to hear the ping, make sure your device's notification sound is turned on (the app can't override a muted phone).
       </div>
     </>
+  );
+}
+
+// User-facing: submit a voice sample to the admin review queue. Shows only for
+// users who have the cloned-voice-note feature (aiVoiceNoteEnabled); if the
+// grant is undetermined we show it for everyone but label it as needing admin approval.
+function VoiceSampleSubmitSection({ t, myUid, userDoc }) {
+  const fileRef = React.useRef(null);
+  const [file, setFile] = React.useState(null);
+  const [name, setName] = React.useState("");
+  const [duration, setDuration] = React.useState(null);
+  const [status, setStatus] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  const vnEnabled = userDoc?.aiVoiceNoteEnabled;
+  const showSection = vnEnabled === true || vnEnabled === undefined;
+  if (!showSection) return null;
+
+  const labeledForAll = vnEnabled === undefined;
+
+  const onPick = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setStatus("");
+    const url = URL.createObjectURL(f);
+    const audio = new Audio(url);
+    audio.onloadedmetadata = () => { setDuration(audio.duration); URL.revokeObjectURL(url); };
+    audio.onerror = () => { setDuration(null); URL.revokeObjectURL(url); };
+  };
+
+  const submit = async () => {
+    setStatus("");
+    if (!file) { setStatus("Please choose an audio file to submit."); return; }
+    if (!name.trim()) { setStatus("Please enter the voice name (e.g. a famous person or label)."); return; }
+    if (duration != null && (duration < 30 || duration > 90)) {
+      setStatus(`Recording must be between 30 and 90 seconds (detected ${Math.round(duration)}s).`);
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await uploadChatFile("voiceSamples", myUid, file);
+      await addDoc(collection(db, "voiceSamples"), {
+        uid: myUid,
+        displayName: userDoc?.displayName || userDoc?.username || "Unknown",
+        name: name.trim(),
+        mediaURL: res.url,
+        storagePath: res.path,
+        status: "pending",
+        createdAt: serverTimestamp(),
+        note: "",
+      });
+      setStatus("Submitted! Your voice is now pending admin review.");
+      setFile(null); setName(""); setDuration(null);
+      if (fileRef.current) fileRef.current.value = "";
+    } catch (err) {
+      setStatus("Upload failed: " + (err?.message || err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+        <span style={{ fontSize: 14 }}>🎙️</span>
+        <span style={{ fontWeight: 700, fontSize: 14, color: t.text, flex: 1 }}>Submit a voice for the library</span>
+      </div>
+      <div style={{ padding: "4px 0" }}>
+        <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+          Recordings: total between <strong>30 and 90 seconds</strong>, <strong>NO background noise</strong>, <strong>ONE speaker only</strong>.
+          {labeledForAll && " (Admin approval for cloned voice notes may be required for your account.)"}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="audio/*"
+            onChange={onPick}
+            style={{ fontSize: 13, color: t.text, width: "100%" }}
+          />
+          {duration != null && (
+            <div style={{ fontSize: 12, color: duration >= 30 && duration <= 90 ? "#28A745" : "#FF9500" }}>
+              Detected length: {Math.round(duration)}s {duration >= 30 && duration <= 90 ? "(OK)" : "(outside 30–90s range)"}
+            </div>
+          )}
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Famous person or voice name"
+            style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, color: t.text, background: t.bg, outline: "none" }}
+          />
+          <button
+            onClick={submit}
+            disabled={busy}
+            style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: busy ? t.border : t.primary, color: busy ? t.textMuted : t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: busy ? "not-allowed" : "pointer" }}
+          >
+            {busy ? "Uploading…" : "Submit voice"}
+          </button>
+          {status && <div style={{ fontSize: 12.5, color: status.startsWith("Submitted") ? "#28A745" : "#FF3B30", fontWeight: 600 }}>{status}</div>}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1206,6 +1309,8 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Adjust the size of the recording controls when the mic is active.</div>
           </div>
         </SectionCard>
+
+        <VoiceSampleSubmitSection t={t} myUid={myUid} userDoc={userDoc} />
 
         {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}
         <SectionCard title="Notification Sound & Vibration" emoji="🔔" sectionKey="notifprefs">
@@ -3009,7 +3114,10 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     // "Mark as read" action on a notification: zero the chat's unread badge
     // without opening the conversation. Same cold-start polling applies.
     setNotificationMarkReadHandler((chatId) => {
-      if (myUidRef.current && chatId) markChatRead(chatId, myUidRef.current).catch(() => {});
+      if (myUidRef.current && chatId) {
+        markChatRead(chatId, myUidRef.current).catch(() => {});
+        cancelNotificationForChat(chatId);
+      }
     });
     pollPendingMarkRead();
     // "Reply" action: open the chat and prefill the composer with the typed text
