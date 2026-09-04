@@ -4021,8 +4021,13 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <div style={{ padding: "12px 12px", borderRadius: 12, background: t.surface, border: `1px solid ${t.border}`, marginBottom: 10 }}>
                     <div style={{ fontSize: 12.5, fontWeight: 600, color: t.textMuted, marginBottom: 6 }}>Preview (generated voice note):</div>
                     <audio src={genUrl} controls preload="metadata" style={{ width: "100%", maxWidth: "100%" }} />
-                    <div onClick={vcSaveToDevice} style={{ marginTop: 8, fontSize: 12.5, color: t.primary, cursor: "pointer", textDecoration: "underline", textAlign: "center" }}>
-                      Save to device
+                    <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                      <div onClick={vcSaveToDevice} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, fontWeight: 700, fontSize: 13.5, color: t.primary, cursor: "pointer" }}>
+                        Save to device
+                      </div>
+                      <div onClick={vcConfirmSend} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 13.5, color: t.bubbleMeText, cursor: vcSending ? "wait" : "pointer", opacity: vcSending ? 0.6 : 1 }}>
+                        {vcSending ? "Sending…" : "Send"}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -4031,11 +4036,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <div onClick={() => { if (!vcSending) { if (genUrl) { URL.revokeObjectURL(genUrl); setGenBlob(null); setGenUrl(null); setGenDuration(0); } vcDiscard(); setShowClone(false); } }} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, border: `1px solid ${t.border}`, fontWeight: 700, fontSize: 14, color: t.textMuted, cursor: "pointer" }}>
                     Cancel
                   </div>
-                  {genBlob ? (
-                    <div onClick={vcConfirmSend} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcSending ? "wait" : "pointer", opacity: vcSending ? 0.6 : 1 }}>
-                      {vcSending ? "Sending…" : "Send"}
-                    </div>
-                  ) : (
+                  {!genBlob && (
                     <div onClick={vcSend} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcBlob && !vcSending ? "pointer" : "not-allowed", opacity: vcBlob && !vcSending ? 1 : 0.5 }}>
                       {vcSending ? "Converting…" : "Send Cloned Voice Note"}
                     </div>

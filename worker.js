@@ -38,6 +38,17 @@ export default {
       return convertVoice(request, env);
     }
 
+    // YidStatus global feed proxy. The upstream /functions/v1/feed endpoint
+    // requires `Origin: https://yidstatus.com`, which a browser/WebView fetch
+    // cannot set (forbidden header). This Worker adds it server-side. The anon
+    // JWT is the public, read-only key shipped in the YidStatus web bundle.
+    if (url.pathname === "/api/yidstatus-feed") {
+      if (request.method !== "POST") {
+        return json({ error: "Method not allowed" }, 405);
+      }
+      return yidStatusFeed(request, env);
+    }
+
     // Everything else falls through to the static SPA assets.
     return env.ASSETS.fetch(request);
   },
@@ -158,6 +169,43 @@ async function convertVoice(request, env) {
 let _fishKeyCache = null;
 let _fishKeyCacheAt = 0;
 const FISH_KEY_TTL = 10 * 60 * 1000;
+// Proxy the YidStatus global feed. Adds the required Origin header server-side.
+const YID_STATUS_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZzaW53YWxxaGd3YXBldndpYm1kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2ODEyODUsImV4cCI6MjA5ODI1NzI4NX0.ZwrXgeUknPSDAWsOzdI8jdj7wCO9xOe7glLSj3OB_vA";
+
+async function yidStatusFeed(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+  const payload = { days: Number(body.days) || 1, since: body.since || null };
+  try {
+    const upstream = await fetch("https://api.yidstatus.com/functions/v1/feed", {
+      method: "POST",
+      headers: {
+        apikey: YID_STATUS_KEY,
+        "Content-Type": "application/json",
+        Origin: "https://yidstatus.com",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!upstream.ok) {
+      return json({ error: "Upstream YidStatus error", status: upstream.status }, 502);
+    }
+    const data = await upstream.json();
+    return new Response(JSON.stringify(data), {
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  } catch (e) {
+    return json({ error: "Could not reach YidStatus." }, 502);
+  }
+}
+
 async function getFishKeyFromFirestore(env) {
   const now = Date.now();
   if (_fishKeyCache && now - _fishKeyCacheAt < FISH_KEY_TTL) return _fishKeyCache;

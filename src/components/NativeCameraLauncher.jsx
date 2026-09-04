@@ -31,7 +31,17 @@ function pickFile(accept, capture) {
       cleanup();
       resolve(file || null);
     };
-    const onFocus = () => { setTimeout(() => finish(null), 0); };
+    // When the OS camera/picker closes, the window regains focus. Only treat
+    // that as a CANCEL if the input actually has no file selected — otherwise
+    // (the normal "photo chosen" path) the `change` event has already populated
+    // input.files, so we must NOT cancel. Guarding on input.files.length avoids
+    // the focus-before-change race that silently discarded captures (the picker
+    // would flash open and immediately close).
+    const onFocus = () => {
+      setTimeout(() => {
+        if (!done && (!input.files || input.files.length === 0)) finish(null);
+      }, 250);
+    };
     input.onchange = () => finish(input.files && input.files[0] ? input.files[0] : null);
     window.addEventListener("focus", onFocus);
     document.body.appendChild(input);
@@ -112,7 +122,7 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
     setBusy(true);
     setStep("capturing");
     const file = await openNativeCamera(type);
-    if (cancelledRef.current) return;
+    if (cancelledRef.current) { setBusy(false); return; }
     setBusy(false);
     if (!file) { onClose(); return; }
     setPendingFile(file);

@@ -366,14 +366,66 @@ export default function AIChatScreen({ myUid, onBack }) {
     setPodcastBusy(true);
     setPodcastStatus("Writing the conversation…");
     try {
-      const voiceMeta = voices.map((id) => {
+      // Map a podcast voice id back to its PERSONALITIES key (preset voices),
+      // so we can inject that persona's own systemPrompt/label verbatim.
+      const VOICE_TO_PERSONA = { "y-mizrachi": "mizrachi", trump: "trump", magnus: "magnusC" };
+      // A varied pool of genuinely divisive seed topics so every run argues a
+      // different hot-button issue. One is picked at random each generation.
+      const CONTROVERSIAL_TOPICS = [
+        "Should social media platforms ban political misinformation, or is that censorship?",
+        "Is remote work freeing workers or destroying company culture?",
+        "Should religious symbols be displayed in public schools?",
+        "Is artificial intelligence a threat to human creativity and jobs?",
+        "Should governments regulate or outright ban cryptocurrency?",
+        "Is the death penalty ever justified?",
+        "Should universities abolish standardized testing?",
+        "Is nuclear energy the real solution to climate change?",
+        "Should parents have the right to refuse vaccines for their children?",
+        "Is cancel culture protecting the vulnerable or silencing debate?",
+        "Should billionaires be heavily taxed to fund social programs?",
+        "Is gun ownership a fundamental right or a public-safety risk?",
+        "Should animals have the same legal rights as humans?",
+        "Is globalism helping or hurting the working class?",
+        "Should governments impose a meat tax to fight climate change?",
+        "Is free speech absolute, even for hate speech?",
+        "Should the voting age be lowered to 16?",
+        "Is space exploration worth the cost while Earth has problems?",
+        "Should single-use plastic be banned entirely?",
+        "Is homeschooling better than public education?",
+      ];
+      const ANGLES = [
+        "from a deeply personal, lived-experience angle",
+        "with a sharp focus on economic impact",
+        "through a generational clash",
+        "using historical precedents",
+        "through the lens of moral philosophy",
+        "with a skeptical, facts-and-logic lens",
+        "through the lens of personal freedom",
+        "with emotional, real-world stories",
+      ];
+      const seedTopic = CONTROVERSIAL_TOPICS[Math.floor(Math.random() * CONTROVERSIAL_TOPICS.length)];
+      const seedAngle = ANGLES[Math.floor(Math.random() * ANGLES.length)];
+      // Build PER-VOICE instructions: pull the admin director profile
+      // (fullName, prompt, speakStyle) AND the persona's own systemPrompt/label,
+      // and force the model to write that speaker's lines in that exact voice.
+      const voiceMeta = voices.map((id, idx) => {
         const v = availableVoices.find((x) => x.id === id);
         const prof = sysConfig?.voiceProfiles?.[id] || {};
+        const personaKey = prof.persona || VOICE_TO_PERSONA[id] || (id.startsWith("persona_") ? id.slice(7) : null);
+        const personaDef = personaKey ? (PERSONALITIES[personaKey] || {}) : {};
+        const fullName = prof.fullName || personaDef.fullName || v?.name || id;
+        const personaPrompt = personaDef.systemPrompt || prof.prompt || "";
+        const speakStyle = prof.speakStyle || personaDef.speakStyle || "";
         const note = (podcastSpeakerNotes[id] || "").trim();
-        return `- ${v?.name || id}${prof.fullName ? ` (${prof.fullName})` : ""}${prof.prompt ? `\n  Persona: ${prof.prompt}` : ""}${note ? `\n  This speaker's direction: ${note}` : ""}`;
+        let line = `- Speaker ${idx + 1} (voiceId: "${id}", NAME: ${fullName}):`;
+        if (personaPrompt) line += `\n  PERSONA = ${personaPrompt}`;
+        if (speakStyle) line += `\n  SPEAKING STYLE = ${speakStyle}`;
+        line += `\n  Speak EXACTLY like this persona — mirror this exact word choice, tone, mannerisms, and Fish Audio brackets. NEVER break character or speak in another speaker's voice.`;
+        if (note) line += `\n  This speaker's direction: ${note}`;
+        return line;
       }).join("\n");
       const modeLine = podcastMode === "auto"
-        ? "Invent a CONTROVERSIAL, debate-worthy, hot-button podcast topic that sparks strong, clashing opinions between the speakers. Pick something genuinely divisive and current — the kind of topic real people argue about. Do NOT pick something bland or neutral."
+        ? `Debate this SPECIFIC controversial topic (do NOT substitute a different one): "${seedTopic}". Approach it ${seedAngle}. Force GENUINELY CLASHING, opposing viewpoints — this is a real disagreement, not polite agreement.`
         : `Follow the user's direction below for what the conversation should be about and each speaker's opinion/style:\n${podcastTopic}`;
       const lenEntry = PODCAST_LENGTH_OPTIONS.find((o) => o.val === podcastLength) || PODCAST_LENGTH_OPTIONS[2];
       const heatEntry = PODCAST_HEAT_OPTIONS.find((o) => o.val === podcastHeat) || PODCAST_HEAT_OPTIONS[1];
@@ -383,9 +435,10 @@ export default function AIChatScreen({ myUid, onBack }) {
         "You are producing a multi-speaker AI podcast script. Output STRICTLY a JSON array (no markdown, no code fences) of objects {\"voiceId\": string, \"text\": string}. " +
         "Each 'text' is one spoken turn of under 220 characters. Use Fish Audio bracket tags like [serious], [laughing], [slow], [whispering] for emotion — NEVER asterisks or italics. " +
         "Extend stressed vowels for emphasis. Keep it punchy and conversational.\n" +
-        "Speakers (use the exact voiceId values), following their admin-documented style:\n" + voiceMeta + "\n" +
-        "CRITICAL: Each speaker MUST stay 100% in character using their Persona/description and the admin direction above; never break character or speak in another speaker's voice. " +
-        "Let their documented speaking style shape word choice, tone, and the Fish Audio brackets. " +
+        "Speakers (use the exact voiceId values), each MUST stay 100% in their documented character:\n" + voiceMeta + "\n" +
+        "CRITICAL — do NOT write generic, default, or interchangeable dialogue. Each speaker's lines MUST reflect ONLY their own PERSONA / SPEAKING STYLE above. " +
+        "Never let a speaker sound like another speaker, and NEVER ignore the per-speaker persona or the admin direction. " +
+        "Let each speaker's documented speaking style shape word choice, tone, and the Fish Audio brackets. " +
         "Mode: " + modeLine + "\n" +
         "Tone / confrontational intensity: " + heatEntry.label + " — " + heatEntry.desc + ".\n" +
         `Randomize the specific angle and seed (${seed}) — do NOT repeat a previous generic topic; pick a fresh, surprising take every time.\n` +

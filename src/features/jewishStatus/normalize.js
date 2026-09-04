@@ -50,6 +50,27 @@ export async function fetchJson(url, { timeoutMs = 8000, headers = {} } = {}) {
   }
 }
 
+// Map a provider's free-form category string(s) onto the admin-controlled
+// category keys used in globalSettings.jewishStatuses.categories
+// (music|news|entertainment|business|community|events|influencers|organizations|other).
+// We keep ALL categories (no music-only filter) — admins decide what to hide.
+export function mapCategory(raw) {
+  if (!raw) return "other";
+  const s = String(raw).toLowerCase();
+  const rules = [
+    ["music", "music"], ["kumzits", "music"], ["simcha", "music"], ["concert", "music"],
+    ["singer", "music"], ["band", "music"], ["chassidic", "music"], ["nigun", "music"],
+    ["news", "news"],
+    ["entertainment", "entertainment"], ["comedy", "entertainment"], ["media", "entertainment"],
+    ["business", "business"], ["service", "business"], ["jobs", "business"], ["real estate", "business"],
+    ["community", "community"],
+    ["organization", "organizations"], ["org", "organizations"], ["shul", "organizations"],
+    ["event", "events"], ["travel", "other"],
+  ];
+  for (const [needle, cat] of rules) if (s.includes(needle)) return cat;
+  return "other";
+}
+
 function toMs(v) {
   if (v == null) return Date.now();
   if (typeof v === "number") {
