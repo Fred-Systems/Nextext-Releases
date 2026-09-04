@@ -9,6 +9,7 @@ import { getOrCreateDirectChat, sendTextMessage } from "../firebase/chats";
 import Avatar from "../components/Avatar";
 import ZoomableMedia from "../components/ZoomableMedia";
 import { getProxyMediaUrl } from "../media/mediaProxy";
+import { getTrackPreviewUrl } from "../media/musicCatalog";
 import HlsVideo from "../components/HlsVideo";
 import { getSignedUrl } from "../supabase/media";
 import NextextNative from "../native/nextextNative";
@@ -133,6 +134,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     if (timerRef.current) clearTimeout(timerRef.current);
     if (videoRef.current) { try { videoRef.current.pause(); } catch { /* noop */ } }
     if (bgAudioRef.current) { try { bgAudioRef.current.pause(); } catch { /* noop */ } }
+    if (bgMusicRef.current) { try { bgMusicRef.current.pause(); } catch { /* noop */ } }
     if (onExit) onExit();
     else onClose?.();
   }, [onExit, onClose]);
@@ -145,6 +147,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const videoRef = useRef(null);
   const voiceRef = useRef(null);
   const bgAudioRef = useRef(null);
+  const bgMusicRef = useRef(null);
   const replyInputRef = useRef(null);
   const initialAnimDoneRef = useRef(false);
   const durationRef = useRef(0);
@@ -272,6 +275,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     if (timerRef.current) clearTimeout(timerRef.current);
     if (videoRef.current) { try { videoRef.current.pause(); videoRef.current.currentTime = 0; } catch { /* noop */ } }
     if (bgAudioRef.current) { try { bgAudioRef.current.pause(); bgAudioRef.current.currentTime = 0; } catch { /* noop */ } }
+    if (bgMusicRef.current) { try { bgMusicRef.current.pause(); bgMusicRef.current.currentTime = 0; } catch { /* noop */ } }
     setIdx(initialIndex);
     initializedRef.current = true;
   }, [ownerUid]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -492,6 +496,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     if (current?.mediaType !== "video" || !videoRef.current) return;
     const v = videoRef.current;
     v.volume = (current.videoVolume ?? 100) / 100;
+    if (current?.backgroundMusic?.muted) v.volume = 0;
     v.muted = muted;
     v.playbackRate = speed;
     if (paused) {
@@ -551,6 +556,18 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     if (!paused) audio.play().catch(() => {});
     return () => { audio.pause(); audio.currentTime = 0; };
   }, [current?.bgAudioURL, current?.bgAudioVolume, idx, paused]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Background music (Status Builder): stream the source's preview clip in sync
+  // with the active slide. Reset to start/volume on each slide change and respect
+  // the viewer's paused state. Cleanup stops + unloads so no player runs on.
+  useEffect(() => {
+    if (!current?.backgroundMusic?.previewUrl || !bgMusicRef.current) return;
+    const audio = bgMusicRef.current;
+    audio.volume = current.backgroundMusic.volume ?? 1;
+    try { audio.currentTime = current.backgroundMusic.start || 0; } catch { /* not seekable yet */ }
+    if (!paused) audio.play().catch(() => {});
+    return () => { audio.pause(); try { audio.currentTime = 0; } catch { /* noop */ } };
+  }, [current?.backgroundMusic?.previewUrl, current?.backgroundMusic?.start, current?.backgroundMusic?.volume, idx, paused]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendReply = async (text) => {
     if (!text?.trim() || !myUid || !ownerUid || isOwner) return;
@@ -667,6 +684,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 20px 40px", boxSizing: "border-box", overflow: "hidden" }}>
         {current.bgAudioURL && <audio ref={bgAudioRef} src={current.bgAudioURL} loop />}
+        {current.backgroundMusic?.previewUrl && <audio ref={bgMusicRef} src={getTrackPreviewUrl(current.backgroundMusic)} loop />}
         {(current.state === "queued" || current.state === "processing") ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, color: "#fff" }}>
             <RefreshCw size={28} color="#fff" style={{ animation: "nextext-spin 1s linear infinite" }} />

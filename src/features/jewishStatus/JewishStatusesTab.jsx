@@ -392,6 +392,7 @@ export default function JewishStatusesTab({ onStoryViewerChange }) {
     // "stories" (default) — horizontal rail, slightly taller.
     return (
       <div
+        className="noPagerSwipe"
         style={{
           display: "flex",
           gap: 14,

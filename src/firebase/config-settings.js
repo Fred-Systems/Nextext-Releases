@@ -130,6 +130,19 @@ export async function updateGlobalSettings(patch, adminUid) {
   await setDoc(doc(db, ...CONFIG_REF_PATH), { ...patch, updatedBy: adminUid, updatedAt: new Date() }, { merge: true });
 }
 
+// ── Background-music download permission (mirrors the Jewish Statuses override) ──
+// Stored as globalSettings.musicDownloads.enabled (global ON/OFF) plus a per-user
+// `musicDownloadsOverride` on the user doc ("inherit" | "enabled" | "disabled").
+// Truth table: global ON + inherit -> enabled; global OFF + inherit -> disabled;
+// global ON + disabled -> disabled; global OFF + enabled -> enabled.
+export function resolveMusicDownloadAllowed(globalSettings, userDoc) {
+  const globalEnabled = globalSettings?.musicDownloads?.enabled === true;
+  const override = userDoc?.musicDownloadsOverride || "inherit";
+  if (override === "enabled") return true;
+  if (override === "disabled") return false;
+  return globalEnabled;
+}
+
 // ── Announcements ──
 // Admin posts a site-wide announcement; it shows at the top of every user's chat
 // list until the user dismisses it (dismissal is per-user, stored on their doc).

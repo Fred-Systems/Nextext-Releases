@@ -1037,6 +1037,36 @@ export default function AdminDashboard({ myUid, onBack }) {
               })}
             </div>
           </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Background Music Downloads</div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Control this user's ability to download music previews from the status composer. "Follow global" uses the admin setting above; the other options force it on or off for this account only.
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[["inherit", "Follow global"], ["enabled", "Enabled"], ["disabled", "Disabled"]].map(([val, label]) => {
+                const cur = selectedUser.musicDownloadsOverride || "inherit";
+                const active = cur === val;
+                return (
+                  <div
+                    key={val}
+                    onClick={() => {
+                      setError("");
+                      try {
+                        updateDoc(doc(db, "users", selectedUser.uid), { musicDownloadsOverride: val });
+                        setSelectedUser((prev) => ({ ...prev, musicDownloadsOverride: val }));
+                      } catch (e) {
+                        setError("Couldn't update override: " + e.message);
+                      }
+                    }}
+                    style={{ flex: 1, textAlign: "center", padding: "10px 6px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text, border: `1px solid ${active ? t.primary : t.border}` }}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -3064,6 +3094,25 @@ export default function AdminDashboard({ myUid, onBack }) {
                   <span onClick={() => removeBlockedCreator(c)} style={{ fontSize: 18, color: "#FF3B30", cursor: "pointer", lineHeight: 1 }}>×</span>
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Background Music Downloads (global toggle, separate from Jewish Statuses) */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Volume2 size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Background Music Downloads</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Allow users to download the licensed 30-second music preview to their device from the status composer. This is separate from the status feature and from Jewish Statuses. Global default, with per-user overrides (see a user's detail page).
+            </div>
+            <div onClick={() => updateGlobalSettings({ musicDownloads: { ...(settings?.musicDownloads || {}), enabled: !(settings?.musicDownloads?.enabled === true) } }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.musicDownloads?.enabled === true ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.musicDownloads?.enabled === true ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.musicDownloads?.enabled === true ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.musicDownloads?.enabled === true ? "#fff" : t.text }}>
+                {settings?.musicDownloads?.enabled === true ? "MUSIC DOWNLOADS ON" : "MUSIC DOWNLOADS OFF"}
+              </span>
             </div>
           </div>
         </div>

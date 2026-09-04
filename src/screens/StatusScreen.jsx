@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic, MessageCircle, Download, Globe } from "lucide-react";
+import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic, MessageCircle, Download, Globe, Search, Music } from "lucide-react";
 import { useTheme, FONTS } from "../theme/ThemeContext";
 import { postStatus, useStatuses, usePublicStatuses, viewStatus, useStatusViewers, deleteStatus, updateStatusVisibility } from "../firebase/status";
 import { useSystemConfigHook } from "../firebase/ai";
@@ -12,11 +12,13 @@ import { uploadMediaFile, RawFileTooLargeError } from "../services/mediaUpload";
 import { NativeCameraSheet } from "../components/NativeCameraLauncher";
 import { doc, onSnapshot, updateDoc, setDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
+import { Capacitor } from "@capacitor/core";
 import Avatar from "../components/Avatar";
 import StatusStoryViewer from "./StatusStoryViewer";
 import { getMicrophoneStream } from "../media/microphone";
 import { base64ToBlob } from "../media/base64";
-import { useGlobalSettings } from "../firebase/config-settings";
+import { useGlobalSettings, resolveMusicDownloadAllowed } from "../firebase/config-settings";
+import { searchMusic, fetchTrackBlob } from "../media/musicCatalog";
 import { getProxyMediaUrl, getVideoPosterUrl } from "../media/mediaProxy";
 import JewishStatusesTab from "../features/jewishStatus/JewishStatusesTab";
 
@@ -255,6 +257,13 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   // Admin can globally disable video thumbnails in the feed (shows a blank
   // placeholder instead of the heavy video stream). Defaults to ON.
   const showVideoThumbs = globalSettings?.show_video_thumbnails !== false;
+  // Live snapshot of this user's own doc (for per-user feature overrides).
+  const [myUserDoc, setMyUserDoc] = useState(null);
+  // Jewish Statuses tab visibility (mirrors the admin + per-user override logic).
+  const jsSettings = globalSettings?.jewishStatuses || {};
+  const jsEnabled = jsSettings.enabled === true;
+  const jsOverride = myUserDoc?.jewishStatusesOverride || "inherit";
+  const jewishVisible = jsOverride === "enabled" || (jsOverride !== "disabled" && jsEnabled);
   const [blockStatus, setBlockStatus] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [myDisplayName, setMyDisplayName] = useState(myName);
@@ -284,6 +293,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       if (d?.statusPreviewSize) { setStatusPreviewSize(d.statusPreviewSize); try { localStorage.setItem("nextext_status_preview_size", d.statusPreviewSize); } catch {} }
       if (d?.statusVisibility) setUserStatusVisibility(d.statusVisibility);
       if (d?.displayName || d?.username) setMyDisplayName(d.displayName || d.username || myUid);
+      setMyUserDoc(d);
     });
     return unsub;
   }, [myUid]);
@@ -340,6 +350,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const updateSticker = (id, patch) => setTextStickers((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   const removeSticker = (id) => { setTextStickers((prev) => prev.filter((s) => s.id !== id)); setActiveStickerId((cur) => (cur === id ? null : cur)); };
   const [bgAudioFile, setBgAudioFile] = useState(null);
+  const [bgMusic, setBgMusic] = useState(null);
+  const [musicModalOpen, setMusicModalOpen] = useState(false);
+  const bgMusicChipAudioRef = useRef(null);
   const [bgAudioVolume, setBgAudioVolume] = useState(70);
   const [videoVolume, setVideoVolume] = useState(100);
   const [muteOriginal, setMuteOriginal] = useState(false);
@@ -501,6 +514,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     setActiveStickerId(null);
     setBgAudioFile(null);
     setBgAudioVolume(70);
+    setBgMusic(null);
+    setMusicModalOpen(false);
     setVideoVolume(100);
     setMuteOriginal(false);
     setAllowDownload(true);
@@ -510,6 +525,20 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     setPostError("");
     setShowPost(true);
   };
+
+    const handleSelectMusic = (track) => {
+      // Store metadata ONLY — never an audio blob. The licensed preview URL is
+      // streamed on-device by the viewer. originalVolume captures the video's own
+      // volume so the "Mute original" toggle can restore it later.
+      setBgMusic({
+        ...track,
+        start: 0,
+        volume: 1,
+        originalVolume: postMediaType === "video" ? (videoVolume / 100) : 1,
+        muted: false,
+      });
+      setMusicModalOpen(false);
+    };
 
     const handlePost = async () => {
     if (postMode === "text" && !postText.trim() && !voiceBlob) return;
@@ -540,6 +569,21 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     const snapBgVol = bgAudioVolume;
     const snapVidVol = videoVolume;
     const snapMuteOriginal = muteOriginal;
+    const snapBgMusic = bgMusic
+      ? {
+          trackId: bgMusic.trackId,
+          title: bgMusic.title,
+          artist: bgMusic.artist,
+          album: bgMusic.album,
+          artwork: bgMusic.artwork,
+          previewUrl: bgMusic.previewUrl,
+          source: bgMusic.source,
+          start: bgMusic.start,
+          volume: bgMusic.volume,
+          originalVolume: bgMusic.originalVolume,
+          muted: bgMusic.muted,
+        }
+      : null;
     setShowPost(false);
     setPostText("");
     setPostMedia(null);
@@ -593,6 +637,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           textStickers: textStickers.length ? textStickers : null,
             allowDownload: snapAllowDownload,
             commentsHidden: snapHideComments,
+            backgroundMusic: snapBgMusic,
             visibility: postVisibility,
           });
         }
@@ -638,6 +683,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             waitForVideo: snapWaitForVideo,
             allowDownload: snapAllowDownload,
             commentsHidden: snapHideComments,
+            backgroundMusic: snapBgMusic,
             state: "queued",
             originalPath,
             hlsMasterPath: null,
@@ -721,6 +767,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             waitForVideo: isVideo && snapWaitForVideo,
             allowDownload: snapAllowDownload,
             commentsHidden: snapHideComments,
+            backgroundMusic: snapBgMusic,
             previewURL: previewURL || null,
             posterURL: posterURL || null,
             // Static client-side thumbnail (already uploaded). When present the
@@ -1207,7 +1254,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
          {[
            { id: "updates", label: "Updates" },
            { id: "public", label: `Public${publicStatuses.length ? ` (${publicStatuses.length})` : ""}` },
-           { id: "jewish", label: "Jewish Statuses" },
+           ...(jewishVisible ? [{ id: "jewish", label: "Jewish Statuses" }] : []),
          ].map((tab) => (
           <div
             key={tab.id}
@@ -1290,7 +1337,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
 
         {Object.keys(grouped).length > 0 && <SectionHeader label={statusTab === "public" ? "Public Statuses" : "Recent Updates"} />}
         {statusLayout === "list" ? (
-          <div style={{ display: "flex", overflowX: "auto", overflowY: "hidden", padding: "10px 16px 14px", WebkitOverflowScrolling: "touch", touchAction: "pan-x pan-y" }}>
+           <div className="noPagerSwipe" style={{ display: "flex", overflowX: "auto", overflowY: "hidden", padding: "10px 16px 14px", WebkitOverflowScrolling: "touch", touchAction: "pan-x pan-y" }}>
             {Object.entries(grouped).map(([uid, items]) => {
               const contact = acceptedContacts.find((c) => c.uid === uid);
               const name = contact?.profile?.displayName || "Unknown";
@@ -2047,6 +2094,60 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
               </div>
             )}
 
+            {/* Background Music (iTunes preview streaming — metadata only, never an audio file) */}
+            {((postMode === "media" && postMedia) || postMode === "text") && (
+              <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 10, background: t.bg, border: `1px solid ${t.border}` }}>
+                <div onClick={() => setMusicModalOpen(true)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: t.primary, fontSize: 13, fontWeight: 600 }}>
+                  <Music size={16} /> Add Music
+                </div>
+                {bgMusic && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      {bgMusic.artwork ? (
+                        <img src={bgMusic.artwork} alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover", background: t.primaryLight, flexShrink: 0 }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                      ) : (
+                        <div style={{ width: 40, height: 40, borderRadius: 8, background: t.primaryLight, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: t.primary }}>{(bgMusic.title || "?")[0]}</div>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgMusic.title}</div>
+                        <div style={{ fontSize: 12, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgMusic.artist}</div>
+                      </div>
+                      <div onClick={() => { const a = bgMusicChipAudioRef.current; if (a) { a.currentTime = bgMusic.start || 0; a.volume = bgMusic.volume ?? 1; a.play().catch(() => {}); } }} title="Preview" style={{ width: 32, height: 32, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                        <Play size={14} color={t.primary} />
+                      </div>
+                      <div onClick={() => setMusicModalOpen(true)} style={{ padding: "6px 10px", borderRadius: 8, background: t.primaryLight, color: t.primary, fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>Replace</div>
+                      <div onClick={() => { try { if (bgMusicChipAudioRef.current) bgMusicChipAudioRef.current.pause(); } catch {} setBgMusic(null); }} style={{ padding: "6px 10px", borderRadius: 8, background: "rgba(255,59,48,0.15)", color: "#FF3B30", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>Remove</div>
+                    </div>
+
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ fontSize: 11.5, fontWeight: 600, color: t.text }}>Start position</span>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: t.primary }}>{bgMusic.start}s</span>
+                      </div>
+                      <input type="range" min="0" max="30" step="1" value={bgMusic.start} onChange={(e) => setBgMusic((m) => ({ ...m, start: Number(e.target.value) }))} style={{ width: "100%", accentColor: t.primary, height: 26, minHeight: 26 }} />
+                    </div>
+
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ fontSize: 11.5, fontWeight: 600, color: t.text }}>Music volume</span>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: t.primary }}>{Math.round((bgMusic.volume ?? 1) * 100)}%</span>
+                      </div>
+                      <input type="range" min="0" max="1" step="0.05" value={bgMusic.volume ?? 1} onChange={(e) => setBgMusic((m) => ({ ...m, volume: Number(e.target.value) }))} style={{ width: "100%", accentColor: t.primary, height: 26, minHeight: 26 }} />
+                    </div>
+
+                    {postMediaType === "video" && (
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: t.text }}>
+                        <input type="checkbox" checked={!!bgMusic.muted} onChange={(e) => setBgMusic((m) => ({ ...m, muted: e.target.checked }))} />
+                        Mute original video sound
+                      </label>
+                    )}
+
+                    <audio ref={bgMusicChipAudioRef} src={bgMusic.previewUrl} style={{ display: "none" }} />
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ flex: 1, minHeight: 0 }} />
 
             {postError && (
@@ -2064,6 +2165,161 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
         </div>,
         document.body
       )}
+
+      {musicModalOpen && (
+        <MusicSearchModal
+          onClose={() => setMusicModalOpen(false)}
+          onSelect={handleSelectMusic}
+          globalSettings={globalSettings}
+          userDoc={myUserDoc}
+          t={t}
+        />
+      )}
     </div>
   );
+}
+
+// ── Music search modal (Status Builder "Add Music") ───────────────────────────
+// Streams 30s preview clips from the iTunes Search API and stores metadata ONLY.
+// No audio blob is ever uploaded; downloads (when permitted) save locally.
+function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [playingId, setPlayingId] = useState(null);
+  const previewRef = useRef(null);
+  const debounceRef = useRef(null);
+
+  const runSearch = async (query) => {
+    const term = (query || "").trim();
+    if (!term) { setResults([]); setLoading(false); return; }
+    setLoading(true); setError("");
+    try {
+      const res = await searchMusic(term, { limit: 20 });
+      setResults(res || []);
+    } catch {
+      setError("Search failed. Please try again.");
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onChange = (e) => {
+    const val = e.target.value;
+    setQ(val);
+    if (previewRef.current) { previewRef.current.pause(); setPlayingId(null); }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!val.trim()) { setResults([]); setLoading(false); return; }
+    setLoading(true);
+    debounceRef.current = setTimeout(() => runSearch(val), 300);
+  };
+
+  const playPreview = (track) => {
+    const a = previewRef.current;
+    if (!a) return;
+    if (playingId === track.trackId) { a.pause(); setPlayingId(null); return; }
+    a.src = track.previewUrl;
+    a.currentTime = 0;
+    a.volume = 1;
+    a.play().then(() => setPlayingId(track.trackId)).catch(() => setPlayingId(null));
+  };
+
+  const downloadAllowed = resolveMusicDownloadAllowed(globalSettings, userDoc);
+
+  const handleDownload = async (track) => {
+    try {
+      const blob = await fetchTrackBlob(track);
+      if (!blob) return;
+      await saveToNexTextFolder("music-" + track.trackId + ".m4a", blob, "audio/mp4");
+    } catch { /* best effort */ }
+  };
+
+  return createPortal(
+    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147481100, display: "flex", alignItems: "flex-end" }} onClick={onClose}>
+      <div style={{ background: t.surface, width: "100%", boxSizing: "border-box", borderRadius: "20px 20px 0 0", padding: "16px 20px 28px", maxHeight: "85vh", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontWeight: 700, fontSize: 17, color: t.text }}>Add Background Music</span>
+          <X size={20} color={t.textMuted} onClick={onClose} style={{ cursor: "pointer" }} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: t.bg, border: `1px solid ${t.border}`, marginBottom: 10 }}>
+          <Search size={16} color={t.textMuted} />
+          <input autoFocus value={q} onChange={onChange} placeholder="Search songs, artists…" style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 14, color: t.text }} />
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+          {loading && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>Searching…</div>}
+          {!loading && error && <div style={{ color: "#FF3B30", fontSize: 13, textAlign: "center", padding: 20 }}>{error}</div>}
+          {!loading && !error && q.trim() && results.length === 0 && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No results.</div>}
+          {!loading && !q.trim() && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>Search for a song to add as background music. Previews stream from the source; only metadata is stored with your status.</div>}
+          {results.map((track) => (
+            <div key={track.trackId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", borderBottom: `1px solid ${t.border}` }}>
+              {track.artwork ? (
+                <img src={track.artwork} alt="" style={{ width: 44, height: 44, borderRadius: 8, objectFit: "cover", flexShrink: 0, background: t.primaryLight }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+              ) : (
+                <div style={{ width: 44, height: 44, borderRadius: 8, background: t.primaryLight, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: t.primary }}>{(track.title || "?")[0]}</div>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }} onClick={() => playPreview(track)}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.title}</div>
+                <div style={{ fontSize: 12, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.artist}{track.album ? ` · ${track.album}` : ""}</div>
+              </div>
+              <div onClick={() => playPreview(track)} title="Preview" style={{ width: 34, height: 34, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                {playingId === track.trackId ? <Pause size={16} color={t.primary} /> : <Play size={16} color={t.primary} />}
+              </div>
+              <div onClick={() => onSelect(track)} style={{ padding: "7px 12px", borderRadius: 8, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 12.5, cursor: "pointer", flexShrink: 0 }}>Add</div>
+              {downloadAllowed && (
+                <div onClick={() => handleDownload(track)} title="Download preview to device" style={{ width: 34, height: 34, borderRadius: "50%", background: t.bg, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                  <Download size={16} color={t.primary} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <audio ref={previewRef} style={{ display: "none" }} onEnded={() => setPlayingId(null)} />
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+async function saveToNexTextFolder(fileName, blob, mimeType) {
+  const NextextNative = (typeof window !== "undefined" && window.Capacitor?.Plugins?.NextextNative) || null;
+  const isNative = typeof window !== "undefined" && window.Capacitor?.isNativePlatform && window.Capacitor.isNativePlatform();
+  if (isNative && NextextNative && NextextNative.saveToDownloads) {
+    try {
+      const b64 = await blobToBase64(blob);
+      await NextextNative.saveToDownloads({ data: b64, fileName, mimeType: mimeType || blob.type || "application/octet-stream" });
+      return;
+    } catch (e) {
+      console.error("native save failed, falling back to web download", e);
+    }
+  }
+  try {
+    if (typeof window !== "undefined" && window.showDirectoryPicker && typeof Capacitor !== "undefined" && Capacitor.getPlatform() === "web") {
+      const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+      const dir = await handle.getDirectoryHandle("NexText", { create: true });
+      const fileHandle = await dir.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+  } catch { /* best effort */ }
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result.split(",")[1]);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
 }

@@ -197,6 +197,7 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
 
   const videoRef = useRef(null);
   const audioRef = useRef(null);
+  const [capExpanded, setCapExpanded] = useState(false);
 
   // Pause/resume the media element to match the player's paused state.
   useEffect(() => {
@@ -414,16 +415,34 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
               bottom: 16,
               left: 12,
               right: 12,
+              maxHeight: capExpanded ? "60%" : 84,
+              overflowY: capExpanded ? "auto" : "hidden",
               background: "rgba(0,0,0,0.6)",
               borderRadius: 8,
-              padding: "6px 10px",
+              padding: "8px 10px",
               color: "#fff",
               fontSize: 14,
               fontWeight: 600,
               textAlign: "center",
+              WebkitOverflowScrolling: "touch",
             }}
           >
-            {caption}
+            <div>{caption}</div>
+            {caption.length > 90 && (
+              <div
+                onClick={() => setCapExpanded((e) => !e)}
+                style={{
+                  marginTop: 4,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "#9ad",
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
+              >
+                {capExpanded ? "Show less" : "Read more"}
+              </div>
+            )}
           </div>
         )}
       </div>

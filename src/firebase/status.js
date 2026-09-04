@@ -31,6 +31,11 @@ export async function postStatus(ownerId, {
   waitForVideo = false,
   allowDownload = false,
   commentsHidden = false,
+  // Background Music (Status Builder): stores ONLY compact track metadata — never
+  // an audio file. The actual audio is streamed from the source's preview URL on
+  // the viewer's device. { trackId, title, artist, album, artwork, previewUrl,
+  // source, start, volume, originalVolume, muted }.
+  backgroundMusic = null,
   // Premium low-data preview fields (video only).
   // previewURL: lightweight 2-3s animated clip for the feed card (loops).
   // posterURL: static JPEG frame for the feed card and as a poster attribute.
@@ -71,6 +76,7 @@ export async function postStatus(ownerId, {
     allowDownload,
     commentCount: 0,
     commentsHidden: !!commentsHidden,
+    backgroundMusic: backgroundMusic || null,
     createdAt: serverTimestamp(),
     expiresAt: new Date(Date.now() + STATUS_TTL_MS),
     state: usePipeline ? (state || STATUS_STATES.QUEUED) : STATUS_STATES.READY,

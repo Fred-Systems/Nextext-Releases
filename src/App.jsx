@@ -3891,11 +3891,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const pagerTouchStart = (e) => {
     if (screen !== "list" && screen !== "status" && screen !== "settings") return;
     if (storyViewerOpen) return;
-    // The Status screen has its own horizontally-swipeable content (story rails,
-    // the Jewish Statuses creator row). Don't let a horizontal drag there be
-    // interpreted as a screen swipe — let the inner scroller handle it. Users
-    // still switch screens by tapping the bottom bar.
-    if (screen === "status") return;
+    // The Status screen contains horizontally-scrollable rows (story rails, the
+    // Jewish Statuses creator strip). A horizontal drag that STARTS on one of
+    // those must scroll the inner content, not swipe the whole page. Anywhere
+    // else on the screen, a horizontal drag still switches pages as normal.
+    if (screen === "status" && e.target && e.target.closest && e.target.closest(".noPagerSwipe")) return;
     // A new drag interrupts any in-flight snap animation — snap back to the
     // tap transition immediately.
     if (snapTimerRef.current) { clearTimeout(snapTimerRef.current); snapTimerRef.current = null; }
