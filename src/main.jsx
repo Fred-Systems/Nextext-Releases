@@ -55,8 +55,16 @@ function clearAndRestart() {
 }
 
 let bootErrorShown = false;
+// "ResizeObserver loop completed with undelivered notifications" is a benign
+// browser layout warning, not a crash — ignore it everywhere (error events,
+// unhandled rejections, and React boundaries) so users never see a crash
+// screen for it.
+function isBenignError(msg) {
+  return /resizeobserver loop/i.test(String(msg || ""));
+}
 function showBootError(msg) {
   try {
+    if (isBenignError(msg)) return;
     const el = document.getElementById("nx-boot-error");
     if (!el) return;
     const text = (msg || "Unknown error");
@@ -98,6 +106,7 @@ class ErrorBoundary extends React.Component {
   static getDerivedStateFromError(error) { return { error: error } }
   componentDidCatch(error) {
     const msg = (error && (error.stack || error.message)) || String(error);
+    if (isBenignError(msg)) { this.setState({ error: null }); return; }
     showBootError(msg);
   }
   render() {
@@ -116,11 +125,15 @@ class ErrorBoundary extends React.Component {
 // Capture errors that happen before/outside React (module eval, async rejections).
 window.addEventListener('error', (e) => {
   const err = e.error || e;
-  showBootError((err && (err.stack || err.message)) || e.message || 'Unknown error');
+  const msg = (err && (err.stack || err.message)) || e.message || 'Unknown error';
+  if (isBenignError(msg)) { try { e.preventDefault(); } catch {} return; }
+  showBootError(msg);
 });
 window.addEventListener('unhandledrejection', (e) => {
   const r = e.reason;
-  showBootError('Unhandled promise rejection:\n' + ((r && (r.stack || r.message)) || String(r)));
+  const msg = 'Unhandled promise rejection:\n' + ((r && (r.stack || r.message)) || String(r));
+  if (isBenignError(msg)) { try { e.preventDefault(); } catch {} return; }
+  showBootError(msg);
 });
 
 try {

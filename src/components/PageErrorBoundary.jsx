@@ -10,10 +10,16 @@ export default class PageErrorBoundary extends React.Component {
   }
 
   static getDerivedStateFromError(error) {
+    // "ResizeObserver loop completed with undelivered notifications" is a benign
+    // browser layout warning, not a crash — never show the crash screen for it.
+    const msg = String(error?.message || error || "");
+    if (/resizeobserver loop/i.test(msg)) return {};
     return { error };
   }
 
   componentDidCatch(error, info) {
+    const msg = String(error?.message || error || "");
+    if (/resizeobserver loop/i.test(msg)) return;
     console.error("[PageErrorBoundary]", this.props.label || "page", error, info);
   }
 

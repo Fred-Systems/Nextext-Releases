@@ -172,6 +172,18 @@ export function resolveJewishStatusAttribution(globalSettings) {
   };
 }
 
+// ── Status Builder version flag (OLD vs NEW WhatsApp-style builder) ──
+// Authoritative value: globalSettings.statusBuilder.version ("new" | "old",
+// also accepts "new_for_all" / "old_for_all"). Default is "new".
+// Server-side (Firestore) — survives reload/logout/reinstall/device change.
+// Single resolver: every builder entry point must go through it (no scattered
+// `if (setting === "new")` checks).
+export function getStatusBuilderVersion(globalSettings) {
+  const v = String(globalSettings?.statusBuilder?.version || "new").toLowerCase();
+  if (v === "old" || v === "old_for_all") return "old";
+  return "new";
+}
+
 // ── Google Sign-In visibility (default HIDDEN — provider not configured) ──
 export function resolveGoogleSignInVisible(globalSettings) {
   return globalSettings?.auth?.googleSignIn === "show";

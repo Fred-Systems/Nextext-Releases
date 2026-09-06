@@ -44,7 +44,7 @@ import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
 import { useContacts } from "./firebase/contacts";
 import { useChats, purgeExpiredChatMedia, markChatRead, setMute } from "./firebase/chats";
 import { setGlobalWallpaper, fileToWallpaperDataUrl } from "./theme/wallpaper";
-import { ChevronLeft, ChevronRight, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile, Megaphone, LayoutGrid } from "lucide-react";
+import { ChevronLeft, ChevronRight, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile, Megaphone, LayoutGrid, Trash2 } from "lucide-react";
 import { FONTS } from "./theme/ThemeContext";
 import Avatar from "./components/Avatar";
 import AvatarColorPicker from "./components/AvatarColorPicker";
@@ -762,14 +762,20 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const customStatusInputRef = useRef(null);
   const [customStatusSaved, setCustomStatusSaved] = useState(false);
   const [openSections, setOpenSections] = useState({ accountActions: true });
-  // Revamped settings layout: admin sets the default (sysConfig.altSettings); each
-  // user can override via the Classic/Revamped toggle. Smart search filters sections.
+  // Revamped settings layout: revamped is the default for everyone; each user can
+  // override via the toggle, and the admin default (sysConfig.altSettings) applies
+  // when the user has never chosen (sysConfig loads async, so apply on arrival).
   const [settingsSearch, setSettingsSearch] = useState("");
   const [classicSearchOpen, setClassicSearchOpen] = useState(false);
   const [altSettingsView, setAltSettingsView] = useState(() => {
     try { const v = localStorage.getItem("nextext_settings_layout"); if (v) return v; } catch {}
-    return sysConfig?.altSettings ? "revamped" : "classic";
+    return "revamped";
   });
+  useEffect(() => {
+    if (sysConfig === undefined || sysConfig === null) return;
+    try { if (localStorage.getItem("nextext_settings_layout")) return; } catch {}
+    setAltSettingsView(sysConfig?.altSettings === false ? "classic" : "revamped");
+  }, [sysConfig]);
   const toggleAltSettingsView = () => {
     const next = altSettingsView === "revamped" ? "classic" : "revamped";
     setAltSettingsView(next);
@@ -1369,38 +1375,26 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             <Row icon={<Palette size={18} color={t.primary} />} label="Theme" sub={themes[themeKey]?.name || "Default Theme"} onClick={onOpenTheme} dataTour="theme" />
             <Row icon={<ImageIcon size={18} color={t.primary} />} label="Default chat background" sub={wallpaperSaved ? "Saved ✓" : "Applies to chats without their own background"} onClick={() => wallpaperInputRef.current?.click()} />
             <input ref={wallpaperInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleGlobalWallpaper} />
+            <Row
+              icon={<Trash2 size={18} color={t.primary} />}
+              label="Reset background for all chats"
+              sub="Clears the default background and every per-chat background"
+              onClick={() => {
+                if (!window.confirm("Reset chat backgrounds for all chats? This clears the default background and every per-chat background on this device.")) return;
+                try {
+                  localStorage.removeItem("nextext_wallpaper_global");
+                  const doomed = [];
+                  for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k && k.indexOf("nextext_wallpaper_chat_") === 0) doomed.push(k);
+                  }
+                  doomed.forEach((k) => localStorage.removeItem(k));
+                } catch {}
+                setWallpaperSaved(false);
+                forceSettingsRerender();
+              }}
+            />
 
-            {/* Launch splash screen toggle */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Enable Launch Splash Screen</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Show the 2.5s cinematic boot animation on app launch.</div>
-              </div>
-              <div
-                onClick={() => { const next = !(showSplash ?? true); setShowSplash(next); localStorage.setItem("nextext_splash_enabled", next ? "on" : "off"); }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: (showSplash ?? true) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: showSplash ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
-
-            {/* Splash duration — how long the launch screen (with the words) shows */}
-            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 8 }}>Launch screen duration</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
-                  <div
-                    key={s}
-                    onClick={() => setPendingSplashDuration(s)}
-                    style={{ padding: "6px 12px", borderRadius: 10, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: pendingSplashDuration === s ? t.primary : t.bg, color: pendingSplashDuration === s ? t.bubbleMeText : t.text, border: `1px solid ${pendingSplashDuration === s ? t.primary : t.border}` }}
-                  >{s}s</div>
-                ))}
-              </div>
-              <button
-                onClick={() => { setSplashDuration(pendingSplashDuration); window.location.reload(); }}
-                style={{ marginTop: 10, width: "100%", padding: "10px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer" }}
-              >Save &amp; preview (restarts app to show launch screen)</button>
-            </div>
 
             {/* Dark theme (dark bg, light text) */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
@@ -1417,174 +1411,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </div>
           </>), true)}
 
-          {!globalSettings?.hideStt && renderSub("Speech to Text", (<>
-            {/* Voice-to-Text toggle */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Speech to Text</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Show a mic in every chat and in Ask AI to speak your messages. What you say is turned into text you can review and send.</div>
-              </div>
-              <div
-                onClick={() => { const next = !sttEnabled; setSttEnabled(next); localStorage.setItem("nextext_stt_enabled", next ? "on" : "off"); }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: sttEnabled ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttEnabled ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
-
-            {/* Auto-send transcribed messages toggle */}
-            {sttEnabled && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Composer button order</div>
-                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Choose whether Speech-to-Text or Voice Note appears next to the message box.</div>
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {["stt-voice", "voice-stt"].map((key) => (
-                    <div key={key} onClick={() => { setComposerButtonOrder(key); localStorage.setItem("nextext_composer_button_order", key); }} style={{ flex: 1, padding: "7px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: composerButtonOrder === key ? t.primary : t.bg, color: composerButtonOrder === key ? t.bubbleMeText : t.text, border: `1px solid ${composerButtonOrder === key ? t.primary : t.border}` }}>{key === "stt-voice" ? "STT → Voice" : "Voice → STT"}</div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* Voice button spacing */}
-            {sttEnabled && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Space the voice buttons</div>
-                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Add a gap between the voice-note and speech-to-text buttons so they don't touch.</div>
-                </div>
-                <div onClick={() => setVoiceSpacing(!voiceSpacing)} style={{ width: 50, height: 30, borderRadius: 15, background: voiceSpacing ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.2s" }}>
-                  <div style={{ position: "absolute", top: 3, left: voiceSpacing ? 23 : 3, width: 24, height: 24, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
-                </div>
-              </div>
-            )}
-            {/* Message bubble style */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Message bubble style</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Choose the shape of your chat bubbles.</div>
-              </div>
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: 210 }}>
-                {[["default", "Default"], ["rounded", "Rounded"], ["square", "Square"], ["pill", "Pill"], ["outlined", "Outlined"]].map(([k, label]) => (
-                  <div key={k} onClick={() => { try { localStorage.setItem("nextext_bubble_style", k); } catch {} forceSettingsRerender(); }} style={{ padding: "5px 8px", borderRadius: 7, fontSize: 10.5, fontWeight: 700, cursor: "pointer", background: (localStorage.getItem("nextext_bubble_style") || "default") === k ? t.primary : t.bg, color: (localStorage.getItem("nextext_bubble_style") || "default") === k ? t.bubbleMeText : t.text, border: `1px solid ${(localStorage.getItem("nextext_bubble_style") || "default") === k ? t.primary : t.border}` }}>{label}</div>
-                ))}
-              </div>
-            </div>
-            {/* Unread badge shows */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Unread badge shows</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Count of chats with new messages, or total unread messages.</div>
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {[["chats", "Chats"], ["messages", "Messages"]].map(([k, label]) => (
-                  <div key={k} onClick={() => { try { localStorage.setItem("nextext_badge_mode", k); } catch {} forceSettingsRerender(); }} style={{ padding: "6px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: "pointer", background: (localStorage.getItem("nextext_badge_mode") || "chats") === k ? t.primary : t.bg, color: (localStorage.getItem("nextext_badge_mode") || "chats") === k ? t.bubbleMeText : t.text, border: `1px solid ${(localStorage.getItem("nextext_badge_mode") || "chats") === k ? t.primary : t.border}` }}>{label}</div>
-                ))}
-              </div>
-            </div>
-            {/* Hide composer camera button */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Hide camera button in composer</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Remove the quick camera icon from the message box (you can still send photos via the gallery button).</div>
-              </div>
-              <div onClick={() => { const next = !hideComposerCamera; setHideComposerCamera(next); try { localStorage.setItem("nextext_hide_composer_camera", next ? "on" : "off"); } catch {} }} style={{ width: 50, height: 30, borderRadius: 15, background: hideComposerCamera ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.2s" }}>
-                <div style={{ position: "absolute", top: 3, left: hideComposerCamera ? 23 : 3, width: 24, height: 24, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
-              </div>
-            </div>
-            {/* Forward arrow placement */}
-            {sttEnabled && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Auto-send transcribed text</div>
-                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Send your speech immediately when you stop talking instead of reviewing it first.</div>
-                </div>
-                <div
-                  onClick={() => { const next = localStorage.getItem("nextext_stt_autosend") === "off"; localStorage.setItem("nextext_stt_autosend", next ? "on" : "off"); forceSettingsRerender(); }}
-                  style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_stt_autosend") !== "off" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-                >
-                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_stt_autosend") !== "off" ? 23 : 3, transition: "left 0.15s" }} />
-                </div>
-              </div>
-            )}
-            {/* Live transcription preview */}
-            {sttEnabled && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Show live transcription preview</div>
-                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>While dictating, show the words being detected above the mic. Off by default to keep the chat clean.</div>
-                </div>
-                <div
-                  onClick={() => { const next = !sttShowInterim; setSttShowInterim(next); localStorage.setItem("nextext_stt_show_interim", next ? "on" : "off"); }}
-                  style={{ width: 46, height: 26, borderRadius: 13, background: sttShowInterim ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-                >
-                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttShowInterim ? 23 : 3, transition: "left 0.15s" }} />
-                </div>
-              </div>
-            )}
-            {/* Auto-send cancel button */}
-            {sttEnabled && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Show auto-send cancel button</div>
-                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>When auto-send is on, show a 3-second countdown with a Cancel button so you can keep the text in the composer instead of sending immediately.</div>
-                </div>
-                <div
-                  onClick={() => { const next = !sttCancelButton; setSttCancelButton(next); localStorage.setItem("nextext_stt_cancel_button", next ? "on" : "off"); forceSettingsRerender(); }}
-                  style={{ width: 46, height: 26, borderRadius: 13, background: sttCancelButton ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-                >
-                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttCancelButton ? 23 : 3, transition: "left 0.15s" }} />
-                </div>
-              </div>
-            )}
-            {/* Start chime */}
-            {sttEnabled && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Play chime when starting</div>
-                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Play the selected voice-note ping (default Warm chime) when you begin dictation. Uses the same sound chosen in voice-note ping settings.</div>
-                </div>
-                <div
-                  onClick={() => { const cur = localStorage.getItem("nextext_stt_start_chime") !== "off"; const next = !cur; localStorage.setItem("nextext_stt_start_chime", next ? "on" : "off"); forceSettingsRerender(); }}
-                  style={{ width: 46, height: 26, borderRadius: 13, background: (localStorage.getItem("nextext_stt_start_chime") !== "off") ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-                >
-                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (localStorage.getItem("nextext_stt_start_chime") !== "off") ? 23 : 3, transition: "left 0.15s" }} />
-                </div>
-              </div>
-            )}
-          </>))}
-          {renderSub("Chat Performance", (<>
-            {/* Messages shown in a chat — performance vs. history trade-off */}
-            <div style={{ padding: "13px 0" }}>
-              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Messages loaded at once</div>
-              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>
-                How many recent messages stay on screen. Fewer messages = a much faster, smoother chat — scrolling and swiping replies feel instant even in very long conversations. You can always tap "Load earlier" to reveal older ones.
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {[
-                  { id: "25", label: "25" },
-                  { id: "50", label: "50" },
-                  { id: "100", label: "100" },
-                  { id: "200", label: "200" },
-                  { id: "all", label: "All" },
-                ].map((opt) => {
-                  const active = (localStorage.getItem("nextext_message_limit") || "50") === opt.id;
-                  return (
-                    <div
-                      key={opt.id}
-                      onClick={() => { localStorage.setItem("nextext_message_limit", opt.id); forceSettingsRerender(); }}
-                      style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text, border: `1px solid ${active ? t.primary : t.border}` }}
-                    >
-                      {opt.label}
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 6 }}>
-                Tip: 50 is the sweet spot for speed. Pick "All" only if you need the full history visible at once.
-              </div>
-            </div>
-          </>))}
 
           {renderSub("Text, Fonts & Animations", (<>
             {/* Font */}
@@ -1626,33 +1452,8 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           </>))}
 
           {renderSub("Search & Composer", (<>
-            {/* Search bar size */}
-            <div style={{ padding: "13px 0" }}>
-              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Main search bar size</div>
-              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Adjust the scale and height of the top search bar.</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <input type="range" min="0.6" max="2.0" step="0.05" value={searchBarScale} onChange={(e) => setSearchBarScale(Number(e.target.value))} style={{ flex: 1, accentColor: t.primary }} />
-                <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{searchBarScale === 1 ? "Default" : `${Math.round(searchBarScale * 100)}%`}</span>
-                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: t.textMuted, cursor: "pointer" }}>
-                  <input type="checkbox" checked={searchBarScale === 1} onChange={() => setSearchBarScale(1)} style={{ accentColor: t.primary, width: 15, height: 15, cursor: "pointer" }} />
-                  Default
-                </label>
-              </div>
-            </div>
 
             {/* Message box height */}
-            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Message box size</div>
-              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Make the message input taller, shorter, or easier to tap.</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <input type="range" min="0.6" max="2.5" step="0.05" value={composerHeight} onChange={(e) => setComposerHeight(Number(e.target.value))} style={{ flex: 1, accentColor: t.primary }} />
-                <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{composerHeight === 1 ? "Default" : `${Math.round(composerHeight * 100)}%`}</span>
-                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: t.textMuted, cursor: "pointer" }}>
-                  <input type="checkbox" checked={composerHeight === 1} onChange={() => setComposerHeight(1)} style={{ accentColor: t.primary, width: 15, height: 15, cursor: "pointer" }} />
-                  Default
-                </label>
-              </div>
-            </div>
           </>))}
 
           {renderSub("Navigation & Bottom Bar", (<>
@@ -1691,22 +1492,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                   </div>
                 );
               })}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
-                <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Lock tab order</span>
-                <Toggle on={navConfigLocked} onClick={() => setNavConfigLocked(!navConfigLocked)} />
-              </div>
-              <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Prevent accidental reordering of bottom bar tabs.</div>
-{!appGlobalSettings?.hideLaunchPage && (
-              <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Launch page</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Choose which tab the app opens on when launched.</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {["chats", "status", "groups", "settings"].map((key) => (
-                    <div key={key} onClick={() => onLaunchPageSelect ? onLaunchPageSelect(key) : (setLaunchPage(key), localStorage.setItem("nextext_launch_page", key))} style={{ flex: 1, minWidth: 70, padding: "8px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: launchPage === key ? t.primary : t.bg, color: launchPage === key ? t.bubbleMeText : t.text, border: `1px solid ${launchPage === key ? t.primary : t.border}` }}>{key.charAt(0).toUpperCase() + key.slice(1)}</div>
-                  ))}
-                </div>
-              </div>
-)}
             </div>
           </>))}
         {renderSub("Lists & Other", (<>
@@ -2018,10 +1803,10 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Prevent the + button from being moved by accident.</div>
               </div>
               <div
-                onClick={() => { const next = localStorage.getItem("nextext_fab_locked") === "on"; localStorage.setItem("nextext_fab_locked", next ? "off" : "on"); forceSettingsRerender(); }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_fab_locked") === "on" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                onClick={() => { const locked = localStorage.getItem("nextext_fab_locked") !== "off"; localStorage.setItem("nextext_fab_locked", locked ? "off" : "on"); forceSettingsRerender(); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_fab_locked") !== "off" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
               >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_fab_locked") === "on" ? 23 : 3, transition: "left 0.15s" }} />
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_fab_locked") !== "off" ? 23 : 3, transition: "left 0.15s" }} />
               </div>
             </div>
 
@@ -2032,10 +1817,10 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Prevent the AI widget from being moved by accident.</div>
               </div>
               <div
-                onClick={() => { const next = localStorage.getItem("nextext_ai_locked") === "on"; localStorage.setItem("nextext_ai_locked", next ? "off" : "on"); forceSettingsRerender(); }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_ai_locked") === "on" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                onClick={() => { const locked = localStorage.getItem("nextext_ai_locked") !== "off"; localStorage.setItem("nextext_ai_locked", locked ? "off" : "on"); forceSettingsRerender(); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_ai_locked") !== "off" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
               >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_ai_locked") === "on" ? 23 : 3, transition: "left 0.15s" }} />
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_ai_locked") !== "off" ? 23 : 3, transition: "left 0.15s" }} />
               </div>
             </div>
 
@@ -2252,6 +2037,257 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             <Row icon={<Users size={18} color={t.primary} />} label="Hide bottom navigation" sub={hideNav ? "Hidden" : "Visible"} right={<Toggle on={hideNav} onClick={() => setHideNav(!hideNav)} />} />
 
             <Row icon={<Users size={18} color={t.primary} />} label="Show top bar" sub={topBarVisible ? "Visible" : "Hidden"} right={<Toggle on={topBarVisible} onClick={() => { const next = !topBarVisible; setTopBarVisible(next); localStorage.setItem("nextext_top_bar_visible", String(next)); }} />} />
+
+            {/* ── Moved to Hyper: Launch Splash ── */}
+            {/* Launch splash screen toggle */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Enable Launch Splash Screen</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Show the 2.5s cinematic boot animation on app launch.</div>
+              </div>
+              <div
+                onClick={() => { const next = !(showSplash ?? true); setShowSplash(next); localStorage.setItem("nextext_splash_enabled", next ? "on" : "off"); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: (showSplash ?? true) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: showSplash ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Splash duration — how long the launch screen (with the words) shows */}
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 8 }}>Launch screen duration</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                  <div
+                    key={s}
+                    onClick={() => setPendingSplashDuration(s)}
+                    style={{ padding: "6px 12px", borderRadius: 10, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: pendingSplashDuration === s ? t.primary : t.bg, color: pendingSplashDuration === s ? t.bubbleMeText : t.text, border: `1px solid ${pendingSplashDuration === s ? t.primary : t.border}` }}
+                  >{s}s</div>
+                ))}
+              </div>
+              <button
+                onClick={() => { setSplashDuration(pendingSplashDuration); window.location.reload(); }}
+                style={{ marginTop: 10, width: "100%", padding: "10px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+              >Save &amp; preview (restarts app to show launch screen)</button>
+            </div>
+
+            {/* ── Moved to Hyper: Speech to Text ── */}
+          {!globalSettings?.hideStt && renderSub("Speech to Text", (<>
+            {/* Voice-to-Text toggle */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Speech to Text</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Show a mic in every chat and in Ask AI to speak your messages. What you say is turned into text you can review and send.</div>
+              </div>
+              <div
+                onClick={() => { const next = !sttEnabled; setSttEnabled(next); localStorage.setItem("nextext_stt_enabled", next ? "on" : "off"); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: sttEnabled ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttEnabled ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Auto-send transcribed messages toggle */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Composer button order</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Choose whether Speech-to-Text or Voice Note appears next to the message box.</div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["stt-voice", "voice-stt"].map((key) => (
+                    <div key={key} onClick={() => { setComposerButtonOrder(key); localStorage.setItem("nextext_composer_button_order", key); }} style={{ flex: 1, padding: "7px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: composerButtonOrder === key ? t.primary : t.bg, color: composerButtonOrder === key ? t.bubbleMeText : t.text, border: `1px solid ${composerButtonOrder === key ? t.primary : t.border}` }}>{key === "stt-voice" ? "STT → Voice" : "Voice → STT"}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Voice button spacing */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Space the voice buttons</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Add a gap between the voice-note and speech-to-text buttons so they don't touch.</div>
+                </div>
+                <div onClick={() => setVoiceSpacing(!voiceSpacing)} style={{ width: 50, height: 30, borderRadius: 15, background: voiceSpacing ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.2s" }}>
+                  <div style={{ position: "absolute", top: 3, left: voiceSpacing ? 23 : 3, width: 24, height: 24, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+                </div>
+              </div>
+            )}
+            {/* Message bubble style */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Message bubble style</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Choose the shape of your chat bubbles.</div>
+              </div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: 210 }}>
+                {[["default", "Default"], ["rounded", "Rounded"], ["square", "Square"], ["pill", "Pill"], ["outlined", "Outlined"]].map(([k, label]) => (
+                  <div key={k} onClick={() => { try { localStorage.setItem("nextext_bubble_style", k); } catch {} forceSettingsRerender(); }} style={{ padding: "5px 8px", borderRadius: 7, fontSize: 10.5, fontWeight: 700, cursor: "pointer", background: (localStorage.getItem("nextext_bubble_style") || "default") === k ? t.primary : t.bg, color: (localStorage.getItem("nextext_bubble_style") || "default") === k ? t.bubbleMeText : t.text, border: `1px solid ${(localStorage.getItem("nextext_bubble_style") || "default") === k ? t.primary : t.border}` }}>{label}</div>
+                ))}
+              </div>
+            </div>
+            {/* Unread badge shows */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Unread badge shows</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Count of chats with new messages, or total unread messages.</div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[["chats", "Chats"], ["messages", "Messages"]].map(([k, label]) => (
+                  <div key={k} onClick={() => { try { localStorage.setItem("nextext_badge_mode", k); } catch {} forceSettingsRerender(); }} style={{ padding: "6px 10px", borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: "pointer", background: (localStorage.getItem("nextext_badge_mode") || "chats") === k ? t.primary : t.bg, color: (localStorage.getItem("nextext_badge_mode") || "chats") === k ? t.bubbleMeText : t.text, border: `1px solid ${(localStorage.getItem("nextext_badge_mode") || "chats") === k ? t.primary : t.border}` }}>{label}</div>
+                ))}
+              </div>
+            </div>
+            {/* Hide composer camera button */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Hide camera button in composer</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Remove the quick camera icon from the message box (you can still send photos via the gallery button).</div>
+              </div>
+              <div onClick={() => { const next = !hideComposerCamera; setHideComposerCamera(next); try { localStorage.setItem("nextext_hide_composer_camera", next ? "on" : "off"); } catch {} }} style={{ width: 50, height: 30, borderRadius: 15, background: hideComposerCamera ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0, transition: "background 0.2s" }}>
+                <div style={{ position: "absolute", top: 3, left: hideComposerCamera ? 23 : 3, width: 24, height: 24, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+              </div>
+            </div>
+            {/* Forward arrow placement */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Auto-send transcribed text</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Send your speech immediately when you stop talking instead of reviewing it first.</div>
+                </div>
+                <div
+                  onClick={() => { const next = localStorage.getItem("nextext_stt_autosend") === "off"; localStorage.setItem("nextext_stt_autosend", next ? "on" : "off"); forceSettingsRerender(); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_stt_autosend") !== "off" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_stt_autosend") !== "off" ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            )}
+            {/* Live transcription preview */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Show live transcription preview</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>While dictating, show the words being detected above the mic. Off by default to keep the chat clean.</div>
+                </div>
+                <div
+                  onClick={() => { const next = !sttShowInterim; setSttShowInterim(next); localStorage.setItem("nextext_stt_show_interim", next ? "on" : "off"); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: sttShowInterim ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttShowInterim ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            )}
+            {/* Auto-send cancel button */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Show auto-send cancel button</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>When auto-send is on, show a 3-second countdown with a Cancel button so you can keep the text in the composer instead of sending immediately.</div>
+                </div>
+                <div
+                  onClick={() => { const next = !sttCancelButton; setSttCancelButton(next); localStorage.setItem("nextext_stt_cancel_button", next ? "on" : "off"); forceSettingsRerender(); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: sttCancelButton ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: sttCancelButton ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            )}
+            {/* Start chime */}
+            {sttEnabled && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Play chime when starting</div>
+                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Play the selected voice-note ping (default Warm chime) when you begin dictation. Uses the same sound chosen in voice-note ping settings.</div>
+                </div>
+                <div
+                  onClick={() => { const cur = localStorage.getItem("nextext_stt_start_chime") !== "off"; const next = !cur; localStorage.setItem("nextext_stt_start_chime", next ? "on" : "off"); forceSettingsRerender(); }}
+                  style={{ width: 46, height: 26, borderRadius: 13, background: (localStorage.getItem("nextext_stt_start_chime") !== "off") ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (localStorage.getItem("nextext_stt_start_chime") !== "off") ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+              </div>
+            )}
+          </>))}
+
+            {/* ── Moved to Hyper: Chat Performance ── */}
+          {renderSub("Chat Performance", (<>
+            {/* Messages shown in a chat — performance vs. history trade-off */}
+            <div style={{ padding: "13px 0" }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Messages loaded at once</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>
+                How many recent messages stay on screen. Fewer messages = a much faster, smoother chat — scrolling and swiping replies feel instant even in very long conversations. You can always tap "Load earlier" to reveal older ones.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {[
+                  { id: "25", label: "25" },
+                  { id: "50", label: "50" },
+                  { id: "100", label: "100" },
+                  { id: "200", label: "200" },
+                  { id: "all", label: "All" },
+                ].map((opt) => {
+                  const active = (localStorage.getItem("nextext_message_limit") || "50") === opt.id;
+                  return (
+                    <div
+                      key={opt.id}
+                      onClick={() => { localStorage.setItem("nextext_message_limit", opt.id); forceSettingsRerender(); }}
+                      style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text, border: `1px solid ${active ? t.primary : t.border}` }}
+                    >
+                      {opt.label}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 6 }}>
+                Tip: 50 is the sweet spot for speed. Pick "All" only if you need the full history visible at once.
+              </div>
+            </div>
+          </>))}
+
+            {/* ── Moved to Hyper: Sizes ── */}
+            {/* Search bar size */}
+            <div style={{ padding: "13px 0" }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Main search bar size</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Adjust the scale and height of the top search bar.</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <input type="range" min="0.6" max="2.0" step="0.05" value={searchBarScale} onChange={(e) => setSearchBarScale(Number(e.target.value))} style={{ flex: 1, accentColor: t.primary }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{searchBarScale === 1 ? "Default" : `${Math.round(searchBarScale * 100)}%`}</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: t.textMuted, cursor: "pointer" }}>
+                  <input type="checkbox" checked={searchBarScale === 1} onChange={() => setSearchBarScale(1)} style={{ accentColor: t.primary, width: 15, height: 15, cursor: "pointer" }} />
+                  Default
+                </label>
+              </div>
+            </div>
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Message box size</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Make the message input taller, shorter, or easier to tap.</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <input type="range" min="0.6" max="2.5" step="0.05" value={composerHeight} onChange={(e) => setComposerHeight(Number(e.target.value))} style={{ flex: 1, accentColor: t.primary }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: t.primary, minWidth: 44 }}>{composerHeight === 1 ? "Default" : `${Math.round(composerHeight * 100)}%`}</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: t.textMuted, cursor: "pointer" }}>
+                  <input type="checkbox" checked={composerHeight === 1} onChange={() => setComposerHeight(1)} style={{ accentColor: t.primary, width: 15, height: 15, cursor: "pointer" }} />
+                  Default
+                </label>
+              </div>
+            </div>
+
+            {/* ── Moved to Hyper: Navigation extras ── */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+                <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Lock tab order</span>
+                <Toggle on={navConfigLocked} onClick={() => setNavConfigLocked(!navConfigLocked)} />
+              </div>
+              <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Prevent accidental reordering of bottom bar tabs.</div>
+{!appGlobalSettings?.hideLaunchPage && (
+              <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Launch page</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Choose which tab the app opens on when launched.</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {["chats", "status", "groups", "settings"].map((key) => (
+                    <div key={key} onClick={() => onLaunchPageSelect ? onLaunchPageSelect(key) : (setLaunchPage(key), localStorage.setItem("nextext_launch_page", key))} style={{ flex: 1, minWidth: 70, padding: "8px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: launchPage === key ? t.primary : t.bg, color: launchPage === key ? t.bubbleMeText : t.text, border: `1px solid ${launchPage === key ? t.primary : t.border}` }}>{key.charAt(0).toUpperCase() + key.slice(1)}</div>
+                  ))}
+                </div>
+              </div>
+)}
+
         </SectionCard>
 
       {resetPasswordModal && (

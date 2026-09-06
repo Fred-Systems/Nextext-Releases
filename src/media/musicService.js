@@ -248,3 +248,49 @@ export function resolveDownload(globalSettings, userDoc, track) {
 export function getAppleWhitelist(globalSettings) {
   return globalSettings?.music?.apple?.whitelist || { mode: "all", rules: [] };
 }
+
+// Shared constructor for the `backgroundMusic` status metadata, used by BOTH the
+// original builder and the new WhatsApp-style builder so the shape, segment
+// bounds, and provider rules are identical (viewer-compatible by construction).
+// - Apple exposes only a 30s preview → segment clamped to [0, min(dur,30)].
+// - Zemer maps to a full YouTube video → segment clamped to [0, dur||30].
+// Metadata only — never an audio blob.
+export function buildBgMusic(track, activeProvider, { originalVolume = 1 } = {}) {
+  const provider = track?.source || activeProvider;
+  const dur = track?.durationSec ? Math.round(track.durationSec) : (provider === "apple" ? 30 : 0);
+  const maxSeg = provider === "apple" ? Math.min(dur || 30, 30) : (dur || 30);
+  return {
+    ...(track || {}),
+    provider,
+    videoId: track?.videoId || null,
+    start: 0,
+    end: maxSeg,
+    durationSec: dur,
+    volume: 1,
+    originalVolume,
+    muted: false,
+  };
+}
+
+// Clamp a user-edited segment to the provider's legitimate playable range.
+export function clampSegment(provider, start, end, durationSec) {
+  const maxSeg = provider === "apple" ? Math.min(durationSec || 30, 30) : Math.min(durationSec || 300, 600);
+  const s = Math.max(0, Math.min(Number(start) || 0, maxSeg - 1));
+  const e = Math.max(s + 1, Math.min(Number(end) || maxSeg, maxSeg));
+  return { start: s, end: e, maxSeg };
+}
+
+// Capability map — the UI must only expose what each source genuinely supports.
+// Apple: playback (30s preview) + seek within preview + segment within preview.
+//        NO download (preview terms forbid it).
+// Zemer: playback via YouTube embed + seek via YouTube controls + segment via
+//        start/end enforcement. NO download (YouTube ToS).
+export function getProviderCapabilities(provider) {
+  if (provider === "apple") {
+    return { playback: true, seek: true, segment: true, download: false, seekLabel: "30-second preview range", downloadReason: "Apple preview terms do not permit downloading." };
+  }
+  if (provider === "zemer") {
+    return { playback: true, seek: true, segment: true, download: false, seekLabel: "Full track via YouTube", downloadReason: "YouTube terms do not permit downloading." };
+  }
+  return { playback: false, seek: false, segment: false, download: false, seekLabel: "", downloadReason: "Music is disabled." };
+}

@@ -573,6 +573,7 @@ export default function AdminDashboard({ myUid, onBack }) {
   const [pinInput, setPinInput] = useState("");
   const [pinMsg, setPinMsg] = useState("");
   const [pinBusy, setPinBusy] = useState(false);
+  const [builderConfirm, setBuilderConfirm] = useState(null);
   const updateJewish = (patch) => {
     const cur = settings?.jewishStatuses || {};
     updateGlobalSettings({ jewishStatuses: { ...cur, ...patch } }, myUid);
@@ -1792,6 +1793,55 @@ export default function AdminDashboard({ myUid, onBack }) {
             <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 6, lineHeight: 1.4 }}>
               Stored server-side as a SHA-256 hash in the admin configuration — never plaintext, never localStorage. The Admin Panel stays in the menu for admin accounts at all times; this PIN is the extra gate to open it.
             </div>
+          </div>
+          {/* Status Builder version (NEW WhatsApp-style vs Original) */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Camera size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Status Builder</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Current version: <strong>{(settings?.statusBuilder?.version || "new") === "old" ? "Original Builder" : "New Builder"}</strong>.
+              Stored server-side — applies to all users on next open, survives reinstall.
+            </div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, marginBottom: 6 }}>Builder Version</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[["new", "New Builder"], ["old", "Old Builder"]].map(([key, label]) => {
+                const on = ((settings?.statusBuilder?.version || "new") === key);
+                return (
+                  <div
+                    key={key}
+                    onClick={() => setBuilderConfirm(key)}
+                    style={{ flex: 1, textAlign: "center", padding: "11px 8px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${on ? t.primary : t.border}`, background: on ? t.primary : t.bg, color: on ? "#fff" : t.text }}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+            {builderConfirm && (
+              <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: t.bg, border: `1px solid ${t.border}` }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5, color: t.text, marginBottom: 4 }}>Switch Status Builder for all users?</div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+                  This changes which builder users see the next time they open Status creation. Existing published statuses are unaffected.
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div onClick={() => setBuilderConfirm(null)} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 9, background: t.surface, border: `1px solid ${t.border}`, color: t.text, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Cancel</div>
+                  <div
+                    onClick={async () => {
+                      try {
+                        await updateGlobalSettings({ statusBuilder: { ...(settings?.statusBuilder || {}), version: builderConfirm } }, myUid);
+                      } catch (e) {
+                        setError("Couldn't switch builder: " + (e?.message || "unknown error"));
+                      } finally { setBuilderConfirm(null); }
+                    }}
+                    style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 9, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+                  >
+                    Switch Builder
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           {/* Status Preview Mode toggle */}
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>

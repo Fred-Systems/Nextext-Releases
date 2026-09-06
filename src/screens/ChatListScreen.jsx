@@ -611,11 +611,12 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const handleFabDragStart = (e) => {
-    if (localStorage.getItem("nextext_fab_locked") === "on") return;
+    // Locked by default (unlock via Settings → Appearance): missing key = locked.
+    if (localStorage.getItem("nextext_fab_locked") !== "off") return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     const start = { x: clientX, y: clientY };
-    const startPos = { bottom: fabPos?.bottom || (hideNav ? 20 : 84), right: fabPos?.right || 20 };
+    const startPos = { bottom: fabPos?.bottom || (hideNav ? 20 : 76), right: fabPos?.right || 16 };
     const onMove = (me) => {
       if (me.cancelable) me.preventDefault();
       const cx = me.touches ? me.touches[0].clientX : me.clientX;
@@ -642,7 +643,8 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const handleAiDragStart = (e) => {
-    if (localStorage.getItem("nextext_ai_locked") === "on") return;
+    // Locked by default (unlock via Settings → Appearance): missing key = locked.
+    if (localStorage.getItem("nextext_ai_locked") !== "off") return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     const start = { x: clientX, y: clientY };
@@ -1428,8 +1430,8 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         onMouseDown={handleFabDragStart}
         style={{
           position: "absolute",
-          bottom: fabPos?.bottom ?? (hideNav ? 20 : 84),
-          right: fabPos?.right ?? 20,
+          bottom: fabPos?.bottom ?? (hideNav ? 20 : 76),
+          right: fabPos?.right ?? 16,
           width: 54,
           height: 54,
           borderRadius: "50%",
@@ -1451,8 +1453,9 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           myUid={myUid}
           userDoc={userDoc}
           onOpenAI={onOpenAI}
-          right={aiPos?.right ?? 20}
-          top={aiPos?.top ?? "50%"}
+          right={aiPos?.right ?? 18}
+          top={aiPos?.top}
+          bottom={aiPos?.top != null ? undefined : 138}
           onDragStart={handleAiDragStart}
         />
       )}

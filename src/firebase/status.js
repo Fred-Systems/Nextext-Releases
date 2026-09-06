@@ -56,6 +56,12 @@ export async function postStatus(ownerId, {
   errorMessage = null,
   // visibility: "contacts" (default) or "public" (anyone on NexText can view).
   visibility = "contacts",
+  // New-builder video trims/filters (metadata only — enforced by the viewer):
+  // trimStart/trimEnd in seconds (null = no trim), videoFilter as a CSS filter
+  // string applied to the <video> element (null = none).
+  trimStart = null,
+  trimEnd = null,
+  videoFilter = null,
 }) {
   const isVideo = mediaType === "video";
   const usePipeline = isVideo && originalPath;
@@ -92,6 +98,9 @@ export async function postStatus(ownerId, {
     previewURL: previewURL || null,
     posterURL: posterURL || null,
     visibility: visibility === "public" ? "public" : "contacts",
+    trimStart: trimStart != null ? Number(trimStart) : null,
+    trimEnd: trimEnd != null ? Number(trimEnd) : null,
+    videoFilter: videoFilter || null,
   });
 }
 

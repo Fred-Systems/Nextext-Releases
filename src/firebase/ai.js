@@ -338,8 +338,9 @@ const SYSTEM_CONFIG_DEFAULTS = {
   // can carry a `fullName` (real/display name) and a `prompt` (extra context the
   // AI uses when auto-formatting a script for that voice).
   voiceProfiles: {},
-  // Alternate (revamped) settings page. Admin sets the default; users can toggle.
-  altSettings: false,
+  // Alternate (revamped) settings page. Revamped is the default; admin can force
+  // classic by setting this false; users can still toggle individually.
+  altSettings: true,
   // Admin can hide any AI persona (chat + voice) from all users by key.
   hiddenPersonas: [],
 };

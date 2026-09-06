@@ -597,9 +597,59 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   // plays via the YouTube IFrame API (audio-only, hidden 1x1 player). Both reset to
   // start/volume on each slide change and respect the viewer's paused state; cleanup
   // stops + unloads so no player keeps running after advance/close.
+  //
+  // AUTOPLAY REALITY (WebView): unmuted autoplay is frequently blocked until the
+  // user interacts. We DETECT that (never silently play a silent status):
+  //  - Apple: verify `!audio.paused` shortly after play(); otherwise "blocked".
+  //  - Zemer: watch YT state; PLAYING-while-muted (policy auto-mute) counts as blocked.
+  // When blocked we show a "Tap to play music" pill; that tap IS a user gesture,
+  // so playback starts, and we remember the unlock for the rest of the session.
   const bgMusic = current?.backgroundMusic;
   const bgMusicIsApple = bgMusic?.provider === "apple" || bgMusic?.source === "apple";
   const bgMusicIsZemer = bgMusic?.provider === "zemer" || bgMusic?.source === "zemer";
+  const [musicState, setMusicState] = useState("idle"); // "idle" | "playing" | "blocked"
+  const musicTimersRef = useRef([]);
+
+  const clearMusicTimers = () => {
+    (musicTimersRef.current || []).forEach((id) => { try { clearTimeout(id); } catch { /* noop */ } });
+    musicTimersRef.current = [];
+  };
+  const later = (fn, ms) => {
+    const id = setTimeout(() => { try { fn(); } catch { /* noop */ } }, ms);
+    musicTimersRef.current.push(id);
+  };
+  const markMusicUnlocked = () => { try { localStorage.setItem("nextext_music_unlocked", "1"); } catch { /* noop */ } };
+
+  // Reset music state on every slide change.
+  useEffect(() => {
+    clearMusicTimers();
+    setMusicState("idle");
+  }, [idx]);
+
+  // "Tap to play music" — the tap is a real user gesture, so blocked playback starts.
+  const unlockMusicPlayback = () => {
+    markMusicUnlocked();
+    try {
+      if (bgMusicIsApple && bgMusicRef.current) {
+        const a = bgMusicRef.current;
+        try { a.currentTime = Math.max(0, bgMusic?.start || 0); } catch { /* noop */ }
+        a.play().then(() => setMusicState("playing")).catch(() => setMusicState("blocked"));
+      } else if (bgMusicIsZemer && ytPlayerRef.current?.playVideo) {
+        const p = ytPlayerRef.current;
+        try { p.unMute(); } catch { /* noop */ }
+        try { p.setVolume(Math.round((bgMusic?.volume != null ? bgMusic.volume : 1) * 100)); } catch { /* noop */ }
+        try { p.seekTo(Math.max(0, Math.floor(bgMusic?.start || 0)), true); } catch { /* noop */ }
+        try { p.playVideo(); } catch { /* noop */ }
+        later(() => {
+          try {
+            const st = p.getPlayerState?.();
+            const muted = p.isMuted?.();
+            setMusicState(st === 1 && !muted ? "playing" : "blocked");
+          } catch { /* noop */ }
+        }, 900);
+      }
+    } catch { /* noop */ }
+  };
 
   // ── Apple: <audio> preview (30s AAC) ──
   // Plays ONLY the selected segment [start, end]. Stops when the segment ends,
@@ -613,11 +663,20 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     const onTime = () => {
       if (audio.currentTime >= segEnd - 0.05) { try { audio.pause(); } catch { /* noop */ } }
     };
+    const onPlaying = () => setMusicState("playing");
     audio.addEventListener("timeupdate", onTime);
+    audio.addEventListener("playing", onPlaying);
     try { audio.currentTime = segStart; } catch { /* not seekable yet */ }
-    if (!paused) audio.play().catch(() => {});
+    if (!paused) {
+      audio.play().then(() => {
+        // Confirm sound actually started (autoplay can resolve yet stay paused).
+        later(() => { setMusicState(!audio.paused ? "playing" : "blocked"); }, 900);
+      }).catch(() => setMusicState("blocked"));
+    }
     return () => {
+      clearMusicTimers();
       audio.removeEventListener("timeupdate", onTime);
+      audio.removeEventListener("playing", onPlaying);
       audio.pause();
       try { audio.currentTime = 0; } catch { /* noop */ }
     };
@@ -640,9 +699,13 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     ensureYouTubeAPI().then((YT) => {
       if (cancelled || !YT || !ytMountRef.current) return;
       try {
+        // `origin` is REQUIRED in a WebView: without it the postMessage handshake
+        // between the page and the YouTube iframe fails and playVideo() is a silent
+        // no-op (the player loads but never produces sound).
+        const pageOrigin = (() => { try { return window.location.origin; } catch { return undefined; } })();
         player = new YT.Player(ytMountRef.current, {
           videoId,
-          playerVars: { controls: 0, disablekb: 1, autoplay: paused ? 0 : 1, start: segStart },
+          playerVars: { controls: 0, disablekb: 1, playsinline: 1, autoplay: paused ? 0 : 1, start: segStart, ...(pageOrigin ? { origin: pageOrigin } : {}) },
           events: {
             onReady: (e) => {
               if (cancelled) return;
@@ -651,6 +714,17 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                 // (An earlier version muted it, which silenced Zemer music.)
                 e.target.setVolume(Math.round(vol * 100));
                 if (!paused) e.target.playVideo();
+                // Verify sound actually started: the platform may force muted
+                // autoplay or refuse it outright — both count as "blocked".
+                later(() => {
+                  if (cancelled) return;
+                  try {
+                    const st = e.target.getPlayerState?.();
+                    const muted = e.target.isMuted?.();
+                    if (st === 1 && !muted) setMusicState("playing");
+                    else if (!paused) setMusicState("blocked");
+                  } catch { /* noop */ }
+                }, 2200);
                 // Segment watchdog: stop when the selected segment finishes.
                 if (watchdog) clearInterval(watchdog);
                 watchdog = setInterval(() => {
@@ -665,6 +739,18 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                 }, 500);
               } catch { /* noop */ }
             },
+            onStateChange: (e) => {
+              if (cancelled) return;
+              try {
+                // 1 = playing. If the platform auto-muted it, that's "blocked".
+                if (e?.data === 1) {
+                  const muted = e.target.isMuted?.();
+                  setMusicState(muted ? "blocked" : "playing");
+                } else if (e?.data === 2 && !paused) {
+                  // paused by the segment watchdog/end — leave state as-is.
+                }
+              } catch { /* noop */ }
+            },
           },
         });
         ytPlayerRef.current = player;
@@ -672,6 +758,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     });
     return () => {
       cancelled = true;
+      clearMusicTimers();
       if (watchdog) { clearInterval(watchdog); watchdog = null; }
       try { if (player && player.destroy) player.destroy(); } catch { /* noop */ }
       ytPlayerRef.current = null;
@@ -811,7 +898,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       {/* ── Music overlay: compact pill, top corner, below the owner header ── */}
       {bgMusic && (
         <div
-          className={paused ? "nextext-eq-paused" : ""}
+          className={musicState === "playing" ? "" : "nextext-eq-paused"}
           style={{ position: "absolute", top: 52, right: 12, zIndex: 11, maxWidth: 220, display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 14, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.14)", pointerEvents: "none" }}
           onTouchStart={(e) => e.stopPropagation()}
           onTouchEnd={(e) => e.stopPropagation()}
@@ -827,7 +914,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
             <div style={{ color: "#fff", fontSize: 11.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgMusic.title || "Now playing"}</div>
             <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgMusic.artist || ""}</div>
           </div>
-          {/* Animated equalizer — bars stop animating when audio is paused */}
+          {/* Animated equalizer — animates ONLY while music is really playing */}
           <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 16, flexShrink: 0 }}>
             {[0, 1, 2, 3].map((i) => (
               <span
@@ -837,6 +924,18 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
               />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* "Tap to play music" — shown only when autoplay was actually blocked */}
+      {bgMusic && musicState === "blocked" && !paused && (
+        <div
+          onClick={(e) => { e.stopPropagation(); unlockMusicPlayback(); }}
+          onTouchStart={(e) => e.stopPropagation()}
+          style={{ position: "absolute", top: 104, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+        >
+          <Volume2 size={14} color="#fff" />
+          Tap to play music
         </div>
       )}
 
@@ -911,7 +1010,13 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
               onTap={() => {}}
               videoProps={{
                 loop: false,
-                onLoadedMetadata: (e) => { const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms); },
+                style: { width: "100%", height: "100%", objectFit: "contain", ...(current.videoFilter ? { filter: current.videoFilter } : {}) },
+                onLoadedMetadata: (e) => {
+                  const ms = Math.round(e.target.duration * 1000); if (ms > 0) setLiveVideoDuration(ms);
+                  // New-builder trim: start playback at trimStart (old statuses have none → unchanged).
+                  const ts = Number(current.trimStart);
+                  if (ts > 0 && isFinite(e.target.duration) && ts < e.target.duration) { try { e.target.currentTime = ts; } catch { /* noop */ } }
+                },
                 onTimeUpdate: (e) => {
                   const v = e.target;
                   if (v.duration && v.currentTime != null) {
@@ -920,6 +1025,9 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                       barRef.current.style.transition = "none";
                       barRef.current.style.width = `${progressRef.current}%`;
                     }
+                    // New-builder trim: end the slide at trimEnd.
+                    const te = Number(current.trimEnd);
+                    if (te > 0 && v.currentTime >= te) { try { v.pause(); } catch { /* noop */ } advanceRef.current?.(); }
                   }
                 },
                 onEnded: () => { setLiveVideoDuration(Math.max(liveVideoDuration || 0, 1)); advanceRef.current?.(); },
