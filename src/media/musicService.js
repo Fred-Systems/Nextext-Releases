@@ -78,6 +78,11 @@ async function appleSearchWrapped(query, { limit = 20 } = {}) {
   const raw = await appleSearch(query, { limit });
   return raw.map((t) => ({
     ...t,
+    // Normalize to the canonical provider id. The raw iTunes catalog uses
+    // source:"itunes" — everything downstream (getPreviewUrl, the viewer,
+    // the builder chips) keys off source/provider === "apple", so without
+    // this every Apple result silently lost its preview URL and never played.
+    source: "apple",
     videoId: null,
     canPreview: true, // 30s AAC preview
     canDownload: false, // Apple preview terms forbid download/caching
@@ -217,13 +222,18 @@ export function getProviderName(provider) {
 
 export function getPreviewUrl(track) {
   if (!track) return null;
-  if (track.source === "apple") return applePreviewUrl(track);
+  if (track.source === "apple" || track.source === "itunes") return applePreviewUrl(track);
   // Zemer: no native preview; playback is via YouTube IFrame (videoId).
   return null;
 }
 
 export function getYoutubeVideoId(track) {
-  return track?.videoId || null;
+  if (!track) return null;
+  if (track.videoId) return track.videoId;
+  // Zemer tracks use the YouTube id as their stable trackId — accept it as a
+  // fallback so a doc that only persisted trackId still resolves.
+  if (track.source === "zemer" && track.trackId) return track.trackId;
+  return null;
 }
 
 // Resolves whether a DOWNLOAD is legitimately possible for this track + user.
@@ -237,7 +247,7 @@ export function resolveDownload(globalSettings, userDoc, track) {
     return {
       allowed: false,
       reason:
-        track.source === "apple"
+        track.source === "apple" || track.source === "itunes"
           ? "Apple preview terms do not permit downloading."
           : "This provider does not permit downloading.",
     };
@@ -256,7 +266,7 @@ export function getAppleWhitelist(globalSettings) {
 // - Zemer maps to a full YouTube video → segment clamped to [0, dur||30].
 // Metadata only — never an audio blob.
 export function buildBgMusic(track, activeProvider, { originalVolume = 1 } = {}) {
-  const provider = track?.source || activeProvider;
+  const provider = track?.source === "itunes" ? "apple" : (track?.source || activeProvider);
   const dur = track?.durationSec ? Math.round(track.durationSec) : (provider === "apple" ? 30 : 0);
   const maxSeg = provider === "apple" ? Math.min(dur || 30, 30) : (dur || 30);
   return {
@@ -274,7 +284,8 @@ export function buildBgMusic(track, activeProvider, { originalVolume = 1 } = {})
 
 // Clamp a user-edited segment to the provider's legitimate playable range.
 export function clampSegment(provider, start, end, durationSec) {
-  const maxSeg = provider === "apple" ? Math.min(durationSec || 30, 30) : Math.min(durationSec || 300, 600);
+  const isApple = provider === "apple" || provider === "itunes";
+  const maxSeg = isApple ? Math.min(durationSec || 30, 30) : Math.min(durationSec || 300, 600);
   const s = Math.max(0, Math.min(Number(start) || 0, maxSeg - 1));
   const e = Math.max(s + 1, Math.min(Number(end) || maxSeg, maxSeg));
   return { start: s, end: e, maxSeg };
@@ -286,7 +297,7 @@ export function clampSegment(provider, start, end, durationSec) {
 // Zemer: playback via YouTube embed + seek via YouTube controls + segment via
 //        start/end enforcement. NO download (YouTube ToS).
 export function getProviderCapabilities(provider) {
-  if (provider === "apple") {
+  if (provider === "apple" || provider === "itunes") {
     return { playback: true, seek: true, segment: true, download: false, seekLabel: "30-second preview range", downloadReason: "Apple preview terms do not permit downloading." };
   }
   if (provider === "zemer") {

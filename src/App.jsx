@@ -2780,8 +2780,24 @@ function AppShell({ appLocked, setAppLocked }) {
   const [emojiBigOn, setEmojiBigOn] = useState(() => localStorage.getItem("nextext_emoji_big") !== "off");
   const [compactList, setCompactList] = useState(() => localStorage.getItem("nextext_compact_list") === "true");
   const [showThemeSheet, setShowThemeSheet] = useState(false);
-  const [launchPage, setLaunchPage] = useState(() => localStorage.getItem("nextext_launch_page") || "groups");
-  const [activeNavTab, setActiveNavTab] = useState(() => localStorage.getItem("nextext_launch_page") || "groups");
+  const [launchPage, setLaunchPage] = useState(() => {
+    try {
+      const stored = localStorage.getItem("nextext_launch_page");
+      // One-time migration (v1.7.91): the old code defaulted to Groups and many
+      // installs stored "groups" as a workaround. Normal launch must be Chats now.
+      // Anyone who deliberately re-selects Groups in Settings keeps it afterwards.
+      if (stored === "groups" && !localStorage.getItem("nextext_launch_page_migrated_191")) {
+        localStorage.setItem("nextext_launch_page", "chats");
+        localStorage.setItem("nextext_launch_page_migrated_191", "1");
+        return "chats";
+      }
+      return stored || "chats";
+    } catch { return "chats"; }
+  });
+  const [activeNavTab, setActiveNavTab] = useState(() => {
+    try { return localStorage.getItem("nextext_launch_page") || "chats"; }
+    catch { return "chats"; }
+  });
   // Lifted "Ask AI about this" panel: rendered at the App-shell level (not inside
   // a scrollable/conversation subtree) so its position:fixed inset:0 resolves to
   // the fixed-size phone shell instead of a content-grown container.
@@ -2861,6 +2877,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const [updateStatus, setUpdateStatus] = useState("");
   const [downloadingUpdate, setDownloadingUpdate] = useState(false);
   const [savingUpdate, setSavingUpdate] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(null); // {loaded,total} while downloading/saving an update
   const [pageIndex, setPageIndex] = useState(0);
   const [pagerDragging, setPagerDragging] = useState(false);
   const [linkPreviewsOn, setLinkPreviewsOn] = useState(() => localStorage.getItem("nextext_link_previews") !== "off");
@@ -3091,7 +3108,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     // shows one tab but content shows another" cold-start desync. The chosen
     // launch page (chats/status/groups/settings) is what opens.
     // If admin has hidden the launch page setting, always force Groups.
-    const effectiveLaunchPage = globalSettings?.hideLaunchPage ? "groups" : launchPage;
+    const effectiveLaunchPage = globalSettings?.hideLaunchPage ? "chats" : launchPage;
     const targetTab = orderedTabs.includes(effectiveLaunchPage) ? effectiveLaunchPage : "chats";
     navigateToTab(targetTab);
     // Defensive: force the pager row to the target page imperatively (list tabs
@@ -3727,10 +3744,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   const handleDownloadUpdate = async () => {
     setDownloadingUpdate(true);
     setUpdateStatus("");
+    setUpdateProgress(null);
     try {
       const url = pendingUpdate?.downloadUrl;
       if (url) {
-        await downloadUpdate(url);
+        await downloadUpdate(url, (p) => setUpdateProgress(p));
       } else if (pendingUpdate?.releaseUrl) {
         openDownloadUrl(pendingUpdate.releaseUrl);
       }
@@ -3742,6 +3760,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       return;
     } finally {
       setDownloadingUpdate(false);
+      setUpdateProgress(null);
     }
     setUpdateStatus("");
     setShowUpdatePrompt(false);
@@ -3756,8 +3775,9 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     const url = pendingUpdate?.downloadUrl;
     if (!url) return;
     setSavingUpdate(true);
+    setUpdateProgress(null);
     try {
-      await saveApkToDevice(url);
+      await saveApkToDevice(url, (p) => setUpdateProgress(p));
       if (pendingUpdate?.version) setLastSeenRelease(pendingUpdate.version);
     } catch (err) {
       setUpdateStatus("Couldn't save the APK: " + (err?.message || "unknown error"));
@@ -3765,6 +3785,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     } finally {
       setShowUpdatePrompt(false);
       setSavingUpdate(false);
+      setUpdateProgress(null);
     }
   };
 
@@ -4100,7 +4121,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     if (orderedTabs.length === 0) return;
     if (coldStartPagerLockRef.current) return;
     coldStartPagerLockRef.current = true;
-    const effectiveLaunchPage = globalSettings?.hideLaunchPage ? "groups" : launchPage;
+    const effectiveLaunchPage = globalSettings?.hideLaunchPage ? "chats" : launchPage;
     navigateToTab(orderedTabs.includes(effectiveLaunchPage) ? effectiveLaunchPage : "chats");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderedTabs.join(","), myUid, globalSettings?.hideLaunchPage]);
@@ -4814,6 +4835,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           saving={savingUpdate}
           onSaveToDevice={handleSaveApkToDevice}
           error={updateStatus || null}
+          progress={updateProgress}
         />
       )}
       {/* DIAG log feature removed */}

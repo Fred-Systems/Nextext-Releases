@@ -1,7 +1,7 @@
 import React from "react";
 import { Download, X, Sparkles, Save } from "lucide-react";
 
-export default function UpdatePrompt({ update, onDownload, onDismiss, downloading, saving, onSaveToDevice, error }) {
+export default function UpdatePrompt({ update, onDownload, onDismiss, downloading, saving, onSaveToDevice, error, progress }) {
   if (!update) return null;
 
   const changelogLines = update.body
@@ -108,6 +108,21 @@ export default function UpdatePrompt({ update, onDownload, onDismiss, downloadin
           {saving && (
             <div style={{ fontSize: 12.5, color: "#4FC3E8", fontWeight: 600, marginTop: 10, textAlign: "center" }}>
               Saving APK to your Downloads folder…
+            </div>
+          )}
+          {(downloading || saving) && progress && progress.total > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ height: 8, borderRadius: 4, background: "rgba(255,255,255,0.15)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${Math.min(100, Math.round((progress.loaded / progress.total) * 100))}%`, background: "linear-gradient(135deg, #10B981, #059669)", transition: "width 0.2s" }} />
+              </div>
+              <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.75)", fontWeight: 600, marginTop: 4, textAlign: "center" }}>
+                {Math.min(100, Math.round((progress.loaded / progress.total) * 100))}% · {(progress.loaded / 1048576).toFixed(1)} / {(progress.total / 1048576).toFixed(1)} MB
+              </div>
+            </div>
+          )}
+          {(downloading || saving) && progress && !(progress.total > 0) && progress.loaded > 0 && (
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", fontWeight: 600, marginTop: 10, textAlign: "center" }}>
+              {(progress.loaded / 1048576).toFixed(1)} MB received…
             </div>
           )}
           {error && (

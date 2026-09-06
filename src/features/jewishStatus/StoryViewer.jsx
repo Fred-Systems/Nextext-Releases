@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { X, ChevronLeft, ChevronRight, Play, Pause, SkipForward, Download, RefreshCw } from "lucide-react";
 import { useGlobalSettings, resolveJewishStatusDownloadAllowed } from "../../firebase/config-settings";
 import { useAuth } from "../../firebase/useAuth";
-import { downloadMediaToDevice, extFromType } from "../../media/deviceDownload";
+import { downloadBlobToDevice, extFromType } from "../../media/deviceDownload";
 import { useTheme } from "../../theme/ThemeContext";
 
 const DEFAULT_DURATION_MS = 5000;
@@ -206,6 +206,9 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
   const audioRef = useRef(null);
   const [capExpanded, setCapExpanded] = useState(false);
   const [dlState, setDlState] = useState(""); // "" | "saving" | saved-location | "failed:reason"
+  // Byte progress for the current download ({ loaded, total }; total is 0 when
+  // the server omits Content-Length). Null when idle.
+  const [dlProgress, setDlProgress] = useState(null);
 
   // Viewer controls state.
   const [zoom, setZoom] = useState(1);
@@ -720,13 +723,48 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
             e.stopPropagation();
             if (!canDownload || dlState === "saving" || !post?.mediaUrl) return;
             setDlState("saving");
+            setDlProgress({ loaded: 0, total: 0 });
             try {
-              // Only claim success when the file verifiably exists on the device.
-              const r = await downloadMediaToDevice(post.mediaUrl, `jewishstatus-${Date.now()}.${extFromType(post.mediaUrl, post.kind)}`);
+              // Fetch with REAL byte progress, then save through the verified
+              // device path (Filesystem write + stat check on native, anchor
+              // download on web). Success is only claimed when the file
+              // verifiably exists on the device — downloadBlobToDevice throws
+              // otherwise.
+              let res;
+              try {
+                res = await fetch(post.mediaUrl, { mode: "cors" });
+              } catch {
+                throw new Error("Couldn't reach the source (offline or expired link).");
+              }
+              if (!res.ok) throw new Error("Media is unavailable (expired or removed).");
+              const total = Number(res.headers.get("content-length")) || 0;
+              const reader = res.body?.getReader?.();
+              let blob;
+              if (!reader) {
+                blob = await res.blob();
+                setDlProgress({ loaded: blob.size, total: total || blob.size });
+              } else {
+                const chunks = [];
+                let loaded = 0;
+                for (;;) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  if (value) {
+                    chunks.push(value);
+                    loaded += value.byteLength || value.length || 0;
+                    setDlProgress({ loaded, total });
+                  }
+                }
+                blob = new Blob(chunks, { type: res.headers.get("content-type") || undefined });
+              }
+              if (!blob || !blob.size) throw new Error("The file came back empty.");
+              setDlProgress({ loaded: blob.size, total: total || blob.size });
+              const r = await downloadBlobToDevice(blob, `jewishstatus-${Date.now()}.${extFromType(post.mediaUrl, post.kind)}`);
               setDlState(`saved:${r.location}`);
-              setTimeout(() => setDlState(""), 4000);
+              setTimeout(() => { setDlState(""); setDlProgress(null); }, 4000);
             } catch (err) {
               setDlState(`failed:${err?.message || "Download failed"}`);
+              setDlProgress(null);
               setTimeout(() => setDlState(""), 4000);
             }
           }}
@@ -751,10 +789,20 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
       </div>
         );
       })()}
-      {/* Download feedback toast — success only on verified save, with location */}
-      {dlState && dlState !== "saving" && (
-        <div style={{ position: "absolute", bottom: caption ? 60 : 0, left: 0, right: 0, textAlign: "center", fontSize: 11.5, fontWeight: 600, color: dlState.indexOf("saved:") === 0 ? "#34C759" : "#FF3B30", zIndex: 15, textShadow: "0 1px 3px rgba(0,0,0,0.8)", padding: "0 16px" }}>
-          {dlState.indexOf("saved:") === 0 ? `Saved ✓ — ${dlState.slice(6)}` : dlState.slice(7)}
+      {/* Download feedback toast — success only on verified save, with location.
+          While downloading, shows REAL byte progress instead of a silent wait. */}
+      {!!dlState && (
+        <div style={{ position: "absolute", bottom: caption ? 60 : 0, left: 0, right: 0, textAlign: "center", fontSize: 11.5, fontWeight: 600, color: dlState.indexOf("saved:") === 0 ? "#34C759" : dlState === "saving" ? "#4FC3E8" : "#FF3B30", zIndex: 15, textShadow: "0 1px 3px rgba(0,0,0,0.8)", padding: "0 16px" }}>
+          {dlState === "saving"
+            ? (dlProgress && dlProgress.total > 0
+              ? `Downloading… ${Math.min(99, Math.round((dlProgress.loaded / dlProgress.total) * 100))}%`
+              : `Downloading…${dlProgress && dlProgress.loaded > 0 ? ` ${(dlProgress.loaded / 1048576).toFixed(1)} MB` : ""}`)
+            : dlState.indexOf("saved:") === 0 ? `Saved ✓ — ${dlState.slice(6)}` : dlState.slice(7)}
+          {dlState === "saving" && dlProgress && dlProgress.total > 0 && (
+            <div style={{ height: 3, borderRadius: 2, background: "rgba(255,255,255,0.25)", overflow: "hidden", marginTop: 4, maxWidth: 220, marginLeft: "auto", marginRight: "auto" }}>
+              <div style={{ height: "100%", borderRadius: 2, background: "#4FC3E8", width: `${Math.min(100, (dlProgress.loaded / dlProgress.total) * 100)}%` }} />
+            </div>
+          )}
         </div>
       )}
     </div>,

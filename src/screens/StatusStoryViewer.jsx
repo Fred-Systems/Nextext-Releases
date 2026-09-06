@@ -614,7 +614,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   // When blocked we show a "Tap to play music" pill; that tap IS a user gesture,
   // so playback starts, and we remember the unlock for the rest of the session.
   const bgMusic = current?.backgroundMusic;
-  const bgMusicIsApple = bgMusic?.provider === "apple" || bgMusic?.source === "apple";
+  const bgMusicIsApple = bgMusic?.provider === "apple" || bgMusic?.source === "apple" || bgMusic?.source === "itunes" || bgMusic?.provider === "itunes";
   const bgMusicIsZemer = bgMusic?.provider === "zemer" || bgMusic?.source === "zemer";
   // "idle" (starting) | "playing" (verified audible) | "blocked" (autoplay needs a
   // tap) | "unavailable" (no playable source, API unreachable, or track error —
@@ -639,13 +639,23 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   }, [idx]);
 
   // "Tap to play music" — the tap is a real user gesture, so blocked playback starts.
+  // Dedupe ref: on touch devices touchend fires AND a (prevented) click may
+  // follow — unlock twice is harmless, but the guard keeps state writes sane.
+  const lastUnlockRef = useRef(0);
   const unlockMusicPlayback = () => {
+    const now = Date.now();
+    if (now - lastUnlockRef.current < 800) return;
+    lastUnlockRef.current = now;
     markMusicUnlocked();
     try {
       if (bgMusicIsApple && bgMusicRef.current) {
         const a = bgMusicRef.current;
         try { a.currentTime = Math.max(0, bgMusic?.start || 0); } catch { /* noop */ }
-        a.play().then(() => setMusicState("playing")).catch(() => setMusicState("blocked"));
+        a.play().then(() => {
+          // Verified audible start only — an autoplay-blocked element can
+          // resolve yet stay paused.
+          later(() => { setMusicState(!a.paused ? "playing" : "blocked"); }, 600);
+        }).catch(() => setMusicState("blocked"));
       } else if (bgMusicIsZemer && ytPlayerRef.current?.playVideo) {
         const p = ytPlayerRef.current;
         try { p.unMute(); } catch { /* noop */ }
@@ -666,6 +676,10 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   // ── Apple: <audio> preview (30s AAC) ──
   // Plays ONLY the selected segment [start, end]. Stops when the segment ends,
   // when the viewer pauses, on slide advance, and on close (effect cleanup).
+  // NOTE: this effect does NOT depend on `paused` — pausing/resuming is handled
+  // by the follow-effect below. Depending on `paused` here would tear down and
+  // re-create playback on every pause toggle (resetting currentTime to the
+  // segment start instead of freezing where the story froze).
   useEffect(() => {
     if (!bgMusicIsApple || !bgMusic?.previewUrl || !bgMusicRef.current) return;
     const audio = bgMusicRef.current;
@@ -675,7 +689,9 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     const onTime = () => {
       if (audio.currentTime >= segEnd - 0.05) { try { audio.pause(); } catch { /* noop */ } }
     };
-    const onPlaying = () => setMusicState("playing");
+    // "playing" is set ONLY on verified audible start: the event must fire
+    // while the element is actually unpaused.
+    const onPlaying = () => { if (!audio.paused) setMusicState("playing"); };
     // Dead preview URL (403/expired) can never play — say so instead of "tap".
     const onAudioError = () => setMusicState("unavailable");
     audio.addEventListener("timeupdate", onTime);
@@ -696,7 +712,18 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       audio.pause();
       try { audio.currentTime = 0; } catch { /* noop */ }
     };
-  }, [bgMusicIsApple, bgMusic?.previewUrl, bgMusic?.start, bgMusic?.end, bgMusic?.volume, idx, paused]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bgMusicIsApple, bgMusic?.previewUrl, bgMusic?.start, bgMusic?.end, bgMusic?.volume, idx]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apple: follow the viewer's paused state without re-creating playback (no
+  // reseek — pause freezes, resume continues where it left off).
+  useEffect(() => {
+    if (!bgMusicIsApple || !bgMusicRef.current) return;
+    const a = bgMusicRef.current;
+    try {
+      if (paused) a.pause();
+      else if (bgMusic?.previewUrl && musicState !== "unavailable") a.play().catch(() => setMusicState("blocked"));
+    } catch { /* noop */ }
+  }, [bgMusicIsApple, paused]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Apple but no playable preview URL at all (shouldn't normally happen) — mark
   // unavailable so the UI never waits silently.
@@ -957,12 +984,16 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       )}
 
       {/* "Tap to play music" — shown only when autoplay was actually blocked.
-          "Unavailable" is honest (embedding disabled / dead URL): no tap action. */}
+          "Unavailable" is honest (embedding disabled / dead URL): no tap action.
+          The pill stops click AND touchstart AND touchend: the viewer advances
+          on touchend, and touchend's preventDefault suppresses the synthetic
+          click — so the ONLY handler guaranteed to run on mobile is touchend,
+          which is why IT performs the unlock (click covers desktop). */}
       {bgMusic && musicState === "blocked" && !paused && (
         <div
           onClick={(e) => { e.stopPropagation(); unlockMusicPlayback(); }}
           onTouchStart={(e) => e.stopPropagation()}
-          onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); }}
+          onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); unlockMusicPlayback(); }}
           style={{ position: "absolute", top: 104, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
         >
           <Volume2 size={14} color="#fff" />
@@ -979,7 +1010,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 20px 40px", boxSizing: "border-box", overflow: "hidden" }}>
         {current.bgAudioURL && <audio ref={bgAudioRef} src={current.bgAudioURL} loop />}
-        {bgMusicIsApple && bgMusic?.previewUrl && <audio ref={bgMusicRef} src={getPreviewUrl(bgMusic)} loop />}
+        {bgMusicIsApple && bgMusic?.previewUrl && <audio ref={bgMusicRef} src={getPreviewUrl(bgMusic)} preload="none" />}
         {/* Hidden offscreen mount for the Zemer (YouTube) background-music player */}
         <div ref={ytMountRef} style={{ position: "absolute", width: 1, height: 1, left: -9999, top: -9999, overflow: "hidden", opacity: 0, pointerEvents: "none" }} />
         {(current.state === "queued" || current.state === "processing") ? (

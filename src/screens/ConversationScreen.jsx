@@ -2070,12 +2070,24 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       const { synthesizeSpeechBytes } = await import("../firebase/tts");
       const voice = availableVoices.find((v) => v.id === yVoiceId) || availableVoices[0];
       const blob = await synthesizeSpeechBytes(text, voice?.referenceId);
-      const file = new File([blob], `ai-voice-${voice?.id || "note"}.mp3`, { type: "audio/mpeg" });
       const dur = await getAudioDuration(blob);
-      await sendVoiceNoteMessage({ file, duration: dur || 1 });
+      // NEVER auto-send: stash the generated audio and open the preview
+      // composer (Generated Voice + Play/Pause + seek + Download + Send +
+      // Cancel/Delete, replayable). The only path that sends is vcConfirmSend
+      // (the "Send" button on the preview). Do not call it from here.
+      if (genUrl) { try { URL.revokeObjectURL(genUrl); } catch {} }
+      setGenUrl(URL.createObjectURL(blob));
+      setGenBlob(blob);
+      setGenMime(blob?.type || "audio/mpeg");
+      setGenDuration(dur || 0);
+      setGenTotal(dur || 0);
+      setGenCurrent(0);
+      setGenPlaying(false);
+      setVcVoiceId(voice?.id || "y-mizrachi");
       setYNoteText("");
       setYNoteIdea("");
       setShowYNote(false);
+      setShowClone(true);
     } catch (err) {
       setSendError(err?.message || "Couldn't generate the voice note.");
     }
@@ -4199,7 +4211,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <X size={18} color={t.textMuted} onClick={() => { if (!vcSending) setShowClone(false); }} style={{ cursor: "pointer" }} />
                 </div>
                 <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 12 }}>
-                  Tap the mic and speak — your words are re-voiced into the selected Fish Audio voice and posted to the chat.
+                  Tap the mic and speak — your words are re-voiced into the selected Fish Audio voice. Listen in the preview below, then send, download, or discard it — nothing is posted automatically.
                 </div>
                 <div style={{ fontSize: 11.5, color: t.textMuted, lineHeight: 1.45, marginBottom: 12, padding: "8px 10px", borderRadius: 8, background: t.primaryLight }}>
                   Tip: submit recordings with NO background noise and only ONE speaker — clean audio gives the best cloned result.
@@ -4285,7 +4297,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   </div>
                   {!genBlob && (
                     <div onClick={vcSend} style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 14, color: t.bubbleMeText, cursor: vcBlob && !vcSending ? "pointer" : "not-allowed", opacity: vcBlob && !vcSending ? 1 : 0.5 }}>
-                      {vcSending ? "Converting…" : "Send Cloned Voice Note"}
+                      {vcSending ? "Converting…" : "Generate Cloned Voice"}
                     </div>
                   )}
                 </div>

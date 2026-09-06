@@ -91,8 +91,20 @@ async function openNativePhoto() {
           return new File([u8], "camera.jpg", { type: "image/jpeg" });
         }
       }
-    } catch {
-      // Plugin unavailable/denied/errored — fall through to the file-input path.
+    } catch (e) {
+      // A permission denial must surface guidance, NOT silently fall through to
+      // the file-input path (which would just hit the same denial and look
+      // like the picker "flashed and closed"). Other errors still fall through
+      // to the <input capture> fallback below.
+      const msg = e?.message || "";
+      if (/denied|permission|not allowed/i.test(msg)) {
+        const err = new Error(
+          "Camera permission was denied. Allow camera access in your browser or system settings, then try again."
+        );
+        err.code = "PERMISSION_DENIED";
+        throw err;
+      }
+      // Plugin unavailable/errored — fall through to the file-input path.
     }
   }
   // Fallback: hidden <input capture> opens the device camera on mobile WebViews

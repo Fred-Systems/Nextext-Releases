@@ -13,6 +13,7 @@ import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequests
 import { getActiveStorageProviderFromDb, setActiveStorageProviderDb, getSystemSetting, writeSystemSetting } from "../firebase/systemSettings";
 import { invalidateStorageProviderCache } from "../services/mediaUpload";
 import { setAdminPanelPinHash, verifyAdminPanelPin } from "../firebase/adminPanelPin";
+import { formatLastSeen } from "../firebase/presence";
 import { supabase, MEDIA_BUCKET } from "../supabase/config";
 
 // Categories used by the admin "Jewish Statuses" controls (mirror of App.jsx).
@@ -1120,10 +1121,10 @@ export default function AdminDashboard({ myUid, onBack }) {
                 return (
                   <div
                     key={val}
-                    onClick={() => {
+                    onClick={async () => {
                       setError("");
                       try {
-                        updateDoc(doc(db, "users", selectedUser.uid), { clonedVoiceTestOverride: val });
+                        await updateDoc(doc(db, "users", selectedUser.uid), { clonedVoiceTestOverride: val });
                         setSelectedUser((prev) => ({ ...prev, clonedVoiceTestOverride: val }));
                       } catch (e) {
                         setError("Couldn't update override: " + e.message);
@@ -1525,13 +1526,25 @@ export default function AdminDashboard({ myUid, onBack }) {
           {!allUsersLoading && directorySearch.trim().length >= 1 && filteredDirectory.length === 0 && (
             <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No matching users.</div>
           )}
-          {filteredDirectory.map((u) => (
+          {filteredDirectory.map((u) => {
+            // Presence comes from the existing heartbeat fields on the user doc
+            // (src/firebase/presence.js): isOnline + lastSeen. Online = flag set
+            // AND lastSeen fresh (<60s, same threshold as usePresence).
+            const lastSeenMs = u.lastSeen?.toMillis ? u.lastSeen.toMillis() : (u.lastSeen?.toDate ? u.lastSeen.toDate().getTime() : 0);
+            const isOnlineNow = u.isOnline === true && !!lastSeenMs && (Date.now() - lastSeenMs < 60 * 1000);
+            return (
             <div key={u.uid} style={{ padding: "11px 4px", borderBottom: `1px solid ${t.border}` }}>
               <div onClick={() => setSelectedUser(u)} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, cursor: "pointer", minWidth: 0 }}>
                 <div style={{ width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: t.primary }}>{u.displayName?.[0]}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.displayName} <span style={{ color: t.textMuted, fontWeight: 400 }}>@{u.username}</span></div>
                   <div style={{ fontSize: 11.5, color: t.textMuted }}>{u.email}{u.role === "admin" ? " · Admin" : ""}</div>
+                  {(isOnlineNow || u.lastSeen) && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: isOnlineNow ? "#34C759" : "#8E8E93", flexShrink: 0 }} />
+                      <span style={{ fontSize: 11.5, color: isOnlineNow ? "#34C759" : t.textMuted, fontWeight: isOnlineNow ? 700 : 400 }}>{isOnlineNow ? "Online" : formatLastSeen(u.lastSeen)}</span>
+                    </div>
+                  )}
                 </div>
                 {u.moderation?.banType && u.moderation.banType !== "none" && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 6, background: "#FFE5E5", color: "#FF3B30", fontWeight: 700 }}>{u.moderation.banType}</span>}
               </div>
@@ -1588,7 +1601,8 @@ export default function AdminDashboard({ myUid, onBack }) {
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

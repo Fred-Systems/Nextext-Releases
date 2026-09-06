@@ -650,6 +650,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           textStickers: textStickers.length ? textStickers : null,
           allowDownload: snapAllowDownload,
           commentsHidden: snapHideComments,
+          backgroundMusic: snapBgMusic,
           visibility: postVisibility,
         });
       }
@@ -834,6 +835,10 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           bgAudioVolume: bgAudioVol,
           videoVolume: null,
           commentsHidden: snapHideComments,
+          // Text statuses support background music too (the Add-Music chip is
+          // shown for text mode) — without this the selected track was
+          // silently dropped on post.
+          backgroundMusic: snapBgMusic,
           visibility: postVisibility,
         });
       }
@@ -2129,9 +2134,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgMusic.title}</div>
                         <div style={{ fontSize: 12, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgMusic.artist}</div>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: t.primary, marginTop: 2 }}>{bgMusic.provider === "apple" ? "🎵 Apple Music" : bgMusic.provider === "zemer" ? "🎵 Zemer" : ""}</div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: t.primary, marginTop: 2 }}>{bgMusic.provider === "apple" || bgMusic.provider === "itunes" ? "🎵 Apple Music" : bgMusic.provider === "zemer" ? "🎵 Zemer" : ""}</div>
                       </div>
-                      <div onClick={() => { const a = bgMusicChipAudioRef.current; if (a) { a.currentTime = bgMusic.start || 0; a.volume = bgMusic.volume ?? 1; a.play().catch(() => {}); } }} title="Preview" style={{ width: 32, height: 32, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                      <div onClick={() => { const a = bgMusicChipAudioRef.current; if (a && bgMusic.previewUrl) { a.currentTime = bgMusic.start || 0; a.volume = bgMusic.volume ?? 1; a.play().catch(() => {}); } }} title={bgMusic.previewUrl ? "Preview" : "Preview in the picker via YouTube"} style={{ width: 32, height: 32, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, opacity: bgMusic.previewUrl ? 1 : 0.55 }}>
                         <Play size={14} color={t.primary} />
                       </div>
                       <div onClick={() => setMusicModalOpen(true)} style={{ padding: "6px 10px", borderRadius: 8, background: t.primaryLight, color: t.primary, fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>Replace</div>
@@ -2141,10 +2146,10 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     <div style={{ marginTop: 10 }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
                         <span style={{ fontSize: 11.5, fontWeight: 600, color: t.text }}>Song segment</span>
-                        <span style={{ fontSize: 11.5, fontWeight: 700, color: t.primary }}>{fmtSecs(bgMusic.start || 0)} → {fmtSecs(Math.min(bgMusic.end || 30, bgMusic.provider === "apple" ? 30 : (bgMusic.durationSec || 300)))}</span>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: t.primary }}>{fmtSecs(bgMusic.start || 0)} → {fmtSecs(Math.min(bgMusic.end || 30, (bgMusic.provider === "apple" || bgMusic.provider === "itunes") ? 30 : (bgMusic.durationSec || 300)))}</span>
                       </div>
                       {(() => {
-                        const maxSeg = bgMusic.provider === "apple" ? Math.min(bgMusic.durationSec || 30, 30) : Math.min(bgMusic.durationSec || 300, 600);
+                        const maxSeg = (bgMusic.provider === "apple" || bgMusic.provider === "itunes") ? Math.min(bgMusic.durationSec || 30, 30) : Math.min(bgMusic.durationSec || 300, 600);
                         const endVal = Math.min(bgMusic.end || maxSeg, maxSeg);
                         return (
                           <>
@@ -2152,7 +2157,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                             <input type="range" min="1" max={maxSeg} step="1" value={endVal} onChange={(e) => { const v = Number(e.target.value); setBgMusic((m) => ({ ...m, end: Math.max(v, (m.start || 0) + 1) })); }} style={{ width: "100%", accentColor: t.primary, height: 26, minHeight: 26 }} />
                             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: t.textMuted }}>
                               <span>Start</span>
-                              <span>End (of {fmtSecs(maxSeg)}{bgMusic.provider === "apple" ? " preview" : ""})</span>
+                              <span>End (of {fmtSecs(maxSeg)}{(bgMusic.provider === "apple" || bgMusic.provider === "itunes") ? " preview" : ""})</span>
                             </div>
                           </>
                         );
@@ -2174,12 +2179,22 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                       </label>
                     )}
 
-                    <audio
-                      ref={bgMusicChipAudioRef}
-                      src={bgMusic.previewUrl}
-                      style={{ display: "none" }}
-                      onTimeUpdate={(e) => { const end = bgMusic.end || 30; if (e.currentTarget.currentTime >= end) e.currentTarget.pause(); }}
-                    />
+                    {/* Zemer tracks have no <audio> preview URL — they preview via
+                        the YouTube embed inside the picker. Render the hidden
+                        audio element only for Apple so the chip never plays a
+                        dead (null-src) element. */}
+                    {bgMusic.previewUrl ? (
+                      <audio
+                        ref={bgMusicChipAudioRef}
+                        src={bgMusic.previewUrl}
+                        style={{ display: "none" }}
+                        onTimeUpdate={(e) => { const end = bgMusic.end || 30; if (e.currentTarget.currentTime >= end) e.currentTarget.pause(); }}
+                      />
+                    ) : (
+                      <div style={{ fontSize: 11, color: t.textMuted, marginTop: 6 }}>
+                        Zemer preview plays inside the picker via YouTube — nothing is downloaded.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

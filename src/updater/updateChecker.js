@@ -160,10 +160,67 @@ export function openDownloadUrl(url) {
   window.location.href = url;
 }
 
+// Fetches a URL to a Blob while reporting byte progress. onProgress receives
+// { loaded, total } (total is 0 when the server omits Content-Length).
+// Throws with a human message on HTTP errors / empty bodies.
+export async function fetchBlobWithProgress(url, onProgress) {
+  let res;
+  try {
+    res = await fetch(url, { mode: "cors" });
+  } catch {
+    throw new Error("Couldn't reach the download server (offline?).");
+  }
+  if (!res.ok) throw new Error(`Download failed (HTTP ${res.status}).`);
+  const total = Number(res.headers.get("content-length")) || 0;
+  const reader = res.body?.getReader?.();
+  if (!reader) {
+    const blob = await res.blob();
+    if (!blob.size) throw new Error("Downloaded file is empty.");
+    try { onProgress?.({ loaded: blob.size, total: total || blob.size }); } catch { /* noop */ }
+    return blob;
+  }
+  const chunks = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      chunks.push(value);
+      loaded += value.byteLength || value.length || 0;
+      try { onProgress?.({ loaded, total }); } catch { /* noop */ }
+    }
+  }
+  const blob = new Blob(chunks);
+  if (!blob.size) throw new Error("Downloaded file is empty.");
+  try { onProgress?.({ loaded: blob.size, total: total || blob.size }); } catch { /* noop */ }
+  return blob;
+}
+
+function triggerBrowserDownload(blob, fileName) {
+  if (!blob || !blob.size) throw new Error("Downloaded file is empty.");
+  const href = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = fileName;
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { a.remove(); } catch { /* noop */ } }, 1000);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(href), 30000);
+  }
+}
+
 // Downloads + installs the APK inside the app (native plugin, no browser
 // needed). Falls back to opening the URL externally when the native path is
 // unavailable or fails.
-export async function downloadUpdate(url) {
+//
+// onProgress({ loaded, total }) reports real byte progress on the WEB path
+// (fetch → blob → anchor download). The NATIVE plugin path exposes no byte
+// progress events, so onProgress is not invoked there — callers should show
+// an indeterminate state while the native call is pending.
+export async function downloadUpdate(url, onProgress) {
   if (!url) return false;
   if (Capacitor.isNativePlatform()) {
     try {
@@ -180,13 +237,27 @@ export async function downloadUpdate(url) {
       console.error("[updater] native APK download failed, falling back to browser:", e);
     }
   }
+  // Web / fallback: download with real byte progress, then trigger the
+  // browser's own save/open flow (which shows its own progress UI too).
+  try {
+    const fileName = `NexText-${Date.now()}.apk`;
+    const blob = await fetchBlobWithProgress(url, onProgress);
+    triggerBrowserDownload(blob, fileName);
+    return false;
+  } catch (e) {
+    console.error("[updater] web APK download failed, falling back to browser:", e);
+  }
   openDownloadUrl(url);
   return false;
 }
 
 // Downloads the APK into the device's Downloads folder without launching the
 // installer. Returns { path, fileName } on success.
-export async function saveApkToDevice(url) {
+//
+// onProgress({ loaded, total }) reports real byte progress on the WEB path.
+// The NATIVE plugin path exposes no byte progress events, so onProgress is
+// not invoked there.
+export async function saveApkToDevice(url, onProgress) {
   if (!url) return null;
   if (Capacitor.isNativePlatform()) {
     try {
@@ -196,8 +267,10 @@ export async function saveApkToDevice(url) {
       throw e;
     }
   }
-  openDownloadUrl(url);
-  return null;
+  const fileName = `NexText-${Date.now()}.apk`;
+  const blob = await fetchBlobWithProgress(url, onProgress);
+  triggerBrowserDownload(blob, fileName);
+  return { path: null, fileName };
 }
 
 export function getLastSeenRelease() {

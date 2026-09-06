@@ -74,7 +74,14 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
     // Zemer has no native preview URL; playback is via the YouTube embed below.
     const url = getPreviewUrl(track);
     if (!url && track.source !== "zemer") return;
-    if (playingId === track.trackId) { a.pause(); setPlayingId(null); setPreviewPos(0); return; }
+    if (playingId === track.trackId) {
+      // Toggle off. For Apple this pauses the shared <audio> element; for
+      // Zemer it also closes the embed so nothing keeps playing hidden.
+      if (track.source !== "zemer" && a) { a.pause(); setPreviewPos(0); }
+      if (track.source === "zemer") setZemerPreviewId(null);
+      setPlayingId(null);
+      return;
+    }
     if (track.source === "zemer") {
       // Open/close the legitimate YouTube embed preview for this Zemer track.
       setZemerPreviewId((cur) => (cur === track.videoId ? null : track.videoId));
@@ -138,7 +145,10 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
           {!loading && !q.trim() && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>Search for a song to add as background music. Previews stream from the source; only metadata is stored with your status.</div>}
           {results.map((track) => {
             const previewUrl = getPreviewUrl(track);
-            const canPreview = !!previewUrl;
+            // Zemer has no <audio> preview URL — its legitimate preview is the
+            // YouTube embed below. Without this, every Zemer row rendered a
+            // greyed-out button and the embed could never be opened.
+            const canPreview = !!previewUrl || track.source === "zemer" || track.canPreview === true;
             const dl = resolveDownload(globalSettings, userDoc, track);
             return (
             <div key={track.trackId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", borderBottom: `1px solid ${t.border}` }}>
@@ -169,8 +179,11 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
         </div>
         {/* Apple preview: real seek bar bound to the ACTUAL preview duration (never
             presented as the full song). Zemer previews via the legitimate YouTube
-            embed (Zemer's own playback source) with YouTube's native controls. */}
-        {playingId && chosenProvider === "apple" && (
+            embed (Zemer's own playback source) with YouTube's native controls.
+            NOTE: the seek bar keys off the provider that actually served these
+            results (searchProvider), not the picker's tab state — the two can
+            differ after a provider-override search. */}
+        {playingId && (searchProvider || chosenProvider) === "apple" && (
           <div style={{ padding: "4px 2px 8px" }}>
             <input
               type="range"
