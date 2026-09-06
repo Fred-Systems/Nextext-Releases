@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, Check, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow, Pin, FlipHorizontal2, GripVertical } from "lucide-react";
+import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, Check, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow, Pin, FlipHorizontal2, GripVertical, Zap, Send } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { useChats, toggleArchive, toggleFavorite, toggleLocked, togglePinned, deleteChatForUser } from "../firebase/chats";
 import { useContacts, searchUsersByUsername, sendContactRequest, acceptContactRequest, getContactDisplayName } from "../firebase/contacts";
@@ -19,7 +19,8 @@ import { uploadChatFile } from "../supabase/media";
 import { uploadMediaFile } from "../services/mediaUpload";
 import Avatar from "../components/Avatar";
 import AISidebarWidget from "../components/AISidebarWidget";
-import { NativeCameraSheet, setPendingCameraFile } from "../components/NativeCameraLauncher";
+import { NativeCameraSheet, setPendingCameraFile, setPendingStatusFile } from "../components/NativeCameraLauncher";
+import StatusBuilderNew from "./StatusBuilderNew";
 import NewGroupScreen from "./NewGroupScreen";
 import FindFriendsScreen from "./FindFriendsScreen";
 import { doc, onSnapshot, updateDoc, collection, getCountFromServer, setDoc, getDoc } from "firebase/firestore";
@@ -64,6 +65,31 @@ function getLastMessagePreview(lm) {
     default:
       return lm.text || "No messages yet";
   }
+}
+
+// ── Unsent draft previews (teammate contract) ──
+// Unsent drafts live in localStorage under `nextext_draft_<chatId>` (plain
+// text). Missing/empty key → no draft. When a non-empty draft exists for a
+// chat, the row shows `Draft: <text>` INSTEAD of the last message. Never
+// creates Firestore messages.
+const DRAFT_KEY_PREFIX = "nextext_draft_";
+function getDraftText(chatId) {
+  if (!chatId) return "";
+  try {
+    const raw = localStorage.getItem(`${DRAFT_KEY_PREFIX}${chatId}`);
+    if (!raw || !raw.trim()) return "";
+    return raw;
+  } catch { return ""; }
+}
+function truncateDraftText(s, max = 80) {
+  const oneLine = String(s).replace(/\s+/g, " ").trim();
+  if (oneLine.length <= max) return oneLine;
+  return oneLine.slice(0, max - 1).trimEnd() + "…";
+}
+function getChatRowPreview(chat) {
+  const draft = getDraftText(chat?.id);
+  if (draft) return `Draft: ${truncateDraftText(draft)}`;
+  return getLastMessagePreview(chat?.lastMessage);
 }
 
 function highlightText(text, query, color) {
@@ -151,6 +177,22 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [acceptError, setAcceptError] = useState("");
   const [showSearch, setShowSearch] = useState(() => searchMode === "visible");
   const [searchQuery, setSearchQuery] = useState("");
+  // Draft previews read from localStorage, which doesn't trigger re-renders on
+  // its own. Re-read them whenever the list regains focus/visibility (i.e. the
+  // user returns from a conversation) so a new/edited/cleared draft shows up.
+  const [draftTick, setDraftTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setDraftTick((x) => x + 1);
+    const onVis = () => { if (document.visibilityState === "visible") bump(); };
+    window.addEventListener("focus", bump);
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("nextext-draft-change", bump);
+    return () => {
+      window.removeEventListener("focus", bump);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("nextext-draft-change", bump);
+    };
+  }, []);
   const [contextMenuChat, setContextMenuChat] = useState(null);
   // When the user locks a chat but no locked-chats password exists yet, we
   // prompt them to create one before the lock takes effect.
@@ -188,10 +230,20 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [globalCameraFilter, setGlobalCameraFilter] = useState(0);
   const [capturedMedia, setCapturedMedia] = useState(null); // { type:"image"|"video", blob, url, ext, mime }
   const [recording, setRecording] = useState(false);
-  const [postingStatus, setPostingStatus] = useState(false);
+  const [_postingStatus, setPostingStatus] = useState(false);
   const [globalCameraZoom, setGlobalCameraZoom] = useState(1);
   const [selectedRecipients, setSelectedRecipients] = useState([]);
   const [globalCameraDisappearing, setGlobalCameraDisappearing] = useState(false);
+  // Flash (torch) toggle — only shown when the active video track reports a
+  // torch capability; otherwise hidden so there's never a dead button.
+  const [globalCameraFlash, setGlobalCameraFlash] = useState(false);
+  const [flashSupported, setFlashSupported] = useState(false);
+  // Elapsed recording clock for video mode.
+  const [recordingSecs, setRecordingSecs] = useState(0);
+  const recordingTimerRef = useRef(null);
+  // NEW Status Builder handoff for in-app + native captures. Holds the File
+  // (in memory only — never saved anywhere first) until the builder mounts.
+  const [statusBuilderFile, setStatusBuilderFile] = useState(null); // { file, fileType } | null
   // Draggable + FAB position (bottom-right above nav)
   const [fabPos, setFabPos] = useState(() => {
     try { const v = JSON.parse(localStorage.getItem("nextext_fab_pos")); return (v?.bottom && v?.right) ? { bottom: v.bottom, right: v.right } : null; } catch { return null; }
@@ -572,20 +624,50 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     else onOpenChat(chat, null, { isGroup: true, groupName: chat.groupName });
   };
 
-  const openGlobalCamera = async () => {
+  // In-app camera open. Accepts overrides so facing/mode switches don't read
+  // stale state from the closure that scheduled them.
+  const openGlobalCamera = async (overrides = {}) => {
+    const facing = overrides.facing || globalCameraFacing;
+    const mode = overrides.mode || globalCameraMode;
     setGlobalCameraError("");
     setGlobalCameraZoom(1);
+    setGlobalCameraFlash(false);
+    setFlashSupported(false);
+    setRecordingSecs(0);
     setShowGlobalCamera(true);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setGlobalCameraError("This device or browser doesn't support the in-app camera. Try the photo button in the top bar instead.");
+      return;
+    }
     try {
       if (globalCameraStreamRef.current) {
         globalCameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
         globalCameraStreamRef.current = null;
       }
-      const wantsVideo = globalCameraMode === "video";
+      const wantsVideo = mode === "video";
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: globalCameraFacing },
+        video: { facingMode: facing },
         audio: wantsVideo,
       });
+      // Permission revoked mid-flow (or device unplugged): the track ends — back
+      // out cleanly with an explanation instead of a frozen preview.
+      try {
+        const vTrack = stream.getVideoTracks?.()[0];
+        if (vTrack) {
+          vTrack.onended = () => {
+            if (globalCameraStreamRef.current === stream) {
+              stopRecordingClock();
+              setRecording(false);
+              globalCameraStreamRef.current = null;
+              setGlobalCameraError("The camera disconnected or its permission was revoked. Tap Retry to start it again.");
+            }
+          };
+          try {
+            const caps = vTrack.getCapabilities?.();
+            setFlashSupported(!!(caps && caps.torch));
+          } catch { setFlashSupported(false); }
+        }
+      } catch { /* track introspection is best-effort */ }
       globalCameraStreamRef.current = stream;
       setTimeout(() => {
         if (globalCameraVideoRef.current) {
@@ -594,20 +676,58 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           globalCameraVideoRef.current.play().catch(() => {});
         }
       }, 30);
-    } catch {
-      setGlobalCameraError("Camera access denied or unavailable.");
+    } catch (e) {
+      const name = e?.name || "";
+      const isVideo = (overrides.mode || globalCameraMode) === "video";
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        setGlobalCameraError(
+          isVideo
+            ? "Camera or microphone blocked. Allow both in your browser's site settings (lock icon in the address bar), then tap Retry."
+            : "Camera blocked. Allow camera access in your browser's site settings (lock icon in the address bar), then tap Retry."
+        );
+      } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+        setGlobalCameraError("No camera found on this device. If you have an external camera, plug it in and tap Retry.");
+      } else if (name === "NotReadableError" || name === "AbortError") {
+        setGlobalCameraError("The camera is busy or couldn't start (another app may be using it). Close other camera apps and tap Retry.");
+      } else {
+        setGlobalCameraError("Couldn't start the camera. Check permissions and tap Retry.");
+      }
     }
   };
 
-  const switchGlobalCameraFacing = () => {
-    setGlobalCameraFacing((f) => (f === "environment" ? "user" : "environment"));
-    const wasVideo = globalCameraMode === "video";
-    if (globalCameraStreamRef.current) {
-      globalCameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
-      globalCameraStreamRef.current = null;
+  const stopRecordingClock = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
     }
-    // Re-open with the new facing direction. Keep the current mode.
-    setTimeout(() => openGlobalCamera(), 50);
+  };
+
+  const switchGlobalCameraMode = (m) => {
+    if (m === globalCameraMode || recording) return;
+    setGlobalCameraMode(m);
+    // Video needs a mic track, photo doesn't — re-request the stream so the
+    // mode actually takes effect instead of silently keeping the old tracks.
+    openGlobalCamera({ mode: m });
+  };
+
+  const switchGlobalCameraFacing = () => {
+    if (recording) return;
+    const next = globalCameraFacing === "environment" ? "user" : "environment";
+    setGlobalCameraFacing(next);
+    // Re-open with the new facing direction. Keep the current mode. The facing
+    // is passed explicitly — the state setter above hasn't flushed yet.
+    setTimeout(() => openGlobalCamera({ facing: next }), 50);
+  };
+
+  const toggleGlobalFlash = async () => {
+    const track = globalCameraStreamRef.current?.getVideoTracks?.()[0];
+    if (!track) return;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: !globalCameraFlash }] });
+      setGlobalCameraFlash((f) => !f);
+    } catch {
+      setGlobalCameraError("Flash isn't supported on this camera.");
+    }
   };
 
   const handleFabDragStart = (e) => {
@@ -698,48 +818,78 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const captureGlobalPhoto = () => {
-    if (!globalCameraVideoRef.current) return;
+    if (!globalCameraVideoRef.current || !globalCameraStreamRef.current) {
+      setGlobalCameraError("The camera isn't ready yet — wait a moment and try again.");
+      return;
+    }
     const video = globalCameraVideoRef.current;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    const cw = canvas.width, ch = canvas.height;
-    const filter = GLOBAL_CAMERA_FILTERS[globalCameraFilter]?.css;
-    if (filter) ctx.filter = filter;
-    ctx.save();
-    ctx.translate(cw / 2, ch / 2);
-    // Mirror the preview for selfie shots so the captured image matches what the user saw.
-    if (globalCameraFacing === "user") ctx.scale(-1, 1);
-    // Bake the pinch/button zoom into the capture (zoom-in crops toward centre).
-    ctx.scale(globalCameraZoom, globalCameraZoom);
-    ctx.translate(-cw / 2, -ch / 2);
-    ctx.drawImage(video, 0, 0);
-    ctx.restore();
-    ctx.filter = "none";
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      closeGlobalCamera();
-      setCapturedMedia({ type: "image", blob, url, ext: "jpg", mime: "image/jpeg" });
-      setCameraCaption("");
-      setCameraPreviewStep(true);
-    }, "image/jpeg", 0.92);
+    if (!video.videoWidth || !video.videoHeight) {
+      setGlobalCameraError("The camera isn't ready yet — wait a moment and try again.");
+      return;
+    }
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      const cw = canvas.width, ch = canvas.height;
+      const filter = GLOBAL_CAMERA_FILTERS[globalCameraFilter]?.css;
+      if (filter) ctx.filter = filter;
+      ctx.save();
+      ctx.translate(cw / 2, ch / 2);
+      // Mirror the preview for selfie shots so the captured image matches what the user saw.
+      if (globalCameraFacing === "user") ctx.scale(-1, 1);
+      // Bake the pinch/button zoom into the capture (zoom-in crops toward centre).
+      ctx.scale(globalCameraZoom, globalCameraZoom);
+      ctx.translate(-cw / 2, -ch / 2);
+      ctx.drawImage(video, 0, 0);
+      ctx.restore();
+      ctx.filter = "none";
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          setGlobalCameraError("Couldn't capture that photo. Try again.");
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        closeGlobalCamera();
+        setCapturedMedia({ type: "image", blob, url, ext: "jpg", mime: "image/jpeg" });
+        setCameraCaption("");
+        setCameraPreviewStep(true);
+      }, "image/jpeg", 0.92);
+    } catch {
+      setGlobalCameraError("Couldn't capture that photo. Try again.");
+    }
   };
 
   const startGlobalRecording = () => {
     if (!globalCameraStreamRef.current || recording) return;
+    if (typeof MediaRecorder === "undefined") {
+      setGlobalCameraError("Video recording isn't supported in this browser. You can still take photos.");
+      return;
+    }
     recordedChunksRef.current = [];
     let recorder;
     try {
       recorder = new MediaRecorder(globalCameraStreamRef.current, { mimeType: "video/webm" });
     } catch {
-      try { recorder = new MediaRecorder(globalCameraStreamRef.current); } catch { return; }
+      try { recorder = new MediaRecorder(globalCameraStreamRef.current); } catch {
+        setGlobalCameraError("Video recording couldn't start on this device. You can still take photos.");
+        return;
+      }
     }
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunksRef.current.push(e.data); };
+    recorder.onerror = () => {
+      stopRecordingClock();
+      setRecording(false);
+      setGlobalCameraError("Recording failed. Check microphone permission and try again.");
+    };
     recorder.onstop = () => {
+      stopRecordingClock();
       const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || "video/webm" });
-      if (!blob.size) return;
+      if (!blob.size) {
+        setGlobalCameraError("That recording captured no data — it wasn't saved. Try recording again.");
+        return;
+      }
       const url = URL.createObjectURL(blob);
       setCapturedMedia({ type: "video", blob, url, ext: "webm", mime: blob.type });
       setCameraCaption("");
@@ -747,28 +897,67 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       closeGlobalCamera();
     };
     mediaRecorderRef.current = recorder;
-    recorder.start();
+    try {
+      recorder.start();
+    } catch {
+      setGlobalCameraError("Video recording couldn't start on this device. You can still take photos.");
+      return;
+    }
     setRecording(true);
+    setRecordingSecs(0);
+    stopRecordingClock();
+    recordingTimerRef.current = setInterval(() => setRecordingSecs((s) => s + 1), 1000);
   };
 
   const stopGlobalRecording = () => {
     setRecording(false);
+    stopRecordingClock();
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
+      try { mediaRecorderRef.current.stop(); } catch { /* noop */ }
     }
   };
 
   const closeGlobalCamera = () => {
+    // Backing out mid-recording discards the partial clip (onstop still fires,
+    // but the camera is already torn down — guard by clearing the recorder ref
+    // first so no preview step is produced from a cancelled take).
     if (recording && mediaRecorderRef.current) {
-      try { mediaRecorderRef.current.stop(); } catch { /* noop */ }
+      const rec = mediaRecorderRef.current;
+      mediaRecorderRef.current = null;
+      try {
+        rec.onstop = null;
+        if (rec.state !== "inactive") rec.stop();
+      } catch { /* noop */ }
       setRecording(false);
     }
+    stopRecordingClock();
+    setRecordingSecs(0);
     if (globalCameraStreamRef.current) {
       globalCameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
       globalCameraStreamRef.current = null;
     }
+    setGlobalCameraFlash(false);
+    setFlashSupported(false);
     setShowGlobalCamera(false);
   };
+
+  // Unmount safety: never leave the camera/mic on if this screen unmounts
+  // mid-flow (tab switch, navigation, hot reload).
+  useEffect(() => () => {
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        const rec = mediaRecorderRef.current;
+        rec.onstop = null;
+        rec.stop();
+      }
+    } catch { /* noop */ }
+    stopRecordingClock();
+    if (globalCameraStreamRef.current) {
+      try { globalCameraStreamRef.current.getTracks().forEach((tr) => tr.stop()); } catch {}
+      globalCameraStreamRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Native camera (Capacitor) + routing sheet ──────────────────
   const nativeCameraChats = sortedChats.map((c) => ({ id: c.id, name: chatDisplayName(c), isGroup: c.type === "group" }));
@@ -859,38 +1048,30 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     }
   };
 
-  const postCapturedMediaToStatus = async () => {
+  const openNativeInStatusBuilder = (file) => {
+    if (!file) return;
+    setShowNativeCamera(false);
+    // Stash for the StatusScreen.routeNativeFile chain AND open the same NEW
+    // builder locally so the flow works without leaving this tab. The File
+    // stays in memory only — it is never saved anywhere first.
+    try { setPendingStatusFile(file); } catch {}
+    setStatusBuilderFile({ file, fileType: (file.type || "").startsWith("video") ? "video" : "image" });
+  };
+
+  const openCapturedInStatusBuilder = () => {
     if (!capturedMedia || !myUid) return;
-    setPostingStatus(true);
-    try {
-      const media = capturedMedia;
-      const file = new File([media.blob], `status-${Date.now()}.${media.ext}`, { type: media.mime });
-      const result = await uploadMediaFile(`status-${myUid}`, myUid, file);
-      let durationMs = null;
-      if (media.type === "video") {
-        const v = document.createElement("video");
-        v.preload = "metadata";
-        v.src = media.url;
-        await new Promise((res) => {
-          v.onloadedmetadata = () => { durationMs = Math.round(v.duration * 1000); res(); };
-          v.onerror = () => res();
-        });
-      }
-      await postStatus(myUid, {
-        text: cameraCaption.trim() || null,
-        mediaURL: result.url,
-        mediaType: media.type,
-        backgroundColor: null,
-        fontFamily: null,
-        durationMs: durationMs || 8000,
-        textOverlay: cameraCaption.trim() || null,
-        waitForVideo: media.type === "video",
-        visibility: "contacts",
-      });
-      discardCapturedMedia();
-    } catch {
-      setPostingStatus(false);
-    }
+    const media = capturedMedia;
+    const file = new File([media.blob], `camera-${Date.now()}.${media.ext}`, {
+      type: media.mime || (media.type === "video" ? "video/webm" : "image/jpeg"),
+    });
+    try { setPendingStatusFile(file); } catch {}
+    discardCapturedMedia();
+    setStatusBuilderFile({ file, fileType: media.type === "video" ? "video" : "image" });
+  };
+
+  const closeStatusBuilder = () => {
+    setStatusBuilderFile(null);
+    try { setPendingStatusFile(null); } catch {}
   };
 
   const formatTime = (ts) => {
@@ -1079,6 +1260,8 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const renderChatRow = (c) => {
+    // Re-read localStorage drafts whenever draftTick bumps (returning to the list).
+    void draftTick;
     const otherUid = c.participants?.find((p) => p !== myUid);
     const otherContact = acceptedContacts.find((ac) => ac.uid === otherUid);
     const _density = ["compact", "default", "roomy"].includes(localStorage.getItem("nextext_ui_density")) ? localStorage.getItem("nextext_ui_density") : "default";
@@ -1150,7 +1333,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         {<ChatRowMeta myUid={myUid} otherUid={otherUid} chatId={c.id} t={t} compact={compactList} isGroup={c.type === "group"} />}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minWidth: 0 }}>
           <span style={{ fontSize: msgSize, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-            {searchQuery.trim() ? highlightText(getLastMessagePreview(c.lastMessage), searchQuery, t.accent) : getLastMessagePreview(c.lastMessage)}
+            {searchQuery.trim() ? highlightText(getChatRowPreview(c), searchQuery, t.accent) : getChatRowPreview(c)}
           </span>
           {c.unreadCount?.[myUid] > 0 && (
             <span style={{ background: t.accent, color: "#fff", fontSize: 11, fontWeight: 700, borderRadius: 10, minWidth: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", flexShrink: 0 }}>
@@ -1465,6 +1648,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         open={showNativeCamera}
         onClose={() => setShowNativeCamera(false)}
         onSendStatus={nativeSendStatus}
+        onStatusBuilder={openNativeInStatusBuilder}
         onSendChatTo={nativeSendChatTo}
         chats={nativeCameraChats}
       />
@@ -1486,19 +1670,20 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             <span style={{ width: 50 }} />
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: 10, padding: "6px 12px", flexShrink: 0 }}>
-            <div style={{ display: "flex", background: "rgba(255,255,255,0.12)", borderRadius: 20, overflow: "hidden" }}>
+            <div style={{ display: "flex", background: "rgba(255,255,255,0.12)", borderRadius: 20, overflow: "hidden", opacity: recording ? 0.45 : 1 }}>
               {["photo", "video"].map((m) => (
                 <span
                   key={m}
-                  onClick={() => setGlobalCameraMode(m)}
-                  style={{ padding: "6px 16px", fontSize: 13, fontWeight: 700, color: globalCameraMode === m ? "#000" : "#fff", background: globalCameraMode === m ? "#fff" : "transparent", borderRadius: 20, cursor: "pointer", textTransform: "capitalize" }}
+                  onClick={() => switchGlobalCameraMode(m)}
+                  title={recording ? "Stop recording to switch mode" : `Switch to ${m} mode`}
+                  style={{ padding: "6px 16px", fontSize: 13, fontWeight: 700, color: globalCameraMode === m ? "#000" : "#fff", background: globalCameraMode === m ? "#fff" : "transparent", borderRadius: 20, cursor: recording ? "default" : "pointer", textTransform: "capitalize" }}
                 >{m}</span>
               ))}
             </div>
             <span onClick={cycleGlobalFilter} style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, color: "#fff", background: "rgba(255,255,255,0.12)", borderRadius: 16, cursor: "pointer" }}>
               {GLOBAL_CAMERA_FILTERS[globalCameraFilter]?.label || "None"}
             </span>
-            <span onClick={switchGlobalCameraFacing} title="Flip camera" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(255,255,255,0.12)", cursor: "pointer" }}>
+            <span onClick={switchGlobalCameraFacing} title={recording ? "Stop recording to flip camera" : "Flip camera"} style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(255,255,255,0.12)", cursor: recording ? "default" : "pointer", opacity: recording ? 0.45 : 1 }}>
               <FlipHorizontal2 size={18} color="#fff" />
             </span>
             <span onClick={() => setGlobalCameraZoom((z) => Math.max(1, Math.round((z - 0.2) * 10) / 10))} title="Zoom out" style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(255,255,255,0.12)", cursor: "pointer", fontSize: 20, fontWeight: 700, color: "#fff" }}>−</span>
@@ -1507,12 +1692,30 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           <div
             onTouchStart={onCamTouchStart}
             onTouchMove={onCamTouchMove}
-            style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", minHeight: 0 }}
+            style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", minHeight: 0, position: "relative" }}
           >
             <video ref={globalCameraVideoRef} autoPlay playsInline muted={globalCameraMode !== "video"} style={{ width: "100%", height: "100%", maxHeight: "70vh", objectFit: "contain", transform: `${globalCameraFacing === "user" ? "scaleX(-1) " : ""}scale(${globalCameraZoom})`, transformOrigin: "center center", filter: GLOBAL_CAMERA_FILTERS[globalCameraFilter]?.css }} />
+            {recording && (
+              <div style={{ position: "absolute", top: 10, left: 0, right: 0, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(0,0,0,0.55)", borderRadius: 14, padding: "5px 12px" }}>
+                  <div style={{ width: 9, height: 9, borderRadius: "50%", background: "#FF3B30" }} />
+                  <span style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>REC {Math.floor(recordingSecs / 60)}:{String(recordingSecs % 60).padStart(2, "0")}</span>
+                </div>
+              </div>
+            )}
           </div>
-          {globalCameraError && <div style={{ color: "#FF3B30", fontSize: 13, textAlign: "center", padding: 8, flexShrink: 0 }}>{globalCameraError}</div>}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 16px calc(env(safe-area-inset-bottom, 0px) + 28px)", flexShrink: 0 }}>
+          {globalCameraError && (
+            <div style={{ padding: "8px 16px", flexShrink: 0, textAlign: "center" }}>
+              <div style={{ color: "#FF3B30", fontSize: 13, lineHeight: 1.5, marginBottom: 8 }}>{globalCameraError}</div>
+              <span onClick={() => openGlobalCamera()} style={{ display: "inline-block", padding: "8px 22px", borderRadius: 16, background: "#fff", color: "#000", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Retry</span>
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 16px calc(env(safe-area-inset-bottom, 0px) + 28px)", flexShrink: 0, gap: 14 }}>
+            {flashSupported && (
+              <span onClick={toggleGlobalFlash} title={globalCameraFlash ? "Flash off" : "Flash on"} style={{ width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: globalCameraFlash ? "#FFD60A" : "rgba(255,255,255,0.12)", cursor: "pointer", flexShrink: 0 }}>
+                <Zap size={20} color={globalCameraFlash ? "#000" : "#fff"} fill={globalCameraFlash ? "#000" : "none"} />
+              </span>
+            )}
             {globalCameraMode === "photo" ? (
               <div onClick={captureGlobalPhoto} style={{ width: 64, height: 64, borderRadius: "50%", border: "4px solid #fff", background: "rgba(255,255,255,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#fff" }} />
@@ -1533,18 +1736,23 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             <span style={{ color: t.text, fontWeight: 700, fontSize: 16 }}>Send to…</span>
             <span style={{ width: 50 }} />
           </div>
-          <div style={{ padding: 16, borderBottom: `1px solid ${t.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, borderBottom: `1px solid ${t.border}` }}>
             {capturedMedia.type === "video"
-              ? <video src={capturedMedia.url} style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover" }} />
-              : <img src={capturedMedia.url} alt="Captured" style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover" }} />}
+              ? <video src={capturedMedia.url} style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover", background: "#000" }} />
+              : <img src={capturedMedia.url} alt="Captured" style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover", background: "#000" }} />}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: t.text }}>{capturedMedia.type === "video" ? "Video captured" : "Photo captured"}</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 2 }}>Edit it for Status, or pick chats below to send.</div>
+            </div>
           </div>
           <div style={{ padding: "10px 16px", borderBottom: `1px solid ${t.border}` }}>
-            <div onClick={postCapturedMediaToStatus} style={{ padding: "12px 14px", borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer", opacity: postingStatus ? 0.6 : 1 }}>
-              {postingStatus ? "Posting…" : "Post on Status"}
+            <div onClick={openCapturedInStatusBuilder} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 14px", borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
+              <Megaphone size={16} color={t.bubbleMeText} /> Post to Status
             </div>
           </div>
       <div className="nx-scroll" style={{ flex: 1, paddingBottom: hideNav ? 80 : 140 }}>
-            {acceptedContacts.length === 0 && <div style={{ padding: 20, textAlign: "center", color: t.textMuted, fontSize: 13 }}>No contacts to send to.</div>}
+            <div style={{ padding: "12px 16px 4px", fontSize: 12.5, fontWeight: 700, color: t.textMuted }}>SEND TO CHATS</div>
+            {acceptedContacts.length === 0 && chats.filter((c) => c.type === "group").length === 0 && <div style={{ padding: 20, textAlign: "center", color: t.textMuted, fontSize: 13, lineHeight: 1.6 }}>No chats yet.<br />Add a contact or create a group first, then capture again to send.</div>}
             {acceptedContacts.map((c) => {
               const otherUid = c.uid;
               const chatForContact = chats.find((ch) => ch.type !== "group" && ch.participants?.includes(myUid) && ch.participants?.includes(otherUid));
@@ -1601,17 +1809,33 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 14, background: "rgba(255,255,255,0.1)", color: "#fff", boxSizing: "border-box" }}
             />
           </div>
-          <div style={{ display: "flex", gap: 12, justifyContent: "center", padding: "0 16px 24px", flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", padding: "0 16px calc(env(safe-area-inset-bottom, 0px) + 24px)", flexShrink: 0 }}>
             <div onClick={() => { setCameraPreviewStep(false); setCameraCaption(""); openGlobalCamera(); }} style={{ flex: 1, padding: 13, borderRadius: 12, border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
               Retake
             </div>
-            <div onClick={postCapturedMediaToStatus} style={{ flex: 1, padding: 13, borderRadius: 12, border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer", opacity: postingStatus ? 0.6 : 1 }}>
-              {postingStatus ? "Posting…" : "Status"}
+            <div onClick={openCapturedInStatusBuilder} style={{ flex: 1.2, padding: 13, borderRadius: 12, background: "#fff", color: "#000", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <Megaphone size={16} color="#000" /> Post to Status
             </div>
-            <div onClick={() => setCameraPreviewStep(false)} style={{ flex: 1, padding: 13, borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
-              Send
+            <div onClick={() => setCameraPreviewStep(false)} style={{ flex: 1, padding: 13, borderRadius: 12, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <Send size={16} color={t.bubbleMeText} /> Send
             </div>
           </div>
+        </div>
+      )}
+
+      {statusBuilderFile && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 2147483000 }}>
+          <StatusBuilderNew
+            myUid={myUid}
+            userDoc={userDoc}
+            globalSettings={globalSettings}
+            sysConfig={sysConfig}
+            initialFile={statusBuilderFile.file}
+            initialFileType={statusBuilderFile.fileType}
+            initialText=""
+            onClose={closeStatusBuilder}
+            onPosted={closeStatusBuilder}
+          />
         </div>
       )}
 

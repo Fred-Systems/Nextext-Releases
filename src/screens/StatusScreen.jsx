@@ -22,6 +22,14 @@ import { getMicrophoneStream } from "../media/microphone";
 import { base64ToBlob } from "../media/base64";
 import { useGlobalSettings } from "../firebase/config-settings";
 import { getActiveProvider, resolveMusicAccess, buildBgMusic } from "../media/musicService";
+
+// Local mm:ss formatter for the builder's music segment chip (the picker's own
+// copy lives in MusicPickerModal.jsx — this one crashed the OLD builder when
+// the shared extraction removed it from this file).
+function fmtSecs(s) {
+  const v = Math.max(0, Math.floor(Number(s) || 0));
+  return `${Math.floor(v / 60)}:${String(v % 60).padStart(2, "0")}`;
+}
 import { getProxyMediaUrl, getVideoPosterUrl } from "../media/mediaProxy";
 import JewishStatusesTab from "../features/jewishStatus/JewishStatusesTab";
 
@@ -287,7 +295,6 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const [statusLayout, setStatusLayout] = useState(() => localStorage.getItem("nextext_status_layout") || "cards");
   const [statusPreviewSize, setStatusPreviewSize] = useState(() => localStorage.getItem("nextext_status_preview_size") || "compact");
   const [statusTab, setStatusTab] = useState("updates"); // "updates" | "public"
-  const [publicInfo, setPublicInfo] = useState(false);
   const [postPublic, setPostPublic] = useState(false);
   const [userStatusVisibility, setUserStatusVisibility] = useState("contacts");
   useEffect(() => {
@@ -1288,23 +1295,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
             style={{ flex: 1, textAlign: "center", padding: "11px 0", fontSize: 13.5, fontWeight: 700, cursor: "pointer", color: statusTab === tab.id ? t.primary : t.textMuted, borderBottom: `2px solid ${statusTab === tab.id ? t.primary : "transparent"}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
           >
             <span>{tab.label}</span>
-            {tab.id === "public" && (
-              <span
-                onClick={(e) => { e.stopPropagation(); setPublicInfo((v) => !v); }}
-                title="What is a public status?"
-                style={{ width: 16, height: 16, borderRadius: "50%", border: `1px solid ${t.textMuted}`, color: t.textMuted, fontSize: 11, fontWeight: 800, lineHeight: "14px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
-              >?</span>
-            )}
           </div>
         ))}
-        {publicInfo && (
-          <div style={{ padding: "10px 16px", background: t.primaryLight, borderBottom: `1px solid ${t.border}` }}>
-            <div style={{ fontSize: 13, color: t.text, lineHeight: 1.5 }}>
-              <b>Public statuses</b> are visible to <b>anyone</b> with the app link — not just your NexText contacts. Post something public only if you're comfortable with it being widely seen. You can toggle each status between Contacts-only and Public from the visibility switch on your own status cards.
-            </div>
-            <div onClick={() => setPublicInfo(false)} style={{ textAlign: "right", fontSize: 12.5, fontWeight: 700, color: t.primary, marginTop: 6, cursor: "pointer" }}>Got it</div>
-          </div>
-        )}
       </div>
 
       <div className="nx-scroll" style={{ flex: 1, paddingBottom: 70, minHeight: 0 }}>

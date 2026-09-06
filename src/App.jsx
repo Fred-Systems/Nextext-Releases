@@ -604,6 +604,136 @@ function VoiceSampleSubmitSection({ t, myUid, userDoc }) {
   );
 }
 
+// TEST-ONLY cloned-voice playground. Gated by resolveClonedVoiceTestAccess
+// (Task 3) using the SettingsScreen's in-scope globalSettings + userDoc.
+// Flow: pick a voice (same getAvailableVoices list the chat composer uses) →
+// enter sample text → Generate (same Fish Audio worker path as
+// ConversationScreen's sendYVoiceNote via synthesizeSpeechBytes) → audio
+// preview element for playback. The result stays an in-memory blob URL: no
+// chat message, no upload to Firebase/Supabase/Cloudinary, no permanent
+// record. Blob URLs are revoked when replaced and on unmount.
+function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc }) {
+  const [allowed, setAllowed] = useState(null); // null = resolving, then true/false
+  const [voices, setVoices] = useState([]);
+  const [voiceId, setVoiceId] = useState("");
+  const [sampleText, setSampleText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [testError, setTestError] = useState("");
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const previewUrlRef = useRef(null);
+
+  const setPreview = (url) => {
+    if (previewUrlRef.current) { try { URL.revokeObjectURL(previewUrlRef.current); } catch {} }
+    previewUrlRef.current = url;
+    setPreviewUrl(url);
+  };
+  useEffect(() => () => {
+    if (previewUrlRef.current) { try { URL.revokeObjectURL(previewUrlRef.current); } catch {} }
+  }, []);
+
+  // Gate via the server-side resolver (dynamic import keeps this section
+  // self-contained; the module is already loaded by the app).
+  useEffect(() => {
+    let alive = true;
+    import("./firebase/config-settings").then((m) => {
+      if (!alive) return;
+      if (typeof m.resolveClonedVoiceTestAccess === "function") {
+        setAllowed(m.resolveClonedVoiceTestAccess(globalSettings, userDoc));
+      } else {
+        setAllowed(false);
+      }
+    }).catch(() => { if (alive) setAllowed(false); });
+    return () => { alive = false; };
+  }, [globalSettings, userDoc]);
+
+  // Same Fish Audio voice list the chat composer offers.
+  useEffect(() => {
+    let alive = true;
+    import("./firebase/tts").then((m) => {
+      if (!alive) return;
+      const list = m.getAvailableVoices(sysConfig) || [];
+      setVoices(list);
+      setVoiceId((prev) => prev || list[0]?.id || "");
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [sysConfig]);
+
+  // Access denied: brief "not enabled" note, no dead buttons.
+  if (allowed !== true) {
+    if (allowed === false) {
+      return (
+        <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 10, lineHeight: 1.5 }}>
+          Cloned voice testing is not enabled for your account.
+        </div>
+      );
+    }
+    return null;
+  }
+
+  const generate = async () => {
+    setTestError("");
+    const clean = sampleText.trim();
+    if (!clean) { setTestError("Enter some sample text first."); return; }
+    const voice = voices.find((v) => v.id === voiceId) || voices[0];
+    if (!voice) { setTestError("No voices available right now."); return; }
+    setBusy(true);
+    try {
+      // Same worker path ConversationScreen uses — but we stop at the blob.
+      const { synthesizeSpeechBytes } = await import("./firebase/tts");
+      const blob = await synthesizeSpeechBytes(clean, voice.referenceId);
+      setPreview(URL.createObjectURL(blob));
+    } catch (err) {
+      setTestError(err?.message || "Couldn't generate the preview.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+        <span style={{ fontSize: 14 }}>🔊</span>
+        <span style={{ fontWeight: 700, fontSize: 14, color: t.text, flex: 1 }}>Test Cloned Voice</span>
+      </div>
+      <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
+        Test only — hear how a cloned voice sounds. Nothing is posted to any chat or uploaded anywhere.
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: t.text, marginBottom: 4 }}>Voice</div>
+      <select
+        value={voiceId}
+        onChange={(e) => setVoiceId(e.target.value)}
+        style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, color: t.text, background: t.bg, outline: "none", cursor: "pointer" }}
+      >
+        {voices.map((v) => (
+          <option key={v.id} value={v.id}>{v.fullName || v.name}</option>
+        ))}
+      </select>
+      <div style={{ fontSize: 12, fontWeight: 600, color: t.text, marginTop: 8, marginBottom: 4 }}>Sample text</div>
+      <textarea
+        value={sampleText}
+        onChange={(e) => setSampleText(e.target.value)}
+        placeholder="Type something for the voice to say…"
+        rows={3}
+        style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, color: t.text, background: t.bg, outline: "none", resize: "vertical", fontFamily: "inherit" }}
+      />
+      <button
+        onClick={generate}
+        disabled={busy}
+        style={{ width: "100%", marginTop: 8, padding: 11, borderRadius: 10, border: "none", background: busy ? t.border : t.primary, color: busy ? t.textMuted : t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: busy ? "not-allowed" : "pointer" }}
+      >
+        {busy ? "Generating…" : "Generate preview"}
+      </button>
+      {testError && <div style={{ fontSize: 12.5, color: "#FF3B30", fontWeight: 600, marginTop: 6 }}>{testError}</div>}
+      {previewUrl && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 4 }}>Preview — in-memory only, not saved anywhere.</div>
+          <audio src={previewUrl} controls style={{ width: "100%" }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiScale, recordingBarScale, setRecordingBarScale,   showScrollDown, setShowScrollDown, scrollDownSize, setScrollDownSize, scrollDownPos, setScrollDownPos, animatedScrollEntry, setAnimatedScrollEntry, compactList, setCompactList, onBack, onNavigate, onLogout, userDoc, navConfig, setNavConfig, aiSidebarOn, setAiSidebarOn, showSplash, setShowSplash, searchMode, setSearchMode, topBarVisible, setTopBarVisible, onCheckUpdate, checkingUpdate, updateStatus, animateOnTap, setAnimateOnTap, swipeAnimationOn, setSwipeAnimationOn, swipeSpeed, setSwipeSpeed, swipeBounce, setSwipeBounce, onShowTour, searchBarScale, setSearchBarScale, setLiveUserDoc, pinchZoomOn, setPinchZoomOn, voiceEndChimeOn, setVoiceEndChimeOn, voiceStreakChimeOn, setVoiceStreakChimeOn, emojiBigOn, setEmojiBigOn, pingSoundId, setPingSoundId, voicePlayerStyle, setVoicePlayerStyle, autoUpdateCheckOn, setAutoUpdateCheckOn, linkPreviewsOn, setLinkPreviewsOn, contacts, navConfigLocked, setNavConfigLocked, composerButtonOrder, setComposerButtonOrder, launchPage, setLaunchPage, onLaunchPageSelect, auth, appGlobalSettings, darkLettering, setDarkLettering, actualDarkTheme, setActualDarkTheme, splashDuration, setSplashDuration, moreRounded, setMoreRounded,   voiceSpacing, setVoiceSpacing, setThemeKey, pendingSplashDuration, setPendingSplashDuration }) {
   const { t, hideNav, setHideNav, chatTextScale, setChatTextScale, appFontId, setAppFontId, composerHeight, setComposerHeight, messageWidth, setMessageWidth } = useTheme();
   const wallpaperInputRef = useRef(null);
@@ -1334,6 +1464,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
         <SectionCard title="Submit Voice Sample (cloned voice)" emoji="🎙️" sectionKey="voiceSampleSubmit">
           <VoiceSampleSubmitSection t={t} myUid={myUid} userDoc={userDoc} />
+          <ClonedVoiceTestSection t={t} globalSettings={globalSettings} sysConfig={sysConfig} userDoc={userDoc} />
         </SectionCard>
 
         {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}

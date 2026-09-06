@@ -2,8 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import {
   ChevronLeft, Camera, Video, Type, Mic, X, Undo2, Redo2, Music, PenTool,
   Eraser, Check, Play, Pause, Smile, Trash2, Globe,
-  Users, Download, MessageCircle, Scissors, Volume2, VolumeX, Crop as CropIcon,
-  Sparkles, Plus, Minus,
+  Users, Download,   MessageCircle, Scissors, Volume2, VolumeX, Crop as CropIcon,
+  Sparkles, Plus, Minus, Palette, RotateCw,
 } from "lucide-react";
 import { useTheme, FONTS } from "../theme/ThemeContext";
 import { postStatus } from "../firebase/status";
@@ -25,6 +25,17 @@ import { getMicrophoneStream } from "../media/microphone";
 // the published image via canvas (the viewer cannot render strokes).
 
 const STICKER_COLORS = ["#FFFFFF", "#000000", "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#30B0C7", "#007AFF", "#AF52DE", "#FF2D55"];
+
+// Highlight/background swatches for canvas text (incl. translucent + none).
+const STICKER_BGS = [
+  { id: "none", label: "None", css: "none" },
+  { id: "dark", label: "Dark", css: "rgba(0,0,0,0.60)" },
+  { id: "light", label: "Light", css: "rgba(255,255,255,0.85)" },
+  { id: "green", label: "Green", css: "rgba(0,168,132,0.85)" },
+  { id: "blue", label: "Blue", css: "rgba(76,141,255,0.85)" },
+  { id: "purple", label: "Purple", css: "rgba(124,92,255,0.85)" },
+  { id: "red", label: "Red", css: "rgba(255,59,48,0.85)" },
+];
 
 const TEXT_PRESETS = [
   { id: "classic", label: "Classic", size: 26, color: "#FFFFFF" },
@@ -217,6 +228,12 @@ export default function StatusBuilderNew(props) {
   const [musicPreviewOn, setMusicPreviewOn] = useState(false);
   const [bgAudioFile, setBgAudioFile] = useState(null);
   const [bgAudioVolume, setBgAudioVolume] = useState(70);
+  // Voiceover in-builder recording (photo/video/text): records straight into
+  // bgAudioFile without switching modes.
+  const [isVoRecording, setIsVoRecording] = useState(false);
+  const [voPreviewUrl, setVoPreviewUrl] = useState(null);
+  const voRecorderRef = useRef(null);
+  const voStreamRef = useRef(null);
 
   // ── Tool state ──
   const [tool, setTool] = useState(null); // text | emoji | draw | music | effects | crop | trim | audio | null
@@ -231,10 +248,15 @@ export default function StatusBuilderNew(props) {
   const canvasRef = useRef(null);
   const drawBoxRef = useRef(null);
   const currentStrokeRef = useRef(null);
+  // Redo stack for draw strokes, keyed by photo id (reset whenever a new
+  // stroke is drawn, the drawing is cleared, or the active photo changes).
+  const strokeRedoRef = useRef({});
+  const [strokeRedoVer, setStrokeRedoVer] = useState(0);
   const voiceRecorderRef = useRef(null);
   const voiceStreamRef = useRef(null);
   const musicAudioRef = useRef(null);
   const dragRef = useRef(null);
+  const pinchRef = useRef(null);
   const videoRef = useRef(null);
   const urlsToRevoke = useRef([]);
 
@@ -309,10 +331,16 @@ export default function StatusBuilderNew(props) {
   };
 
   const addTextSticker = (emojiText) => {
+    if (mode === "text" && emojiText) {
+      // In text mode there is no canvas sticker layer — append to the message.
+      setTextMode((prev) => `${prev || ""}${emojiText}`);
+      return;
+    }
     const preset = TEXT_PRESETS.find((p) => p.id === presetId) || TEXT_PRESETS[0];
+    const base = { x: 0.5, y: 0.4, align: "center", rotation: 0, background: "none", opacity: 1 };
     const st = emojiText
-      ? { id: nid("st"), text: emojiText, x: 0.5, y: 0.4, color: "#FFFFFF", size: 44, align: "center", preset: "emoji" }
-      : { id: nid("st"), text: "Tap to edit", x: 0.5, y: 0.4, color: preset.color, size: preset.size, align: "center", preset: preset.id };
+      ? { id: nid("st"), text: emojiText, color: "#FFFFFF", size: 44, preset: "emoji", ...base }
+      : { id: nid("st"), text: "Tap to edit", color: preset.color, size: preset.size, preset: preset.id, ...base };
     commitStickers([...textStickers, st]);
     setActiveStickerId(st.id);
   };
@@ -441,6 +469,48 @@ export default function StatusBuilderNew(props) {
     else setIsVoiceRecording(false);
   };
 
+  // ── Voiceover recorder (photo/video/text voice-over-media): records straight
+  // into bgAudioFile without changing modes. Play/Delete/Replace in the panel.
+  useEffect(() => {
+    if (!bgAudioFile) { setVoPreviewUrl(null); return; }
+    const u = URL.createObjectURL(bgAudioFile);
+    setVoPreviewUrl(u);
+    return () => { try { URL.revokeObjectURL(u); } catch { /* noop */ } };
+  }, [bgAudioFile]);
+  const startVoRecord = async () => {
+    setPostError("");
+    if (isVoRecording) { stopVoRecord(); return; }
+    try {
+      const { getMicrophoneStream } = await import("../media/microphone");
+      const stream = await getMicrophoneStream({ audio: true });
+      voStreamRef.current = stream;
+      const chunks = [];
+      let recorder;
+      try {
+        const mt = MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4"
+          : MediaRecorder.isTypeSupported("audio/m4a") ? "audio/m4a"
+          : MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus"
+          : MediaRecorder.isTypeSupported("audio/ogg;codecs=opus") ? "audio/ogg;codecs=opus" : "";
+        recorder = mt ? new MediaRecorder(stream, { mimeType: mt }) : new MediaRecorder(stream);
+      } catch { recorder = new MediaRecorder(stream); }
+      voRecorderRef.current = recorder;
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = () => {
+        try { stream.getTracks().forEach((tr) => tr.stop()); } catch { /* noop */ }
+        voStreamRef.current = null;
+        setIsVoRecording(false);
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/mp4" });
+        if (blob.size > 0) setBgAudioFile(new File([blob], `voiceover-${Date.now()}.m4a`, { type: blob.type }));
+      };
+      setIsVoRecording(true);
+      recorder.start();
+    } catch { setIsVoRecording(false); setPostError("Microphone access denied or unavailable."); }
+  };
+  const stopVoRecord = () => {
+    try { voRecorderRef.current?.state === "recording" && voRecorderRef.current.stop(); }
+    catch { setIsVoRecording(false); }
+  };
+
   // ── Draw tool ──
   const patchEdits = (patch) => {
     if (!activePhoto) return;
@@ -460,7 +530,10 @@ export default function StatusBuilderNew(props) {
     if (currentStrokeRef.current) strokes.push(currentStrokeRef.current);
     for (const st of strokes) {
       if (!st.points || !st.points.length) continue;
-      ctx.strokeStyle = st.color;
+      ctx.strokeStyle = st.eraser ? "rgba(0,0,0,1)" : st.color;
+      // Mirror the bake step: eraser punches through via destination-out so
+      // the overlay preview matches the published image.
+      ctx.globalCompositeOperation = st.eraser ? "destination-out" : "source-over";
       ctx.lineWidth = Math.max(1, st.size * (cv.width / 400));
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
@@ -473,6 +546,7 @@ export default function StatusBuilderNew(props) {
       });
       ctx.stroke();
     }
+    ctx.globalCompositeOperation = "source-over";
   };
 
   useEffect(() => { if (tool === "draw") redrawDrawCanvas(); });
@@ -492,9 +566,36 @@ export default function StatusBuilderNew(props) {
   };
 
   const undoStroke = () => {
-    patchEdits({ strokes: (activeEdits.strokes || []).slice(0, -1) });
+    if (!activePhoto) return;
+    const strokes = activeEdits.strokes || [];
+    if (!strokes.length) return;
+    const redo = strokeRedoRef.current[activePhoto.id] || [];
+    redo.push(strokes[strokes.length - 1]);
+    strokeRedoRef.current[activePhoto.id] = redo;
+    patchEdits({ strokes: strokes.slice(0, -1) });
+    setStrokeRedoVer((v) => v + 1);
     setTimeout(redrawDrawCanvas, 0);
   };
+
+  const redoStroke = () => {
+    if (!activePhoto) return;
+    const redo = strokeRedoRef.current[activePhoto.id] || [];
+    if (!redo.length) return;
+    const st = redo.pop();
+    strokeRedoRef.current[activePhoto.id] = redo;
+    patchEdits({ strokes: [...(activeEdits.strokes || []), st] });
+    setStrokeRedoVer((v) => v + 1);
+    setTimeout(redrawDrawCanvas, 0);
+  };
+
+  const clearStrokes = () => {
+    if (!activePhoto) return;
+    strokeRedoRef.current[activePhoto.id] = [];
+    patchEdits({ strokes: [] });
+    setStrokeRedoVer((v) => v + 1);
+    setTimeout(redrawDrawCanvas, 0);
+  };
+  void strokeRedoVer;
 
   // ── Sticker drag (pointer events, x/y 0..1) ──
   const onStickerDown = (e, st) => {
@@ -524,6 +625,37 @@ export default function StatusBuilderNew(props) {
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+  };
+
+  // ── Sticker pinch-to-resize (touch): two fingers scale the sticker size ──
+  const onStickerTouchStart = (e, st) => {
+    if (e.touches && e.touches.length === 2) {
+      const d = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY,
+      );
+      pinchRef.current = { id: st.id, dist: Math.max(1, d), size: st.size || 26 };
+    }
+  };
+  const onStickerTouchMove = (e) => {
+    const p = pinchRef.current;
+    if (!p || !e.touches || e.touches.length !== 2) return;
+    if (e.cancelable) e.preventDefault();
+    const d = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY,
+    );
+    const next = Math.min(64, Math.max(12, Math.round((p.size * d) / p.dist)));
+    updateSticker(p.id, { size: next });
+  };
+  const onStickerTouchEnd = (e) => {
+    const p = pinchRef.current;
+    if (!p) return;
+    if (!e.touches || e.touches.length < 2) {
+      const cur = textStickers.find((s) => s.id === p.id);
+      if (cur) commitStickerUpdate(p.id, { size: cur.size });
+      pinchRef.current = null;
+    }
   };
 
   // ── Music ──
@@ -601,7 +733,14 @@ export default function StatusBuilderNew(props) {
       return;
     }
     const snapText = mode === "text" ? textMode : caption;
-    const snapStickers = textStickers.length ? textStickers.map((s) => ({ id: s.id, text: s.text, x: s.x, y: s.y, color: s.color, size: s.size })) : null;
+    // Persist full sticker styling so the viewer shows exact placement/styling.
+    // (The viewer currently reads x/y/color/size/text; rotation/background/
+    // opacity/align/preset ride along for forward compatibility.)
+    const snapStickers = textStickers.length ? textStickers.map((s) => ({
+      id: s.id, text: s.text, x: s.x, y: s.y, color: s.color, size: s.size,
+      align: s.align || "center", preset: s.preset || null,
+      rotation: s.rotation || 0, background: s.background || "none", opacity: s.opacity ?? 1,
+    })) : null;
     const snapOverlay = null; // textOverlay null when stickers exist (viewer prefers stickers)
     const snapMusic = snapBgMusic();
     const snapVisibility = audience === "public" ? "public" : "contacts";
@@ -631,12 +770,26 @@ export default function StatusBuilderNew(props) {
           textStickers: snapStickers,
           allowDownload: snapAllow,
           commentsHidden: snapHide,
+          backgroundMusic: snapMusic,
           visibility: snapVisibility,
         });
       }
       // Multiple images → separate status updates (max 6), photo edits baked.
+      // A recorded/picked voiceover attaches to the FIRST photo (replaying it on
+      // every slide would restart the audio per photo).
       if (mode === "photo" && photos.length > 0 && !voiceBlob) {
         const batch = photos.slice(0, 6);
+        let photoBgAudioURL = null;
+        let photoBgAudioVol = null;
+        if (snapBgAudio) {
+          try {
+            setPostProgress("Uploading voiceover…");
+            const audioFile = new File([snapBgAudio], `status-audio-${Date.now()}.mp3`, { type: snapBgAudio.type || "audio/mpeg" });
+            const audioResult = await uploadChatFile(chatScope, myUid, audioFile, { compress: false });
+            photoBgAudioURL = audioResult.url;
+            photoBgAudioVol = snapBgVol;
+          } catch { photoBgAudioURL = null; }
+        }
         for (let i = 0; i < batch.length; i++) {
           setPostProgress(`Uploading photo ${i + 1} of ${batch.length}…`);
           const p = batch[i];
@@ -656,6 +809,8 @@ export default function StatusBuilderNew(props) {
             durationMs: snapDurMs,
             textOverlay: snapOverlay,
             textStickers: snapStickers,
+            bgAudioURL: i === 0 ? photoBgAudioURL : null,
+            bgAudioVolume: i === 0 ? photoBgAudioVol : null,
             allowDownload: snapAllow,
             commentsHidden: snapHide,
             backgroundMusic: snapMusic,
@@ -744,6 +899,7 @@ export default function StatusBuilderNew(props) {
           videoVolume: null,
           backgroundMusic: snapMusic,
           commentsHidden: snapHide,
+          allowDownload: snapAllow,
           visibility: snapVisibility,
         });
       }
@@ -870,6 +1026,22 @@ export default function StatusBuilderNew(props) {
                   {voiceURL && <audio src={voiceURL} controls style={{ width: "100%" }} />}
                 </div>
               )}
+              {(mode === "photo" || mode === "video") && textStickers.map((s) => (
+                <div
+                  key={s.id}
+                  style={{
+                    position: "absolute", left: `${s.x * 100}%`, top: `${s.y * 100}%`,
+                    transform: `translate(-50%,-50%) rotate(${s.rotation || 0}deg)`,
+                    color: s.color || "#fff", fontSize: Math.min(34, s.size || 22), opacity: s.opacity ?? 1,
+                    fontWeight: 800,
+                    textShadow: s.background && s.background !== "none" ? "none" : "0 1px 4px rgba(0,0,0,0.85)",
+                    background: s.background && s.background !== "none" ? s.background : "transparent",
+                    padding: s.background && s.background !== "none" ? "4px 10px" : "2px 6px",
+                    borderRadius: 10, whiteSpace: "pre-wrap", maxWidth: "90%",
+                    textAlign: s.align || "center", pointerEvents: "none", lineHeight: 1.2,
+                  }}
+                >{s.text}</div>
+              ))}
               {renderMusicOverlay()}
             </div>
             <div style={{ marginTop: 10, fontSize: 13, color: t.textMuted, textAlign: "center" }}>{summary} · {durationSeconds}s{mode === "video" && videoDurSec ? ` · video ${videoDurSec}s` : ""}</div>
@@ -916,19 +1088,37 @@ export default function StatusBuilderNew(props) {
   }
 
   // ══════════ EDITOR ══════════
+  // Toolbar per media (spec):
+  //   Photo: Text/Draw/Emoji/Music/Crop/Effects (+Voiceover — recorded/picked,
+  //          uploaded at publish, attached to the first photo)
+  //   Video: Text/Emoji/Music/Trim/Effects (+Voiceover extra — genuinely persisted)
+  //   Text:  Text/Emoji/Background/Music (+Voiceover extra — genuinely persisted)
+  // Draw is photo-only: strokes bake into the published JPEG, which is not
+  // possible for video without a transcode pipeline, so it stays hidden there.
   const tools = [];
-  if (mode === "photo" || mode === "video") {
+  const canUseMusic = showMusicTool && (mode === "photo" || mode === "video" || mode === "text");
+  if (mode === "photo") {
+    tools.push({ id: "text", label: "Text", icon: <Type size={20} /> });
+    tools.push({ id: "draw", label: "Draw", icon: <PenTool size={20} /> });
+    tools.push({ id: "emoji", label: "Emoji", icon: <Smile size={20} /> });
+    if (canUseMusic) tools.push({ id: "music", label: "Music", icon: <Music size={20} /> });
+    tools.push({ id: "crop", label: "Crop", icon: <CropIcon size={20} /> });
+    tools.push({ id: "effects", label: "Effects", icon: <Sparkles size={20} /> });
+    tools.push({ id: "audio", label: "Voiceover", icon: <Volume2 size={20} /> });
+  } else if (mode === "video") {
     tools.push({ id: "text", label: "Text", icon: <Type size={20} /> });
     tools.push({ id: "emoji", label: "Emoji", icon: <Smile size={20} /> });
-  }
-  if (mode === "photo") {
-    tools.push({ id: "draw", label: "Draw", icon: <PenTool size={20} /> });
+    if (canUseMusic) tools.push({ id: "music", label: "Music", icon: <Music size={20} /> });
+    tools.push({ id: "trim", label: "Trim", icon: <Scissors size={20} /> });
     tools.push({ id: "effects", label: "Effects", icon: <Sparkles size={20} /> });
-    tools.push({ id: "crop", label: "Crop", icon: <CropIcon size={20} /> });
+    tools.push({ id: "audio", label: "Voiceover", icon: <Volume2 size={20} /> });
+  } else if (mode === "text") {
+    tools.push({ id: "text", label: "Text", icon: <Type size={20} /> });
+    tools.push({ id: "emoji", label: "Emoji", icon: <Smile size={20} /> });
+    tools.push({ id: "background", label: "Background", icon: <Palette size={20} /> });
+    if (canUseMusic) tools.push({ id: "music", label: "Music", icon: <Music size={20} /> });
+    tools.push({ id: "audio", label: "Voiceover", icon: <Volume2 size={20} /> });
   }
-  if (mode === "video") tools.push({ id: "trim", label: "Trim", icon: <Scissors size={20} /> });
-  if (showMusicTool) tools.push({ id: "music", label: "Music", icon: <Music size={20} /> });
-  if (mode === "photo" || mode === "video" || mode === "text") tools.push({ id: "audio", label: "Voiceover", icon: <Volume2 size={20} /> });
 
   return (
     <div style={shell}>
@@ -1009,19 +1199,52 @@ export default function StatusBuilderNew(props) {
             {(mode === "photo" || mode === "video") && textStickers.map((s) => (
               <div
                 key={s.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`Text sticker: ${s.text}. Activate to edit.`}
                 onPointerDown={(e) => onStickerDown(e, s)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveStickerId(s.id); setTool("text"); } }}
+                onTouchStart={(e) => onStickerTouchStart(e, s)}
+                onTouchMove={onStickerTouchMove}
+                onTouchEnd={onStickerTouchEnd}
                 style={{
                   position: "absolute", left: `${s.x * 100}%`, top: `${s.y * 100}%`,
-                  transform: "translate(-50%,-50%)", color: s.color, fontSize: s.size,
-                  fontWeight: 800, textShadow: "0 1px 4px rgba(0,0,0,0.85)", padding: "2px 6px",
+                  transform: `translate(-50%,-50%) rotate(${s.rotation || 0}deg)`,
+                  color: s.color, fontSize: s.size, opacity: s.opacity ?? 1,
+                  fontWeight: 800,
+                  textShadow: s.background && s.background !== "none" ? "none" : "0 1px 4px rgba(0,0,0,0.85)",
+                  background: s.background && s.background !== "none" ? s.background : "transparent",
+                  padding: s.background && s.background !== "none" ? "4px 10px" : "2px 6px",
+                  borderRadius: 10,
                   whiteSpace: "pre-wrap", maxWidth: "90%", textAlign: s.align || "center",
                   cursor: "grab", lineHeight: 1.2, userSelect: "none", touchAction: "none",
-                  outline: activeStickerId === s.id ? `2px dashed ${t.primary}` : "none", borderRadius: 6, zIndex: 5,
+                  outline: activeStickerId === s.id ? `2px dashed ${t.primary}` : "none", zIndex: 5,
                 }}
               >
                 {s.text}
               </div>
             ))}
+            {/* Compact contextual toolbar: visible only while a sticker is selected */}
+            {(mode === "photo" || mode === "video") && activeSticker && (
+              <div
+                role="toolbar"
+                aria-label="Selected text options"
+                style={{
+                  position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", zIndex: 9,
+                  display: "flex", alignItems: "center", gap: 6, padding: "6px 8px",
+                  borderRadius: 12, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)",
+                  maxWidth: "calc(100% - 16px)",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <span style={{ color: "#fff", fontSize: 11, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 110 }}>
+                  {(activeSticker.text || "Text").slice(0, 18)}
+                </span>
+                <button onClick={() => setTool("text")} aria-label="Edit selected text style" style={{ background: t.primary, border: "none", color: "#fff", fontSize: 11, fontWeight: 800, borderRadius: 8, padding: "5px 10px", cursor: "pointer" }}>Style</button>
+                <button onClick={() => { commitStickers(textStickers.filter((s) => s.id !== activeSticker.id)); setActiveStickerId(null); }} aria-label="Delete selected text" style={{ background: "rgba(255,59,48,0.9)", border: "none", color: "#fff", borderRadius: 8, padding: "5px 8px", cursor: "pointer", display: "flex", alignItems: "center" }}><Trash2 size={13} /></button>
+                <button onClick={() => setActiveStickerId(null)} aria-label="Deselect text" style={{ background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "flex", alignItems: "center" }}><X size={14} color="#fff" /></button>
+              </div>
+            )}
             {/* Draw overlay */}
             {tool === "draw" && mode === "photo" && (
               <canvas
@@ -1038,6 +1261,10 @@ export default function StatusBuilderNew(props) {
                 onPointerUp={() => {
                   if (currentStrokeRef.current) {
                     patchEdits({ strokes: [...(activeEdits.strokes || []), currentStrokeRef.current] });
+                    if (activePhoto) {
+                      strokeRedoRef.current[activePhoto.id] = [];
+                      setStrokeRedoVer((v) => v + 1);
+                    }
                     currentStrokeRef.current = null;
                     setTimeout(redrawDrawCanvas, 0);
                   }
@@ -1166,13 +1393,22 @@ export default function StatusBuilderNew(props) {
     if (!tool) {
       if (mode === "text") {
         return (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {TEXT_BG_PRESETS.map((c, i) => (
-                <div key={i} onClick={() => setBgIdx(i)} aria-label={`Background ${i + 1}`} style={{ width: 30, height: 30, borderRadius: "50%", background: c, border: bgIdx === i ? `3px solid ${t.primary}` : `1px solid ${t.border}`, cursor: "pointer" }} />
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
+          <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center", padding: "2px 4px" }}>
+            Use the toolbar below — Text, Emoji, Background, Music — to style your status.
+          </div>
+        );
+      }
+      return null;
+    }
+    const panel = { padding: 12, borderRadius: 14, background: t.surface, border: `1px solid ${t.border}` };
+    if (tool === "text") {
+      // Text mode has no canvas sticker layer — style the message itself.
+      if (mode === "text") {
+        return (
+          <div style={panel}>
+            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Text style</div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>Font</div>
+            <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 10 }}>
               {FONTS.map((f, i) => (
                 <div key={f.id} onClick={() => setFontIdx(i)} style={{ padding: "6px 12px", borderRadius: 10, background: i === fontIdx ? t.primary : t.bg, border: `1px solid ${t.border}`, color: i === fontIdx ? "#fff" : t.textMuted, fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", fontFamily: f.value }}>{f.label}</div>
               ))}
@@ -1182,13 +1418,10 @@ export default function StatusBuilderNew(props) {
                 <button key={a} onClick={() => setTextAlign(a)} aria-label={`Align ${a}`} style={{ flex: 1, padding: "8px 0", borderRadius: 9, border: `1px solid ${a === textAlign ? t.primary : t.border}`, background: a === textAlign ? t.primaryLight : "transparent", color: a === textAlign ? t.primary : t.textMuted, fontWeight: 700, fontSize: 12.5, cursor: "pointer", textTransform: "capitalize" }}>{a}</button>
               ))}
             </div>
+            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 8 }}>Type directly on the canvas above. Pick a Background for color themes.</div>
           </div>
         );
       }
-      return null;
-    }
-    const panel = { padding: 12, borderRadius: 14, background: t.surface, border: `1px solid ${t.border}` };
-    if (tool === "text") {
       return (
         <div style={panel}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -1197,7 +1430,15 @@ export default function StatusBuilderNew(props) {
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
             {TEXT_PRESETS.map((p) => (
-              <button key={p.id} onClick={() => setPresetId(p.id)} aria-label={`Preset ${p.label}`} style={{ padding: "6px 12px", borderRadius: 9, border: `1.5px solid ${presetId === p.id ? t.primary : t.border}`, background: presetId === p.id ? t.primaryLight : "transparent", color: presetId === p.id ? t.primary : t.textMuted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{p.label}</button>
+              <button
+                key={p.id}
+                onClick={() => {
+                  setPresetId(p.id);
+                  if (activeSticker) commitStickerUpdate(activeSticker.id, { color: p.color, size: p.size, preset: p.id });
+                }}
+                aria-label={`Preset ${p.label}${activeSticker ? ", apply to selected text" : ""}`}
+                style={{ padding: "6px 12px", borderRadius: 9, border: `1.5px solid ${(activeSticker ? activeSticker.preset : presetId) === p.id ? t.primary : t.border}`, background: (activeSticker ? activeSticker.preset : presetId) === p.id ? t.primaryLight : "transparent", color: (activeSticker ? activeSticker.preset : presetId) === p.id ? t.primary : t.textMuted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+              >{p.label}</button>
             ))}
           </div>
           {activeSticker ? (
@@ -1215,9 +1456,37 @@ export default function StatusBuilderNew(props) {
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
                 <Minus size={15} color={t.textMuted} />
-                <input type="range" min="12" max="64" step="1" value={activeSticker.size} onChange={(e) => updateSticker(activeSticker.id, { size: Number(e.target.value) })} onMouseUp={() => commitStickerUpdate(activeSticker.id, { size: activeSticker.size })} aria-label="Sticker size" style={{ flex: 1, accentColor: t.primary }} />
+                <input type="range" min="12" max="64" step="1" value={activeSticker.size} onChange={(e) => updateSticker(activeSticker.id, { size: Number(e.target.value) })} onMouseUp={() => commitStickerUpdate(activeSticker.id, { size: activeSticker.size })} onTouchEnd={() => commitStickerUpdate(activeSticker.id, { size: activeSticker.size })} aria-label="Sticker size" style={{ flex: 1, accentColor: t.primary }} />
                 <Plus size={15} color={t.textMuted} />
                 <span style={{ fontSize: 12, fontWeight: 700, color: t.textMuted, width: 30 }}>{activeSticker.size}</span>
+              </div>
+              <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>Highlight background</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                {STICKER_BGS.map((b) => (
+                  <button
+                    key={b.id}
+                    onClick={() => commitStickerUpdate(activeSticker.id, { background: b.css === "none" ? "none" : b.css })}
+                    aria-label={`Sticker background ${b.label}`}
+                    title={b.label}
+                    style={{
+                      minWidth: 34, height: 26, borderRadius: 8, cursor: "pointer",
+                      background: b.css === "none" ? "transparent" : b.css,
+                      border: (activeSticker.background || "none") === (b.css === "none" ? "none" : b.css) ? `2.5px solid ${t.primary}` : `1px solid ${t.border}`,
+                      color: b.id === "light" || b.id === "none" ? t.textMuted : "#fff",
+                      fontSize: 10, fontWeight: 800,
+                    }}
+                  >{b.id === "none" ? "∅" : "Ag"}</button>
+                ))}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <RotateCw size={15} color={t.textMuted} />
+                <input type="range" min="-180" max="180" step="1" value={activeSticker.rotation || 0} onChange={(e) => updateSticker(activeSticker.id, { rotation: Number(e.target.value) })} onMouseUp={() => commitStickerUpdate(activeSticker.id, { rotation: activeSticker.rotation || 0 })} onTouchEnd={() => commitStickerUpdate(activeSticker.id, { rotation: activeSticker.rotation || 0 })} aria-label="Sticker rotation degrees" style={{ flex: 1, accentColor: t.primary }} />
+                <span style={{ fontSize: 12, fontWeight: 700, color: t.textMuted, width: 40 }}>{activeSticker.rotation || 0}°</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 12, color: t.textMuted, width: 52 }}>Opacity</span>
+                <input type="range" min="20" max="100" step="5" value={Math.round((activeSticker.opacity ?? 1) * 100)} onChange={(e) => updateSticker(activeSticker.id, { opacity: Number(e.target.value) / 100 })} onMouseUp={() => commitStickerUpdate(activeSticker.id, { opacity: activeSticker.opacity ?? 1 })} onTouchEnd={() => commitStickerUpdate(activeSticker.id, { opacity: activeSticker.opacity ?? 1 })} aria-label="Sticker opacity" style={{ flex: 1, accentColor: t.primary }} />
+                <span style={{ fontSize: 12, fontWeight: 700, color: t.textMuted, width: 40 }}>{Math.round((activeSticker.opacity ?? 1) * 100)}%</span>
               </div>
               <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
                 {["left", "center", "right"].map((a) => (
@@ -1252,8 +1521,9 @@ export default function StatusBuilderNew(props) {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 800 }}>Draw (baked into photo)</span>
             <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={undoStroke} aria-label="Undo stroke" style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Undo</button>
-              <button onClick={() => { patchEdits({ strokes: [] }); setTimeout(redrawDrawCanvas, 0); }} aria-label="Clear drawing" style={{ padding: "6px 10px", borderRadius: 8, border: "none", background: "rgba(255,59,48,0.15)", color: "#FF3B30", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Clear</button>
+              <button onClick={undoStroke} disabled={!(activeEdits.strokes || []).length} aria-label="Undo stroke" style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: (activeEdits.strokes || []).length ? 1 : 0.4 }}>Undo</button>
+              <button onClick={redoStroke} disabled={!(activePhoto && (strokeRedoRef.current[activePhoto.id] || []).length)} aria-label="Redo stroke" style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: activePhoto && (strokeRedoRef.current[activePhoto.id] || []).length ? 1 : 0.4 }}>Redo</button>
+              <button onClick={clearStrokes} aria-label="Clear drawing" style={{ padding: "6px 10px", borderRadius: 8, border: "none", background: "rgba(255,59,48,0.15)", color: "#FF3B30", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Clear</button>
               <button onClick={() => setTool(null)} aria-label="Done drawing" style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", borderRadius: 8, border: "none", background: t.primary, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Check size={14} /> Done</button>
             </div>
           </div>
@@ -1271,6 +1541,20 @@ export default function StatusBuilderNew(props) {
       );
     }
     if (tool === "effects") {
+      // Video filters are stored as videoFilter metadata and applied by the
+      // viewer; photo filters/adjustments are baked into the JPEG at publish.
+      if (mode === "video") {
+        return (
+          <div style={panel}>
+            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Effects (stored, applied on playback)</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {PHOTO_FILTERS.map((f) => (
+                <button key={f.id} onClick={() => setVideoFilter(f.id)} aria-label={`Video filter ${f.label}`} style={{ padding: "6px 12px", borderRadius: 9, border: `1.5px solid ${videoFilter === f.id ? t.primary : t.border}`, background: videoFilter === f.id ? t.primaryLight : "transparent", color: videoFilter === f.id ? t.primary : t.textMuted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{f.label}</button>
+              ))}
+            </div>
+          </div>
+        );
+      }
       return (
         <div style={panel}>
           <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Effects (baked at publish)</div>
@@ -1342,6 +1626,24 @@ export default function StatusBuilderNew(props) {
         </div>
       );
     }
+    if (tool === "background") {
+      return (
+        <div style={panel}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Background</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {TEXT_BG_PRESETS.map((c, i) => (
+              <div key={i} onClick={() => setBgIdx(i)} role="button" tabIndex={0} aria-label={`Background ${i + 1}`} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setBgIdx(i); } }} style={{ width: 30, height: 30, borderRadius: "50%", background: c, border: bgIdx === i ? `3px solid ${t.primary}` : `1px solid ${t.border}`, cursor: "pointer" }} />
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>Font</div>
+          <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
+            {FONTS.map((f, i) => (
+              <div key={f.id} onClick={() => setFontIdx(i)} style={{ padding: "6px 12px", borderRadius: 10, background: i === fontIdx ? t.primary : t.bg, border: `1px solid ${t.border}`, color: i === fontIdx ? "#fff" : t.textMuted, fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", fontFamily: f.value }}>{f.label}</div>
+            ))}
+          </div>
+        </div>
+      );
+    }
     if (tool === "music") {
       const caps = musicCaps;
       const provider = bgMusic?.provider || musicProviderActive;
@@ -1393,24 +1695,31 @@ export default function StatusBuilderNew(props) {
     if (tool === "audio") {
       return (
         <div style={panel}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: bgAudioFile ? 8 : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: bgAudioFile || isVoRecording ? 8 : 0 }}>
             <span style={{ fontSize: 13, fontWeight: 800 }}>Voiceover audio</span>
-            <button onClick={() => audioInputRef.current?.click()} aria-label="Choose voiceover audio" style={{ padding: "6px 12px", borderRadius: 9, border: "none", background: t.primary, color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
-              {bgAudioFile ? "Change" : "Choose file"}
-            </button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={startVoRecord} aria-label={isVoRecording ? "Stop voiceover recording" : "Record voiceover"} style={{ padding: "6px 12px", borderRadius: 9, border: "none", background: isVoRecording ? "#FF3B30" : t.primary, color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+                {isVoRecording ? "● Stop" : "● Record"}
+              </button>
+              <button onClick={() => audioInputRef.current?.click()} aria-label="Choose voiceover audio" style={{ padding: "6px 12px", borderRadius: 9, border: `1px solid ${t.border}`, background: "transparent", color: t.text, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+                {bgAudioFile ? "Replace" : "Choose file"}
+              </button>
+            </div>
           </div>
-          {bgAudioFile && (
+          {isVoRecording && <div style={{ fontSize: 12, color: "#FF3B30", fontWeight: 700, marginBottom: 6 }}>Recording… tap Stop when done.</div>}
+          {bgAudioFile && voPreviewUrl && (
             <div>
               <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgAudioFile.name}</div>
+              <audio controls src={voPreviewUrl} style={{ width: "100%", height: 32, marginBottom: 6 }} />
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
                 <span style={{ fontSize: 12, color: t.textMuted }}>Volume</span>
                 <input type="range" min="0" max="100" step="5" value={bgAudioVolume} onChange={(e) => setBgAudioVolume(Number(e.target.value))} aria-label="Voiceover volume" style={{ flex: 1, accentColor: t.primary }} />
                 <span style={{ fontSize: 12, fontWeight: 700, color: t.primary }}>{bgAudioVolume}%</span>
               </div>
-              <button onClick={() => setBgAudioFile(null)} aria-label="Remove voiceover" style={{ fontSize: 12, color: "#FF3B30", fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>Remove audio</button>
+              <button onClick={() => setBgAudioFile(null)} aria-label="Delete voiceover" style={{ fontSize: 12, color: "#FF3B30", fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>Delete voiceover</button>
             </div>
           )}
-          {!bgAudioFile && <div style={{ fontSize: 12, color: t.textMuted }}>Uploaded via chat-media storage at publish (bgAudioURL).</div>}
+          {!bgAudioFile && !isVoRecording && <div style={{ fontSize: 12, color: t.textMuted }}>Record a voice note or pick an audio file — it plays over this status (uploaded at publish as bgAudioURL).</div>}
         </div>
       );
     }

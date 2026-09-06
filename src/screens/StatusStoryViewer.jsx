@@ -49,20 +49,25 @@ function ensureYouTubeAPI() {
   });
 }
 
-// Renders movable, colored text stickers (stored on a status) positioned over
-// the media. `x`/`y` are relative (0..1) within the media container.
+// Renders movable, styled text stickers (stored on a status) positioned over
+// the media. `x`/`y` are relative (0..1) within the media container. Renders the
+// full persisted styling (rotation, background/highlight, opacity, alignment)
+// so the published status matches the NEW builder's canvas exactly.
 function TextStickerLayer({ stickers }) {
   if (!stickers || !stickers.length) return null;
   return (
     <>
-      {stickers.map((s) => (
+      {stickers.map((s) => {
+        const rot = Number(s.rotation) || 0;
+        const op = s.opacity != null ? Math.max(0.2, Math.min(1, Number(s.opacity))) : 1;
+        return (
         <div
           key={s.id}
           style={{
             position: "absolute",
             left: `${((s.x != null ? s.x : 0.5) * 100)}%`,
             top: `${((s.y != null ? s.y : 0.4) * 100)}%`,
-            transform: "translate(-50%, -50%)",
+            transform: `translate(-50%, -50%) rotate(${rot}deg)`,
             color: s.color || "#fff",
             fontSize: s.size || 22,
             fontWeight: 800,
@@ -70,12 +75,16 @@ function TextStickerLayer({ stickers }) {
             padding: "2px 6px",
             whiteSpace: "pre-wrap",
             maxWidth: "90%",
-            textAlign: "center",
+            textAlign: s.align || "center",
+            background: s.background || "transparent",
+            borderRadius: s.background && s.background !== "transparent" ? 8 : 0,
+            opacity: op,
             pointerEvents: "none",
             lineHeight: 1.2,
           }}
         >{s.text}</div>
-      ))}
+        );
+      })}
     </>
   );
 }
@@ -607,7 +616,10 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const bgMusic = current?.backgroundMusic;
   const bgMusicIsApple = bgMusic?.provider === "apple" || bgMusic?.source === "apple";
   const bgMusicIsZemer = bgMusic?.provider === "zemer" || bgMusic?.source === "zemer";
-  const [musicState, setMusicState] = useState("idle"); // "idle" | "playing" | "blocked"
+  // "idle" (starting) | "playing" (verified audible) | "blocked" (autoplay needs a
+  // tap) | "unavailable" (no playable source, API unreachable, or track error —
+  // e.g. embedding disabled; tapping cannot fix it so we say so honestly).
+  const [musicState, setMusicState] = useState("idle");
   const musicTimersRef = useRef([]);
 
   const clearMusicTimers = () => {
@@ -664,8 +676,11 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       if (audio.currentTime >= segEnd - 0.05) { try { audio.pause(); } catch { /* noop */ } }
     };
     const onPlaying = () => setMusicState("playing");
+    // Dead preview URL (403/expired) can never play — say so instead of "tap".
+    const onAudioError = () => setMusicState("unavailable");
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("playing", onPlaying);
+    audio.addEventListener("error", onAudioError);
     try { audio.currentTime = segStart; } catch { /* not seekable yet */ }
     if (!paused) {
       audio.play().then(() => {
@@ -677,10 +692,17 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       clearMusicTimers();
       audio.removeEventListener("timeupdate", onTime);
       audio.removeEventListener("playing", onPlaying);
+      audio.removeEventListener("error", onAudioError);
       audio.pause();
       try { audio.currentTime = 0; } catch { /* noop */ }
     };
   }, [bgMusicIsApple, bgMusic?.previewUrl, bgMusic?.start, bgMusic?.end, bgMusic?.volume, idx, paused]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apple but no playable preview URL at all (shouldn't normally happen) — mark
+  // unavailable so the UI never waits silently.
+  useEffect(() => {
+    if (bgMusic && bgMusicIsApple && !bgMusic.previewUrl) setMusicState("unavailable");
+  }, [bgMusic, bgMusicIsApple, idx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Zemer: YouTube IFrame player (audio only) ──
   // Plays ONLY the selected segment [start, end]: seeks to `start` on ready, then
@@ -689,7 +711,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   useEffect(() => {
     if (!bgMusicIsZemer || !bgMusic) return;
     const videoId = getYoutubeVideoId(bgMusic);
-    if (!videoId || !ytMountRef.current) return;
+    if (!videoId || !ytMountRef.current) { setMusicState("unavailable"); return; }
     let cancelled = false;
     let player = null;
     let watchdog = null;
@@ -697,7 +719,10 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     const segStart = Math.max(0, Math.floor(bgMusic.start || 0));
     const segEnd = bgMusic.end && bgMusic.end > segStart ? bgMusic.end : Infinity;
     ensureYouTubeAPI().then((YT) => {
-      if (cancelled || !YT || !ytMountRef.current) return;
+      if (cancelled || !YT || !ytMountRef.current) {
+        if (!cancelled) setMusicState("unavailable");
+        return;
+      }
       try {
         // `origin` is REQUIRED in a WebView: without it the postMessage handshake
         // between the page and the YouTube iframe fails and playVideo() is a silent
@@ -751,6 +776,10 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                 }
               } catch { /* noop */ }
             },
+            // Embedding disabled / removed / private (very common for music
+            // videos): the player can NEVER play this. Report honestly instead
+            // of showing "Tap to play" forever.
+            onError: () => { if (!cancelled) setMusicState("unavailable"); },
           },
         });
         ytPlayerRef.current = player;
@@ -927,15 +956,24 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
         </div>
       )}
 
-      {/* "Tap to play music" — shown only when autoplay was actually blocked */}
+      {/* "Tap to play music" — shown only when autoplay was actually blocked.
+          "Unavailable" is honest (embedding disabled / dead URL): no tap action. */}
       {bgMusic && musicState === "blocked" && !paused && (
         <div
           onClick={(e) => { e.stopPropagation(); unlockMusicPlayback(); }}
           onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); }}
           style={{ position: "absolute", top: 104, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
         >
           <Volume2 size={14} color="#fff" />
           Tap to play music
+        </div>
+      )}
+      {bgMusic && musicState === "unavailable" && (
+        <div
+          style={{ position: "absolute", top: 104, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)", fontSize: 11.5, fontWeight: 600, pointerEvents: "none" }}
+        >
+          Music unavailable for this track
         </div>
       )}
 

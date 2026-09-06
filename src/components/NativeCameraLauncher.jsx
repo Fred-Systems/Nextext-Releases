@@ -10,6 +10,20 @@ import { useTheme } from "../theme/ThemeContext";
 export let pendingCameraFile = null;
 export const setPendingCameraFile = (f) => { pendingCameraFile = f; };
 
+// Cross-screen handoff for Status: a capture routed to "Post to Status" is
+// stashed here and announced via a window event so the Status tab can open the
+// NEW Status Builder (StatusScreen.routeNativeFile) with the File. ChatList
+// also opens the same builder locally as the immediate path; this export keeps
+// the StatusScreen-side wiring available without a second editing flow.
+export let pendingStatusFile = null;
+export const setPendingStatusFile = (f) => { pendingStatusFile = f; };
+export function requestStatusBuilderFile(file) {
+  setPendingStatusFile(file || null);
+  try {
+    window.dispatchEvent(new CustomEvent("nextext:open-status-builder", { detail: { at: Date.now() } }));
+  } catch { /* noop */ }
+}
+
 // Hidden <input type="file"> helper. With `capture` set, mobile browsers open
 // the device's native camera (photo) or video recorder (video). Resolves with
 // the chosen File, or null on cancel / error.
@@ -104,12 +118,19 @@ export async function openNativeCamera(type = "photo") {
 // it. Pass whichever of onSendStatus / onSendChat / onSendChatTo /
 // onStatusBuilder are relevant for the screen that opened it. `chats` should be
 // an array of { id, name, isGroup } so the "Pick a chat" list can render.
+//
+// Status routing: "Post to Status" prefers onStatusBuilder (the NEW Status
+// Builder via StatusScreen.routeNativeFile or the caller's local builder) and
+// falls back to onSendStatus (legacy direct post) only when no builder handler
+// is provided — there is a single Post button, never two competing flows.
 export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onSendChatTo, onStatusBuilder, chats = [] }) {
   const { t } = useTheme();
   const [step, setStep] = useState("type"); // "type" | "capturing" | "chooser" | "pick"
   const [busy, setBusy] = useState(false);
   const [pendingFile, setPendingFile] = useState(null);
   const [captureType, setCaptureType] = useState("photo");
+  const [captureError, setCaptureError] = useState("");
+  const [previewURL, setPreviewURL] = useState(null);
   const cancelledRef = useRef(false);
 
   useEffect(() => {
@@ -117,6 +138,7 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
     cancelledRef.current = false;
     setBusy(false);
     setPendingFile(null);
+    setCaptureError("");
     setCaptureType("photo");
     // On a device with the Capacitor Camera plugin, skip the Photo/Video chooser
     // and open the camera immediately (photo by default). The user can switch to
@@ -132,14 +154,35 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
     return () => { cancelledRef.current = true; };
   }, [open]);
 
+  // Object URL for the captured file preview. Revoked whenever the file
+  // changes or the sheet closes so we never leak blob URLs.
+  useEffect(() => {
+    if (!pendingFile) { setPreviewURL(null); return; }
+    let url = null;
+    try { url = URL.createObjectURL(pendingFile); } catch { url = null; }
+    setPreviewURL(url);
+    return () => { try { if (url) URL.revokeObjectURL(url); } catch {} };
+  }, [pendingFile]);
+
   if (!open) return null;
 
   const startCapture = async (type) => {
     if (busy) return;
     setBusy(true);
+    setCaptureError("");
     setCaptureType(type);
     setStep("capturing");
-    const file = await openNativeCamera(type);
+    let file = null;
+    try {
+      file = await openNativeCamera(type);
+    } catch {
+      file = null;
+      if (!cancelledRef.current) {
+        setCaptureError(
+          "Couldn't open the camera. Allow camera access in your browser or system settings, then try again."
+        );
+      }
+    }
     if (cancelledRef.current) { setBusy(false); return; }
     setBusy(false);
     if (!file) { setStep("type"); return; }
@@ -150,7 +193,10 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
   const runSend = async (fn, file) => {
     if (!fn || !file) return;
     setBusy(true);
-    try { await fn(file); } finally { setBusy(false); onClose(); }
+    setCaptureError("");
+    try { await fn(file); } catch { setCaptureError("Couldn't send that capture. Please try again."); setBusy(false); return; }
+    setBusy(false);
+    onClose();
   };
 
   const optionBtn = (icon, label, onClick, primary) => (
@@ -177,20 +223,45 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
       </div>
       {optionBtn(<Camera size={18} color={t.bubbleMeText} />, "Photo", () => startCapture("photo"), true)}
       {optionBtn(<Video size={18} color={t.bubbleMeText} />, "Video", () => startCapture("video"), true)}
+      {captureError && <div style={{ color: "#FF3B30", fontSize: 12.5, fontWeight: 600, textAlign: "center", padding: "4px 8px 8px", lineHeight: 1.5 }}>{captureError}</div>}
+      <div style={{ color: t.textMuted, fontSize: 12, textAlign: "center", lineHeight: 1.5, padding: "0 8px" }}>
+        If the camera doesn't open, allow camera access in your browser or system settings, then try again.
+      </div>
       <div onClick={onClose} style={{ textAlign: "center", padding: "12px", color: t.textMuted, fontWeight: 600, cursor: "pointer", fontSize: 14 }}>Cancel</div>
     </>
   );
 
+  const isPendingVideo = (pendingFile?.type || "").startsWith("video");
+  const pendingSize = pendingFile?.size
+    ? pendingFile.size > 1048576
+      ? `${(pendingFile.size / 1048576).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(pendingFile.size / 1024))} KB`
+    : "";
+  // Single Post entry point: the NEW Status Builder when a builder handler is
+  // wired (StatusScreen.routeNativeFile chain), legacy direct post otherwise.
+  const statusFn = onStatusBuilder || onSendStatus;
+
   const renderChooser = () => (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-        <span style={{ fontWeight: 700, fontSize: 17, color: t.text }}>Send to</span>
+        <span style={{ fontWeight: 700, fontSize: 17, color: t.text }}>{isPendingVideo ? "Video captured" : "Photo captured"}</span>
         <X size={20} color={t.textMuted} onClick={onClose} style={{ cursor: "pointer" }} />
       </div>
-      {onSendStatus && optionBtn(<Megaphone size={18} color={t.bubbleMeText} />, "Post to Status", () => runSend(onSendStatus, pendingFile), true)}
+      {previewURL && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, padding: 10, borderRadius: 12, background: t.bg }}>
+          {isPendingVideo
+            ? <video src={previewURL} style={{ width: 56, height: 56, borderRadius: 10, objectFit: "cover", background: "#000" }} />
+            : <img src={previewURL} alt="Captured" style={{ width: 56, height: 56, borderRadius: 10, objectFit: "cover", background: "#000" }} />}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{isPendingVideo ? "Video" : "Photo"}{pendingSize ? ` • ${pendingSize}` : ""}</div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 2 }}>Choose where to send it below.</div>
+          </div>
+        </div>
+      )}
+      {statusFn && optionBtn(<Megaphone size={18} color={t.bubbleMeText} />, "Post to Status", () => runSend(statusFn, pendingFile), true)}
       {onSendChat && optionBtn(<Send size={18} color={t.text} />, "Send to this chat", () => runSend(onSendChat, pendingFile))}
       {onSendChatTo && optionBtn(<MessageCircle size={18} color={t.text} />, "Pick a chat", () => setStep("pick"))}
-      {onStatusBuilder && optionBtn(<ImageIcon size={18} color={t.text} />, "Open in Status Builder", () => runSend(onStatusBuilder, pendingFile))}
+      {captureError && <div style={{ color: "#FF3B30", fontSize: 12.5, fontWeight: 600, textAlign: "center", padding: "4px 8px", lineHeight: 1.5 }}>{captureError}</div>}
       <div onClick={onClose} style={{ textAlign: "center", padding: "12px", color: t.textMuted, fontWeight: 600, cursor: "pointer", fontSize: 14 }}>Cancel</div>
     </>
   );

@@ -143,6 +143,20 @@ export function resolveMusicDownloadAllowed(globalSettings, userDoc) {
   return globalEnabled;
 }
 
+// ── Cloned-voice test access (mirrors the Jewish Status downloads override) ──
+// Stored as globalSettings.clonedVoiceTest.enabled (global ON/OFF, default OFF)
+// plus a per-user `clonedVoiceTestOverride` on the user doc
+// ("inherit" | "enabled" | "disabled").
+// Truth table: global ON + inherit -> allowed; global OFF + inherit -> denied;
+// global ON + disabled -> denied; global OFF + enabled -> allowed.
+export function resolveClonedVoiceTestAccess(globalSettings, userDoc) {
+  const globalEnabled = globalSettings?.clonedVoiceTest?.enabled === true;
+  const override = userDoc?.clonedVoiceTestOverride || "inherit";
+  if (override === "enabled") return true;
+  if (override === "disabled") return false;
+  return globalEnabled;
+}
+
 // ── General app media storage provider ──
 // Authoritative value lives in Firestore config/globalSettings.active_storage_provider.
 // Cloudinary is the intended default (NOT Supabase). Never fall back to Supabase.

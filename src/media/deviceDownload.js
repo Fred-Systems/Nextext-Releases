@@ -30,21 +30,19 @@ function blobToBase64(blob) {
   });
 }
 
-export async function downloadMediaToDevice(url, filename) {
-  if (!url) throw new Error("Media is unavailable.");
-  let res;
-  try {
-    res = await fetch(url, { mode: "cors" });
-  } catch {
-    throw new Error("Couldn't reach the source (offline or expired link).");
-  }
-  if (!res.ok) throw new Error("Media is unavailable (expired or removed).");
-  let blob;
-  try {
-    blob = await res.blob();
-  } catch {
-    throw new Error("Download was interrupted.");
-  }
+function extFromMimeType(mime) {
+  const m = String(mime || "").toLowerCase();
+  if (!m) return "";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("mp4") || m.includes("m4a") || m.includes("x-m4a")) return "m4a";
+  if (m.includes("wav") || m.includes("wave")) return "wav";
+  if (m.includes("ogg")) return "ogg";
+  if (m.includes("webm")) return "webm";
+  if (m.includes("aac")) return "aac";
+  return "";
+}
+
+async function saveBlobToDevice(blob, filename) {
   if (!blob || !blob.size) throw new Error("The file came back empty.");
   const name = filename || `nextext-${Date.now()}`;
 
@@ -82,6 +80,38 @@ export async function downloadMediaToDevice(url, filename) {
     setTimeout(() => URL.revokeObjectURL(href), 30000);
   }
   return { ok: true, location: "Downloads folder" };
+}
+
+export async function downloadMediaToDevice(url, filename) {
+  if (!url) throw new Error("Media is unavailable.");
+  let res;
+  try {
+    res = await fetch(url, { mode: "cors" });
+  } catch {
+    throw new Error("Couldn't reach the source (offline or expired link).");
+  }
+  if (!res.ok) throw new Error("Media is unavailable (expired or removed).");
+  let blob;
+  try {
+    blob = await res.blob();
+  } catch {
+    throw new Error("Download was interrupted.");
+  }
+  return saveBlobToDevice(blob, filename);
+}
+
+// Blob-input variant: saves an already-in-memory Blob (e.g. generated audio)
+// through the exact same verified native/web paths as downloadMediaToDevice.
+// The extension is derived from the blob's REAL MIME type (blob.type, falling
+// back to mimeHint) — never by renaming. Throws on failure like the URL path.
+export async function downloadBlobToDevice(blob, filename, mimeHint) {
+  if (!blob || !blob.size) throw new Error("There's no audio to save yet.");
+  let name = filename || `nextext-${Date.now()}`;
+  if (!/\.[a-z0-9]{2,5}$/i.test(name)) {
+    const ext = extFromMimeType(blob.type || mimeHint || "");
+    if (ext) name = `${name}.${ext}`;
+  }
+  return saveBlobToDevice(blob, name);
 }
 
 export function extFromType(url, kind) {
