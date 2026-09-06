@@ -81,7 +81,7 @@ import PageErrorBoundary from "./components/PageErrorBoundary";
 import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, openDownloadUrl, saveApkToDevice, setLastSeenRelease } from "./updater/updateChecker";
 import { APP_VERSION } from "./version";
 import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
-import { updateGlobalSettings, useGlobalSettings, subscribe as subscribeGlobalSettings, getQuotaSnapshot } from "./firebase/config-settings";
+import { updateGlobalSettings, useGlobalSettings, subscribe as subscribeGlobalSettings, getQuotaSnapshot, getDefaultLaunchPage } from "./firebase/config-settings";
 import AdminPanelGate from "./components/AdminPanelGate";
 import { BUBBLE_STYLE_ORDER, BUBBLE_STYLE_LABELS, getBubbleStyle, setBubbleStyle, resolveBubble } from "./theme/bubbleStyles";
 import { setCloudinaryProxyEnabled } from "./media/mediaProxy";
@@ -2798,6 +2798,18 @@ function AppShell({ appLocked, setAppLocked }) {
     try { return localStorage.getItem("nextext_launch_page") || "chats"; }
     catch { return "chats"; }
   });
+  // ONE authoritative cold-start destination: explicit deep-link/notification
+  // targets are applied by their own handlers afterwards; everything else uses
+  // this single value so highlight and content can never disagree.
+  // Precedence: admin Default Launch Page (server) > user's local launch-page
+  // setting > "chats".
+  const resolveStartupTab = () => {
+    try {
+      const admin = getDefaultLaunchPage(globalSettings);
+      if (admin === "chats" || admin === "groups") return admin;
+    } catch { /* fall through to local */ }
+    return launchPage === "groups" || launchPage === "chats" ? launchPage : "chats";
+  };
   // Lifted "Ask AI about this" panel: rendered at the App-shell level (not inside
   // a scrollable/conversation subtree) so its position:fixed inset:0 resolves to
   // the fixed-size phone shell instead of a content-grown container.
@@ -3039,7 +3051,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       // unrelated Settings gear. Tabs (activeNavTab) only meaningfully apply
       // on the list screen, so we also normalize that back to "chats" so the
       // first thing the user sees is every chat (groups + 1-on-1s).
-      navigateToTab(launchPage);
+      navigateToTab(resolveStartupTab());
       // Still restore other persisted prefs/configs below:
       if (state.activeChat) setActiveChat(state.activeChat);
       if (state.activeGroup) setActiveGroup(state.activeGroup);
@@ -3105,10 +3117,10 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     if (!myUid) return;
     // Run SYNCHRONOUSLY (useLayoutEffect) so the target screen/tab is set
     // before the pager layout effect reads it. This prevents the "bottom bar
-    // shows one tab but content shows another" cold-start desync. The chosen
-    // launch page (chats/status/groups/settings) is what opens.
-    // If admin has hidden the launch page setting, always force Groups.
-    const effectiveLaunchPage = globalSettings?.hideLaunchPage ? "chats" : launchPage;
+    // shows one tab but content shows another" cold-start desync. The single
+    // authoritative startup value (admin default > local setting > chats) is
+    // what opens — highlight and pager content derive from the same tab.
+    const effectiveLaunchPage = resolveStartupTab();
     const targetTab = orderedTabs.includes(effectiveLaunchPage) ? effectiveLaunchPage : "chats";
     navigateToTab(targetTab);
     // Defensive: force the pager row to the target page imperatively (list tabs
@@ -4121,7 +4133,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     if (orderedTabs.length === 0) return;
     if (coldStartPagerLockRef.current) return;
     coldStartPagerLockRef.current = true;
-    const effectiveLaunchPage = globalSettings?.hideLaunchPage ? "chats" : launchPage;
+    const effectiveLaunchPage = resolveStartupTab();
     navigateToTab(orderedTabs.includes(effectiveLaunchPage) ? effectiveLaunchPage : "chats");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderedTabs.join(","), myUid, globalSettings?.hideLaunchPage]);

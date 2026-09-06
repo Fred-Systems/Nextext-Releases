@@ -375,11 +375,61 @@ export default function AIChatScreen({ myUid, onBack }) {
       return null;
     }
   };
+  // ── Podcast failure classification ──
+  // Every podcast failure is bucketed so the UI shows a stage-specific,
+  // actionable message instead of a generic "Error: …". The diagnostic is
+  // logged with the pipeline stage + HTTP status + provider error text —
+  // never any secret (API keys are never present in these messages).
+  // Stages: "script" (LLM script generation) → "synth" (Fish Audio voice
+  // synthesis per turn) → "upload" (Cloudinary, then Supabase fallback).
+  const classifyPodcastError = (stage, err) => {
+    const raw = String(err?.message || err || "");
+    const lower = raw.toLowerCase();
+    const statusMatch = raw.match(/\b(4\d\d|5\d\d)\b/);
+    const status = err?.status || (statusMatch ? statusMatch[1] : "?");
+    let cls = "unknown";
+    if (lower.includes("not configured") || lower.includes("no api key") || lower.includes("no gemini api key") || lower.includes("failed to read ai config")) cls = "config-missing-key";
+    else if (lower.includes("invalid") && lower.includes("key") || lower.includes("401") || lower.includes("api_key") || lower.includes("api key is invalid")) cls = "auth-invalid-key";
+    else if (lower.includes("429") || lower.includes("rate limit") || lower.includes("quota") || lower.includes("limit reached") || lower.includes("402")) cls = "quota";
+    else if (lower.includes("413") || lower.includes("too large") || lower.includes("exceeds")) cls = "invalid-request-too-large";
+    else if (lower.includes("failed to fetch") || lower.includes("network") || lower.includes("timeout") || lower.includes("unreachable") || lower.includes("couldn't reach")) cls = "timeout-network";
+    else if (stage === "script") cls = "malformed-response";
+    else if (stage === "synth") cls = "audio-failure";
+    else if (stage === "upload") cls = "upload-failure";
+    // Stage-tagged diagnostic for admin/user bug reports. Slice the detail so
+    // a long provider payload can't flood the console; keys never appear here.
+    console.error(`[podcast] stage=${stage} class=${cls} status=${status} detail=${raw.slice(0, 300)}`);
+    return cls;
+  };
+  const podcastUserMessage = (cls, stage, err) => {
+    const detail = String(err?.message || "").slice(0, 160);
+    switch (cls) {
+      case "config-missing-key":
+        return "Podcast failed: the AI API key isn't set. An admin must add it in the Admin Dashboard → AI Provider, then try again.";
+      case "auth-invalid-key":
+        return "Podcast failed: the AI API key was rejected by the provider. An admin must set a valid key in the Admin Dashboard → AI Provider.";
+      case "quota":
+        return "Podcast failed: the AI provider is rate-limited/quota-exhausted right now. Wait a few minutes and try again.";
+      case "invalid-request-too-large":
+        return "Podcast failed: the request was too large for the AI model. Try fewer speakers, a shorter topic, or a shorter length.";
+      case "timeout-network":
+        return `Podcast failed at the ${stage} step: couldn't reach the service. Check your connection and try again.`;
+      case "malformed-response":
+        return "Podcast failed: the AI didn't return a usable script after 3 tries. Try again, or rephrase the topic/direction.";
+      case "audio-failure":
+        return `Podcast failed: voice synthesis failed for every turn. The voice service key may be missing or invalid — an admin should check the Fish Audio key / worker deployment. (${detail})`;
+      case "upload-failure":
+        return `Podcast failed: the audio was generated but saving it failed on both Cloudinary and Supabase. Check storage config. (${detail})`;
+      default:
+        return `Podcast failed at the ${stage} step: ${detail || "unknown error"}`;
+    }
+  };
   const generatePodcast = async () => {
     const voices = podcastVoices.length ? podcastVoices : [availableVoices[0]?.id].filter(Boolean);
     if (podcastBusy || voices.length < 1) return;
     setPodcastBusy(true);
     setPodcastStatus("Writing the conversation…");
+    let stage = "script";
     try {
       // Map a podcast voice id back to its PERSONALITIES key (preset voices),
       // so we can inject that persona's own systemPrompt/label verbatim.
@@ -497,21 +547,30 @@ export default function AIChatScreen({ myUid, onBack }) {
       // before surfacing a clear, friendly error. We never synthesize a fake
       // "I'm sorry" fallback clip — a failed script is surfaced as an error.
       let segments = null;
+      let lastScriptErr = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const r = await sendAIMessage(myUid, "Generate the podcast script now.", [], instruction, null, null, true);
           if (r && r.trim()) {
             const parsed = parsePodcastScript(r);
             if (parsed && parsed.length > 0) { segments = parsed; break; }
+            lastScriptErr = new Error("AI returned prose/invalid JSON instead of the podcast script array.");
+          } else {
+            lastScriptErr = new Error("AI returned an empty response.");
           }
-        } catch {}
+        } catch (e) { lastScriptErr = e; }
       }
       if (!segments) {
-        throw new Error("The AI couldn't generate a podcast. Please try again.");
+        // Preserve the real cause (e.g. missing/invalid key, quota) so the
+        // classifier below can surface it instead of a generic message.
+        throw lastScriptErr || new Error("The AI couldn't generate a podcast. Please try again.");
       }
+      stage = "synth";
       setPodcastStatus("Synthesizing voices…");
       const buffers = [];
       let okTurns = 0;
+      let failTurns = 0;
+      let lastVoiceErr = null;
       for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         const text = sanitizeForTTS(seg.text || "");
@@ -527,10 +586,16 @@ export default function AIChatScreen({ myUid, onBack }) {
           buffers.push(new Uint8Array(buf));
           okTurns += 1;
         } catch (e) {
+          failTurns += 1;
+          lastVoiceErr = e;
           console.warn("[podcast] turn failed:", e?.message);
         }
       }
-      if (okTurns === 0) throw new Error("All podcast turns failed to synthesize — check the voice key.");
+      if (okTurns === 0) {
+        const err = new Error(`All podcast turns failed to synthesize (${failTurns} failed) — ${lastVoiceErr?.message || "check the voice key"}.`);
+        err.stage = "synth";
+        throw err;
+      }
       // Concatenate every turn into ONE recording so the podcast plays as a
       // single, continuous conversation between the selected voices.
       const total = buffers.reduce((a, b) => a + b.length, 0);
@@ -538,16 +603,39 @@ export default function AIChatScreen({ myUid, onBack }) {
       let off = 0;
       for (const b of buffers) { merged.set(b, off); off += b.length; }
       const file = new File([merged], "podcast.mp3", { type: "audio/mpeg" });
+      stage = "upload";
       setPodcastStatus("Uploading podcast…");
-      // Upload the conversation recording to Cloudinary (audio is the "video"
-      // resource type) and keep it in the builder area with a download button —
-      // it is NOT posted back into the chat.
-      const cloud = await uploadToCloudinary(file, { resourceType: "video" });
+      // Upload the conversation recording — Cloudinary first (audio is the
+      // "video" resource type), falling back to Supabase so a broken
+      // Cloudinary preset alone can't fail the whole podcast. The result is
+      // kept in the builder area with a download button — it is NOT posted
+      // back into the chat.
+      let cloud = null;
+      let uploadErr = null;
+      try {
+        cloud = await uploadToCloudinary(file, { resourceType: "video" });
+      } catch (e) {
+        uploadErr = e;
+        console.warn("[podcast] cloudinary upload failed, trying Supabase:", e?.message);
+        try {
+          const sb = await uploadChatFile(`podcast-${myUid}`, myUid, file);
+          cloud = { url: sb.url, path: sb.path };
+        } catch (e2) {
+          uploadErr = e2;
+        }
+      }
+      if (!cloud?.url) {
+        const err = new Error(`Podcast upload failed: ${uploadErr?.message || "no URL returned"}.`);
+        err.stage = "upload";
+        throw err;
+      }
       setPodcastResult({ url: cloud.url, publicId: cloud.path, turns: okTurns });
       setPodcastStatus("Podcast ready! ✓");
       setPodcastBusy(false);
     } catch (err) {
-      setPodcastStatus("Error: " + (err?.message || "failed"));
+      const errStage = err?.stage || stage;
+      const cls = classifyPodcastError(errStage, err);
+      setPodcastStatus("Error: " + podcastUserMessage(cls, errStage, err));
       setPodcastBusy(false);
     }
   };

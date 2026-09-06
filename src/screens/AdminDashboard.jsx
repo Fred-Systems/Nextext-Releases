@@ -282,7 +282,12 @@ export default function AdminDashboard({ myUid, onBack }) {
   const editPersona = (p) => {
     setEditingPersonaKey(p.key); setPersonaName(p.name); setPersonaIcon(p.icon || ""); setPersonaDesc(p.description || ""); setPersonaPrompt(p.systemPrompt || ""); setPersonaSpeak(p.speakStyle || ""); setPersonaVoice(p.voiceRef || "");
   };
-  const postAnnouncement = async () => { await setAnnouncement(annText, myUid); setAnnText(""); };
+  const postAnnouncement = async () => {
+    if (!annText.trim()) return;
+    setError("");
+    try { await setAnnouncement(annText, myUid); setAnnText(""); }
+    catch (e) { setError("Couldn't post announcement: " + (e.message || e)); }
+  };
   const [geminiKeyDraft, setGeminiKeyDraft] = useState(sysConfig?.geminiApiKey || "");
   useEffect(() => {
     if (sysConfig?.geminiApiKey != null) setGeminiKeyDraft(sysConfig.geminiApiKey);
@@ -2935,7 +2940,7 @@ export default function AdminDashboard({ myUid, onBack }) {
               <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Hide Launch Page Setting</span>
             </div>
             <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
-              When enabled, the "Launch page" setting is hidden from Settings for all users. The app will always open on the Groups tab.
+              When enabled, the "Launch page" setting is hidden from Settings for all users. Cold startup then uses the Default Launch Page below (or Chats when none is configured).
             </div>
             <div onClick={() => {
               const newVal = !settings?.hideLaunchPage;
@@ -2947,6 +2952,31 @@ export default function AdminDashboard({ myUid, onBack }) {
               <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideLaunchPage ? "#fff" : t.text }}>
                 {settings?.hideLaunchPage ? "LAUNCH PAGE SETTING HIDDEN" : "Launch page setting visible"}
               </span>
+            </div>
+          </div>
+
+          {/* Default Launch Page (server-side cold-start destination for everyone) */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Compass size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Default Launch Page</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Which page every user lands on at ordinary cold startup (highlight + content use this same value). Stored server-side — survives reinstall/storage-clear/new device. Explicit notification/deep-link destinations still override it.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[["chats", "Chats"], ["groups", "Groups"]].map(([key, label]) => {
+                const on = (settings?.launchPageDefault || "chats") === key;
+                return (
+                  <div
+                    key={key}
+                    onClick={() => updateGlobalSettings({ launchPageDefault: key }, myUid)}
+                    style={{ flex: 1, textAlign: "center", padding: "11px 8px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${on ? t.primary : t.border}`, background: on ? t.primary : t.bg, color: on ? "#fff" : t.text }}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -3184,7 +3214,10 @@ export default function AdminDashboard({ myUid, onBack }) {
             {settings?.announcement?.text && (
               <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: t.bg, fontSize: 12.5, color: t.text }}>
                 <div style={{ marginBottom: 8 }}>Current: {settings.announcement.text}</div>
-                <button onClick={() => clearAnnouncement()} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: "#FF3B30", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Clear announcement</button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => setAnnText(settings.announcement.text)} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: t.primary, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Edit</button>
+                  <button onClick={() => clearAnnouncement()} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: "transparent", color: "#FF3B30", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Clear announcement</button>
+                </div>
               </div>
             )}
           </div>

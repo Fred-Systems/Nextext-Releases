@@ -157,6 +157,16 @@ export function resolveClonedVoiceTestAccess(globalSettings, userDoc) {
   return globalEnabled;
 }
 
+// ── Admin Default Launch Page (single authoritative startup destination) ──
+// Stored server-side as globalSettings.launchPageDefault ("chats" | "groups").
+// Returns the configured value, or null when the admin hasn't configured one
+// (callers then fall back to the user's local launch-page setting, then Chats).
+// Server-side so it survives reinstall/storage-clear/new-device.
+export function getDefaultLaunchPage(globalSettings) {
+  const v = globalSettings?.launchPageDefault;
+  return v === "groups" || v === "chats" ? v : null;
+}
+
 // ── General app media storage provider ──
 // Authoritative value lives in Firestore config/globalSettings.active_storage_provider.
 // Cloudinary is the intended default (NOT Supabase). Never fall back to Supabase.

@@ -42,6 +42,11 @@ function useStoryPlayer(creators, initialIndex, { onFinish, onAdvanceCreator } =
   const heldRef = useRef(false);
   const holdTimer = useRef(null);
   const pressStart = useRef({ x: 0, y: 0 });
+  // Set while a two-finger pinch is in progress so the release of the primary
+  // finger is swallowed (never pauses, advances, or closes the story).
+  const pinchActive = useRef(false);
+  // Double-tap is reserved for zoom reset — the second tap never navigates.
+  const lastTap = useRef(0);
 
   const creator = creators[ci];
   const posts = creator ? creator.posts : [];
@@ -131,8 +136,19 @@ function useStoryPlayer(creators, initialIndex, { onFinish, onAdvanceCreator } =
   }, [advance]);
 
   // Press-and-hold to pause; quick tap to navigate.
+  // Pinch-zoom must never pause media: the second finger's pointerdown is
+  // non-primary, so it cancels any pending hold-to-pause timer, resumes
+  // playback, and marks the gesture — the primary finger's release below is
+  // then swallowed instead of navigating.
   const onPointerDown = useCallback(
     (e) => {
+      if (e?.isPrimary === false) {
+        if (holdTimer.current) clearTimeout(holdTimer.current);
+        heldRef.current = false;
+        pinchActive.current = true;
+        setPaused(false);
+        return;
+      }
       pressStart.current = { x: e.clientX, y: e.clientY };
       heldRef.current = false;
       if (holdTimer.current) clearTimeout(holdTimer.current);
@@ -147,6 +163,15 @@ function useStoryPlayer(creators, initialIndex, { onFinish, onAdvanceCreator } =
   const onPointerUp = useCallback(
     (e) => {
       if (holdTimer.current) clearTimeout(holdTimer.current);
+      // Non-primary (second finger) release: part of a pinch, never navigate.
+      if (e?.isPrimary === false) return;
+      // Primary release ending a pinch: swallow so zooming never
+      // pauses, advances, or closes the story.
+      if (pinchActive.current) {
+        pinchActive.current = false;
+        heldRef.current = false;
+        return;
+      }
       if (heldRef.current) {
         setPaused(false);
         heldRef.current = false;
@@ -155,6 +180,13 @@ function useStoryPlayer(creators, initialIndex, { onFinish, onAdvanceCreator } =
       const dx = e.clientX - pressStart.current.x;
       const dy = e.clientY - pressStart.current.y;
       if (Math.abs(dx) > 60 || Math.abs(dy) > 60) return; // ignore drags
+      // Double-tap is reserved for zoom reset — never navigate on it.
+      const now = Date.now();
+      if (now - lastTap.current < 300) {
+        lastTap.current = 0;
+        return;
+      }
+      lastTap.current = now;
       const rect = e.currentTarget.getBoundingClientRect();
       const relX = e.clientX - rect.left;
       if (relX < rect.width * 0.33) goBack();
@@ -469,6 +501,9 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
             Media unavailable
           </div>
         ) : kind === "video" ? (
+          // NOTE: key/src intentionally depend ONLY on post.id/post.mediaUrl.
+          // Zoom/pan only change style.transform below, so gestures never
+          // remount this element and playback is never restarted by them.
           <video
             key={post.id}
             ref={videoRef}
@@ -526,6 +561,11 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
 
         {caption && kind !== "text" && (
           <div
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
             style={{
               position: "absolute",
               bottom: 16,
@@ -546,7 +586,15 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
             <div>{caption}</div>
             {caption.length > 90 && (
               <div
-                onClick={() => setCapExpanded((e) => !e)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setCapExpanded((v) => !v);
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+                onTouchEnd={(e) => e.stopPropagation()}
                 style={{
                   marginTop: 4,
                   fontSize: 12,
@@ -718,25 +766,46 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
         >
           +10s
         </div>
+        {/* Download control exists ONLY when the resolver permits it —
+            no greyed icon, tooltip, or placeholder is rendered otherwise. */}
+        {canDownload ? (
         <div
           onClick={async (e) => {
             e.stopPropagation();
-            if (!canDownload || dlState === "saving" || !post?.mediaUrl) return;
+            if (dlState === "saving" || !post?.mediaUrl) return;
+            // The REAL provider URL, byte-for-byte as assembled upstream:
+            // JewishStatus → `${CDN}/status-media/${media_path}` (R2 public
+            // CDN, https); YidStatus → media_url verbatim. Never rewritten,
+            // never proxied, never mirrored into our storage.
+            const srcUrl = post.mediaUrl;
             setDlState("saving");
             setDlProgress({ loaded: 0, total: 0 });
+            // Only set for network-level (CORS/offline) failures, where we
+            // offer the untouched original URL in a new tab as a fallback.
+            let networkBlocked = false;
             try {
-              // Fetch with REAL byte progress, then save through the verified
-              // device path (Filesystem write + stat check on native, anchor
-              // download on web). Success is only claimed when the file
-              // verifiably exists on the device — downloadBlobToDevice throws
-              // otherwise.
+              // Plain GET with NO custom headers (avoids a CORS preflight).
+              // Note: <video>/<img> tags render cross-origin media fine
+              // because they skip CORS — but reading the same bytes via
+              // fetch() requires the provider to send
+              // Access-Control-Allow-Origin. When it doesn't, fetch throws a
+              // TypeError while the story still plays: that is a provider
+              // CORS block, not an expired link, and is reported as such.
               let res;
               try {
-                res = await fetch(post.mediaUrl, { mode: "cors" });
-              } catch {
-                throw new Error("Couldn't reach the source (offline or expired link).");
+                res = await fetch(srcUrl);
+              } catch (fetchErr) {
+                networkBlocked = true;
+                const detail = fetchErr?.message ? ` (${fetchErr.message})` : "";
+                throw new Error(
+                  `Couldn't reach the source${detail}. The provider may block cross-origin reads (CORS) or you may be offline.`
+                );
               }
-              if (!res.ok) throw new Error("Media is unavailable (expired or removed).");
+              if (!res.ok) {
+                throw new Error(
+                  `Media is unavailable (HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}). The provider removed or expired this file.`
+                );
+              }
               const total = Number(res.headers.get("content-length")) || 0;
               const reader = res.body?.getReader?.();
               let blob;
@@ -757,24 +826,42 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
                 }
                 blob = new Blob(chunks, { type: res.headers.get("content-type") || undefined });
               }
-              if (!blob || !blob.size) throw new Error("The file came back empty.");
+              if (!blob || !blob.size) throw new Error("The file came back empty (0 bytes).");
               setDlProgress({ loaded: blob.size, total: total || blob.size });
+              // Verified device path only (Filesystem write + stat check on
+              // native, anchor download on web). It throws on failure, so
+              // success below is only claimed after a verified save.
               const r = await downloadBlobToDevice(blob, `jewishstatus-${Date.now()}.${extFromType(post.mediaUrl, post.kind)}`);
               setDlState(`saved:${r.location}`);
               setTimeout(() => { setDlState(""); setDlProgress(null); }, 4000);
             } catch (err) {
-              setDlState(`failed:${err?.message || "Download failed"}`);
+              if (networkBlocked) {
+                // CORS-blocked bytes can still be opened at the untouched
+                // original URL in a new tab for a manual save — nothing is
+                // copied through our servers.
+                try {
+                  const a = document.createElement("a");
+                  a.href = srcUrl;
+                  a.target = "_blank";
+                  a.rel = "noopener noreferrer";
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                } catch { /* fallback is best-effort */ }
+              }
+              setDlState(`failed:${err?.message || "Download failed"}${networkBlocked ? " (opened the original in a new tab — save it manually)" : ""}`);
               setDlProgress(null);
-              setTimeout(() => setDlState(""), 4000);
+              setTimeout(() => setDlState(""), 6000);
             }
           }}
           onPointerDown={(e) => e.stopPropagation()}
           onPointerUp={(e) => e.stopPropagation()}
-          title={canDownload ? "Download to device (from the original source)" : "Downloads are disabled"}
-          style={{ ...ctrlBtn, opacity: canDownload && post?.mediaUrl ? 1 : 0.35, cursor: canDownload && post?.mediaUrl ? "pointer" : "default" }}
+          title="Download to device (from the original source)"
+          style={ctrlBtn}
         >
           {dlState === "saving" ? <RefreshCw size={16} color="#fff" style={{ animation: "nextext-spin 1s linear infinite" }} /> : <Download size={18} color="#fff" />}
         </div>
+        ) : null}
         <div
           onClick={(e) => {
             e.stopPropagation();

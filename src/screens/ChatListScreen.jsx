@@ -48,7 +48,7 @@ function getLastMessagePreview(lm) {
   if (!lm) return "No messages yet";
   switch (lm.type) {
     case "voice":
-      return "🎤 Voice message";
+      return "🎤 Voice note";
     case "image":
       return "📷 Photo";
     case "video":
@@ -224,6 +224,16 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const [groupPictureFullscreen, setGroupPictureFullscreen] = useState(null);
   const [showGlobalCamera, setShowGlobalCamera] = useState(false);
   const [showNativeCamera, setShowNativeCamera] = useState(false);
+  // ── In-app camera state machine ──────────────────────────────
+  // IDLE → CAMERA_OPEN → CAPTURING → CAPTURED → PREVIEW → SEND | POST_STATUS.
+  // CAPTURED/PREVIEW never auto-return to CAMERA_OPEN: the ONLY path back is
+  // an explicit user tap on Retake (retakeGlobalCamera) or Retry/mode/flip
+  // while the camera is open. Capture completions never call openGlobalCamera.
+  const [camPhase, setCamPhase] = useState("idle"); // idle|camera_open|capturing|captured|preview|sending|posting|error
+  const camSessionRef = useRef(0); // bumped on every open/close/retake; stale async completions are ignored
+  const camBusyRef = useRef(false); // single-flight shutter guard (stale-state double-tap fix)
+  const routeBusyRef = useRef(false); // single-flight Send/Post guard
+  const showGlobalCameraRef = useRef(false);
   const [globalCameraError, setGlobalCameraError] = useState("");
   const [globalCameraMode, setGlobalCameraMode] = useState("photo"); // "photo" | "video"
   const [globalCameraFacing, setGlobalCameraFacing] = useState("environment"); // "environment" | "user"
@@ -625,17 +635,23 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   // In-app camera open. Accepts overrides so facing/mode switches don't read
-  // stale state from the closure that scheduled them.
+  // stale state from the closure that scheduled them. Explicit entry points
+  // ONLY: top-bar camera button (openInAppCamera), Retake, Retry, and the
+  // in-camera mode/flip switches. Never called from capture completions.
   const openGlobalCamera = async (overrides = {}) => {
+    const mySession = ++camSessionRef.current;
     const facing = overrides.facing || globalCameraFacing;
     const mode = overrides.mode || globalCameraMode;
+    setCamPhase("camera_open");
     setGlobalCameraError("");
     setGlobalCameraZoom(1);
     setGlobalCameraFlash(false);
     setFlashSupported(false);
     setRecordingSecs(0);
     setShowGlobalCamera(true);
+    showGlobalCameraRef.current = true;
     if (!navigator.mediaDevices?.getUserMedia) {
+      setCamPhase("error");
       setGlobalCameraError("This device or browser doesn't support the in-app camera. Try the photo button in the top bar instead.");
       return;
     }
@@ -649,6 +665,13 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         video: { facingMode: facing },
         audio: wantsVideo,
       });
+      // A newer open/close/retake superseded this request (e.g. a double-tap
+      // issued two getUserMedia calls): drop the stale stream so it can never
+      // reopen the camera after the user already moved on.
+      if (mySession !== camSessionRef.current) {
+        try { stream.getTracks().forEach((tr) => tr.stop()); } catch {}
+        return;
+      }
       // Permission revoked mid-flow (or device unplugged): the track ends — back
       // out cleanly with an explanation instead of a frozen preview.
       try {
@@ -659,6 +682,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               stopRecordingClock();
               setRecording(false);
               globalCameraStreamRef.current = null;
+              setCamPhase("error");
               setGlobalCameraError("The camera disconnected or its permission was revoked. Tap Retry to start it again.");
             }
           };
@@ -670,6 +694,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       } catch { /* track introspection is best-effort */ }
       globalCameraStreamRef.current = stream;
       setTimeout(() => {
+        if (mySession !== camSessionRef.current) return;
         if (globalCameraVideoRef.current) {
           globalCameraVideoRef.current.srcObject = stream;
           if (wantsVideo) globalCameraVideoRef.current.muted = false;
@@ -677,6 +702,8 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         }
       }, 30);
     } catch (e) {
+      if (mySession !== camSessionRef.current) return;
+      setCamPhase("error");
       const name = e?.name || "";
       const isVideo = (overrides.mode || globalCameraMode) === "video";
       if (name === "NotAllowedError" || name === "SecurityError") {
@@ -702,8 +729,24 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     }
   };
 
+  // Direct in-app camera entry: opens the getUserMedia camera immediately with
+  // NO pre-camera chooser screen. Mode switch + front/back flip live INSIDE
+  // the camera UI. Any stale capture is discarded first so the new session
+  // starts clean at CAMERA_OPEN.
+  const openInAppCamera = () => {
+    if (camBusyRef.current) return;
+    if (capturedMedia?.url) { try { URL.revokeObjectURL(capturedMedia.url); } catch {} }
+    setCapturedMedia(null);
+    setCameraCaption("");
+    setCameraPreviewStep(false);
+    setSelectedRecipients([]);
+    routeBusyRef.current = false;
+    openGlobalCamera({});
+  };
+
   const switchGlobalCameraMode = (m) => {
-    if (m === globalCameraMode || recording) return;
+    if (m === globalCameraMode || recording || camBusyRef.current) return;
+    if (camPhase !== "camera_open" && camPhase !== "error") return;
     setGlobalCameraMode(m);
     // Video needs a mic track, photo doesn't — re-request the stream so the
     // mode actually takes effect instead of silently keeping the old tracks.
@@ -711,12 +754,15 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const switchGlobalCameraFacing = () => {
-    if (recording) return;
+    if (recording || camBusyRef.current) return;
+    if (camPhase !== "camera_open" && camPhase !== "error") return;
     const next = globalCameraFacing === "environment" ? "user" : "environment";
     setGlobalCameraFacing(next);
     // Re-open with the new facing direction. Keep the current mode. The facing
     // is passed explicitly — the state setter above hasn't flushed yet.
-    setTimeout(() => openGlobalCamera({ facing: next }), 50);
+    // The session counter inside openGlobalCamera poisons the older stream, so
+    // a rapid double-flip can never stack two live sessions.
+    setTimeout(() => { if (showGlobalCameraRef.current) openGlobalCamera({ facing: next }); }, 50);
   };
 
   const toggleGlobalFlash = async () => {
@@ -818,6 +864,11 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const captureGlobalPhoto = () => {
+    // Single-flight: a mobile tap can produce emulated double-clicks — the ref
+    // (not state) guard drops the second shutter press before it can start a
+    // duplicate capture + confirm cycle.
+    if (camBusyRef.current) return;
+    if (camPhase === "capturing" || camPhase === "captured" || camPhase === "preview") return;
     if (!globalCameraVideoRef.current || !globalCameraStreamRef.current) {
       setGlobalCameraError("The camera isn't ready yet — wait a moment and try again.");
       return;
@@ -827,6 +878,8 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       setGlobalCameraError("The camera isn't ready yet — wait a moment and try again.");
       return;
     }
+    camBusyRef.current = true;
+    setCamPhase("capturing");
     try {
       const canvas = document.createElement("canvas");
       canvas.width = video.videoWidth;
@@ -846,23 +899,33 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       ctx.restore();
       ctx.filter = "none";
       canvas.toBlob((blob) => {
-        if (!blob) {
-          setGlobalCameraError("Couldn't capture that photo. Try again.");
+        camBusyRef.current = false;
+        if (!blob || !blob.size) {
+          setCamPhase("camera_open");
+          setGlobalCameraError("Couldn't capture that photo (empty frame). Try again.");
           return;
         }
         const url = URL.createObjectURL(blob);
-        closeGlobalCamera();
+        // Terminal transition: CAPTURING → CAPTURED → PREVIEW. The camera is
+        // torn down with reason "captured" and NOTHING here reopens it — the
+        // preview stays visible with Retake | Send | Post to Status.
+        closeGlobalCamera("captured");
         setCapturedMedia({ type: "image", blob, url, ext: "jpg", mime: "image/jpeg" });
+        setCamPhase("preview");
         setCameraCaption("");
         setCameraPreviewStep(true);
       }, "image/jpeg", 0.92);
     } catch {
+      camBusyRef.current = false;
+      setCamPhase("camera_open");
       setGlobalCameraError("Couldn't capture that photo. Try again.");
     }
   };
 
   const startGlobalRecording = () => {
+    if (camBusyRef.current) return;
     if (!globalCameraStreamRef.current || recording) return;
+    if (camPhase !== "camera_open" && camPhase !== "error") return;
     if (typeof MediaRecorder === "undefined") {
       setGlobalCameraError("Video recording isn't supported in this browser. You can still take photos.");
       return;
@@ -877,29 +940,46 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         return;
       }
     }
+    camBusyRef.current = true;
+    setCamPhase("capturing");
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunksRef.current.push(e.data); };
     recorder.onerror = () => {
       stopRecordingClock();
       setRecording(false);
+      camBusyRef.current = false;
+      setCamPhase("camera_open");
       setGlobalCameraError("Recording failed. Check microphone permission and try again.");
     };
     recorder.onstop = () => {
+      // A cancelled take nulls mediaRecorderRef BEFORE stopping (see
+      // closeGlobalCamera): if this onstop belongs to a discarded take, drop
+      // it so a cancel can never produce a preview — and never reopen.
+      if (mediaRecorderRef.current !== recorder) return;
+      mediaRecorderRef.current = null;
       stopRecordingClock();
+      camBusyRef.current = false;
       const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || "video/webm" });
       if (!blob.size) {
+        setCamPhase("camera_open");
         setGlobalCameraError("That recording captured no data — it wasn't saved. Try recording again.");
         return;
       }
       const url = URL.createObjectURL(blob);
+      // Terminal transition: CAPTURING → CAPTURED → PREVIEW. Stash the file
+      // FIRST, then tear the camera down — never reopen.
       setCapturedMedia({ type: "video", blob, url, ext: "webm", mime: blob.type });
+      setCamPhase("preview");
       setCameraCaption("");
       setCameraPreviewStep(true);
-      closeGlobalCamera();
+      closeGlobalCamera("captured");
     };
     mediaRecorderRef.current = recorder;
     try {
       recorder.start();
     } catch {
+      mediaRecorderRef.current = null;
+      camBusyRef.current = false;
+      setCamPhase("camera_open");
       setGlobalCameraError("Video recording couldn't start on this device. You can still take photos.");
       return;
     }
@@ -910,6 +990,9 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const stopGlobalRecording = () => {
+    // Confirm/stop press: single-flight so a double-tap can't issue two stops
+    // (the second stop on an inactive recorder previously threw/no-op'd while
+    // onstop raced). The recorder stays referenced until onstop consumes it.
     setRecording(false);
     stopRecordingClock();
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
@@ -917,17 +1000,23 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     }
   };
 
-  const closeGlobalCamera = () => {
+  const closeGlobalCamera = (reason = "cancel") => {
+    // Any close poisons in-flight getUserMedia/mode/flip requests so a stale
+    // stream can never attach after the camera was torn down (the reopen loop).
+    camSessionRef.current++;
+    camBusyRef.current = false;
     // Backing out mid-recording discards the partial clip (onstop still fires,
     // but the camera is already torn down — guard by clearing the recorder ref
     // first so no preview step is produced from a cancelled take).
-    if (recording && mediaRecorderRef.current) {
+    if (mediaRecorderRef.current) {
       const rec = mediaRecorderRef.current;
       mediaRecorderRef.current = null;
       try {
         rec.onstop = null;
         if (rec.state !== "inactive") rec.stop();
       } catch { /* noop */ }
+      setRecording(false);
+    } else if (recording) {
       setRecording(false);
     }
     stopRecordingClock();
@@ -939,11 +1028,41 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     setGlobalCameraFlash(false);
     setFlashSupported(false);
     setShowGlobalCamera(false);
+    showGlobalCameraRef.current = false;
+    // "captured" leaves the phase for the caller to set preview; every other
+    // close returns the machine to IDLE.
+    if (reason !== "captured") setCamPhase("idle");
+  };
+
+  // THE only path from CAPTURED/PREVIEW back to CAMERA_OPEN: an explicit user
+  // tap on Retake. Discards the capture, then opens a fresh session.
+  const retakeGlobalCamera = () => {
+    if (routeBusyRef.current) return;
+    if (capturedMedia?.url) { try { URL.revokeObjectURL(capturedMedia.url); } catch {} }
+    setCapturedMedia(null);
+    setCameraCaption("");
+    setCameraPreviewStep(false);
+    openGlobalCamera({});
+  };
+
+  // Camera cancel / Back: tear down the stream AND discard any capture so the
+  // machine returns fully to IDLE (no half-kept preview behind the list).
+  const cancelGlobalCameraFlow = () => {
+    closeGlobalCamera("cancel");
+    if (capturedMedia?.url) { try { URL.revokeObjectURL(capturedMedia.url); } catch {} }
+    setCapturedMedia(null);
+    setCameraCaption("");
+    setCameraPreviewStep(false);
+    setSelectedRecipients([]);
+    routeBusyRef.current = false;
   };
 
   // Unmount safety: never leave the camera/mic on if this screen unmounts
   // mid-flow (tab switch, navigation, hot reload).
   useEffect(() => () => {
+    camSessionRef.current++;
+    camBusyRef.current = false;
+    routeBusyRef.current = false;
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         const rec = mediaRecorderRef.current;
@@ -951,11 +1070,13 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         rec.stop();
       }
     } catch { /* noop */ }
+    mediaRecorderRef.current = null;
     stopRecordingClock();
     if (globalCameraStreamRef.current) {
       try { globalCameraStreamRef.current.getTracks().forEach((tr) => tr.stop()); } catch {}
       globalCameraStreamRef.current = null;
     }
+    showGlobalCameraRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -989,7 +1110,14 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const discardCapturedMedia = () => {
-    if (capturedMedia?.url) URL.revokeObjectURL(capturedMedia.url);
+    // Full reset to IDLE: poison stale sessions, release the ref guards, drop
+    // the object URL. Called by Cancel/Discard AND — after the file is safely
+    // stashed in a local — by the Send/Post routes below.
+    camSessionRef.current++;
+    camBusyRef.current = false;
+    routeBusyRef.current = false;
+    setCamPhase("idle");
+    if (capturedMedia?.url) { try { URL.revokeObjectURL(capturedMedia.url); } catch {} }
     setCapturedMedia(null);
     setCameraCaption("");
     setCameraPreviewStep(false);
@@ -1009,7 +1137,12 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const sendToSelectedRecipients = async () => {
     const targets = selectedRecipients;
     if (!targets.length || !capturedMedia) return;
+    if (routeBusyRef.current) return;
+    routeBusyRef.current = true;
+    setCamPhase("sending");
     setSelectedRecipients([]);
+    // Stash the blob in a local BEFORE discarding: the sheet closes first in
+    // state, the upload pipeline below owns the stashed copy.
     const media = capturedMedia;
     discardCapturedMedia();
     for (const target of targets) {
@@ -1025,11 +1158,15 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         await sendMediaMessage(chatId, myUid, media.type, result, participants, { disappearing: globalCameraDisappearing ? { viewOnce: true } : null });
       } catch { /* keep going */ }
     }
+    routeBusyRef.current = false;
     if (targets[0]) openChatRow(targets[0]);
   };
 
   const sendCapturedMediaTo = async (targetChat) => {
     if (!capturedMedia || !myUid) return;
+    if (routeBusyRef.current) return;
+    routeBusyRef.current = true;
+    setCamPhase("sending");
     const media = capturedMedia;
     discardCapturedMedia();
     let chatId = targetChat.id;
@@ -1046,6 +1183,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
     } catch {
       // silent
     }
+    routeBusyRef.current = false;
   };
 
   const openNativeInStatusBuilder = (file) => {
@@ -1060,6 +1198,11 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
 
   const openCapturedInStatusBuilder = () => {
     if (!capturedMedia || !myUid) return;
+    if (routeBusyRef.current) return;
+    routeBusyRef.current = true;
+    setCamPhase("posting");
+    // Stash the File in memory FIRST (module handoff + local builder props),
+    // THEN discard the preview — the builder owns the stashed copy.
     const media = capturedMedia;
     const file = new File([media.blob], `camera-${Date.now()}.${media.ext}`, {
       type: media.mime || (media.type === "video" ? "video/webm" : "image/jpeg"),
@@ -1070,6 +1213,8 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   };
 
   const closeStatusBuilder = () => {
+    routeBusyRef.current = false;
+    setCamPhase("idle");
     setStatusBuilderFile(null);
     try { setPendingStatusFile(null); } catch {}
   };
@@ -1367,7 +1512,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       {topBarVisible && <div style={{ padding: "calc(12px + var(--safe-top)) 16px 6px", background: t.surface, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, position: "relative", zIndex: 1 }}>
         <span style={{ color: t.text, fontWeight: 800, fontSize: 20, flexShrink: 0 }}>NexText</span>
         <div style={{ display: "flex", gap: 22, alignItems: "center", flexShrink: 0 }}>
-          <Camera size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => setShowNativeCamera(true)} />
+          <Camera size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={openInAppCamera} />
           <div style={{ width: 1, height: 22, background: t.divider, flexShrink: 0 }} />
           {searchMode !== "visible" && <Search size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => setShowSearch(!showSearch)} />}
           <div style={{ width: 1, height: 22, background: t.divider, flexShrink: 0 }} />
@@ -1665,7 +1810,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       {showGlobalCamera && (
         <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147481000, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
-            <span onClick={closeGlobalCamera} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Cancel</span>
+            <span onClick={cancelGlobalCameraFlow} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Cancel</span>
             <span style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Camera</span>
             <span style={{ width: 50 }} />
           </div>
@@ -1707,7 +1852,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           {globalCameraError && (
             <div style={{ padding: "8px 16px", flexShrink: 0, textAlign: "center" }}>
               <div style={{ color: "#FF3B30", fontSize: 13, lineHeight: 1.5, marginBottom: 8 }}>{globalCameraError}</div>
-              <span onClick={() => openGlobalCamera()} style={{ display: "inline-block", padding: "8px 22px", borderRadius: 16, background: "#fff", color: "#000", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Retry</span>
+              <span onClick={() => openGlobalCamera({})} style={{ display: "inline-block", padding: "8px 22px", borderRadius: 16, background: "#fff", color: "#000", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Retry</span>
             </div>
           )}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 16px calc(env(safe-area-inset-bottom, 0px) + 28px)", flexShrink: 0, gap: 14 }}>
@@ -1810,7 +1955,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             />
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "center", padding: "0 16px calc(env(safe-area-inset-bottom, 0px) + 24px)", flexShrink: 0 }}>
-            <div onClick={() => { setCameraPreviewStep(false); setCameraCaption(""); openGlobalCamera(); }} style={{ flex: 1, padding: 13, borderRadius: 12, border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
+            <div onClick={retakeGlobalCamera} style={{ flex: 1, padding: 13, borderRadius: 12, border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer" }}>
               Retake
             </div>
             <div onClick={openCapturedInStatusBuilder} style={{ flex: 1.2, padding: 13, borderRadius: 12, background: "#fff", color: "#000", fontWeight: 700, fontSize: 14, textAlign: "center", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>

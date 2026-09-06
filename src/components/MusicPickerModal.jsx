@@ -110,7 +110,7 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
   };
 
   return createPortal(
-    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147481100, display: "flex", alignItems: "flex-end" }} onClick={onClose}>
+    <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147483200, display: "flex", alignItems: "flex-end" }} onClick={onClose}>
       <div style={{ background: t.surface, width: "100%", boxSizing: "border-box", borderRadius: "20px 20px 0 0", padding: "16px 20px 28px", maxHeight: "85vh", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <span style={{ fontWeight: 700, fontSize: 17, color: t.text }}>Add Background Music</span>
@@ -169,9 +169,6 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
                 <div onClick={() => handleDownload(track)} title="Download preview to device" style={{ width: 34, height: 34, borderRadius: "50%", background: t.bg, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
                   <Download size={16} color={t.primary} />
                 </div>
-              )}
-              {!dl.allowed && dl.reason && (
-                <div title={dl.reason} style={{ fontSize: 10.5, color: t.textMuted, maxWidth: 90, flexShrink: 0, lineHeight: 1.2 }}>{dl.reason}</div>
               )}
             </div>
             );

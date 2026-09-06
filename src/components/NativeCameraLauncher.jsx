@@ -50,13 +50,20 @@ function pickFile(accept, capture) {
     // (the normal "photo chosen" path) the `change` event has already populated
     // input.files, so we must NOT cancel. Guarding on input.files.length avoids
     // the focus-before-change race that silently discarded captures (the picker
-    // would flash open and immediately close).
+    // would flash open and immediately close). The delay is deliberately long
+    // (800ms): on real devices the `change` event can arrive well after focus
+    // when the user presses checkmark/confirm on a large photo/video — a short
+    // timer would misread the confirm as a cancel, drop the file, and force a
+    // second camera session with Send/Post never appearing.
     const onFocus = () => {
       setTimeout(() => {
         if (!done && (!input.files || input.files.length === 0)) finish(null);
-      }, 250);
+      }, 800);
     };
     input.onchange = () => finish(input.files && input.files[0] ? input.files[0] : null);
+    // Modern browsers fire `cancel` when the picker is dismissed without a
+    // choice — treat it as cancel directly instead of waiting on focus.
+    try { input.oncancel = () => finish(null); } catch { /* older browsers */ }
     window.addEventListener("focus", onFocus);
     document.body.appendChild(input);
     input.click();
@@ -138,7 +145,15 @@ export async function openNativeCamera(type = "photo") {
 export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onSendChatTo, onStatusBuilder, chats = [] }) {
   const { t } = useTheme();
   const [step, setStep] = useState("type"); // "type" | "capturing" | "chooser" | "pick"
+  // Sheet state machine: IDLE(closed) → CAMERA_OPEN(capturing) → CAPTURED +
+  // PREVIEW(chooser/pick) → SEND | POST_STATUS(runSend). CAPTURED/PREVIEW can
+  // NEVER auto-return to CAMERA_OPEN: the only path back is the explicit
+  // Retake button in the chooser (or the in-capturing mode switch). Capture
+  // completions and focus/resume events never call startCapture.
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false); // single-flight guard: `busy` state is stale across rapid taps
+  const seqRef = useRef(0); // capture session id: stale OS-camera resolutions are ignored
+  const openEdgeRef = useRef(false); // true while handling one open session: effect never refires mid-session
   const [pendingFile, setPendingFile] = useState(null);
   const [captureType, setCaptureType] = useState("photo");
   const [captureError, setCaptureError] = useState("");
@@ -146,9 +161,24 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
   const cancelledRef = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      // Sheet closed: poison any in-flight capture AND reset the edge latch so
+      // the next open starts exactly one fresh session.
+      seqRef.current++;
+      busyRef.current = false;
+      openEdgeRef.current = false;
+      return;
+    }
+    // Parent re-renders (focus/visibility bumps, list updates) must NOT restart
+    // the capture while a session is already running or a file is captured —
+    // only the closed→open EDGE starts a session. This is the reopen-loop fix:
+    // previously any remount/re-fire re-invoked startCapture and stacked a
+    // second OS camera session behind the first confirm.
+    if (openEdgeRef.current) return;
+    openEdgeRef.current = true;
     cancelledRef.current = false;
     setBusy(false);
+    busyRef.current = false;
     setPendingFile(null);
     setCaptureError("");
     setCaptureType("photo");
@@ -164,6 +194,7 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
       setStep("type");
     }
     return () => { cancelledRef.current = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Object URL for the captured file preview. Revoked whenever the file
@@ -179,35 +210,62 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
   if (!open) return null;
 
   const startCapture = async (type) => {
-    if (busy) return;
+    // Ref guard (NOT the `busy` state): two rapid taps before re-render would
+    // both see stale `busy === false` and stack two OS camera sessions — the
+    // second session surfacing right after the first confirm (the reopen loop).
+    if (busyRef.current) return;
+    busyRef.current = true;
+    const mySeq = ++seqRef.current;
     setBusy(true);
     setCaptureError("");
     setCaptureType(type);
     setStep("capturing");
     let file = null;
+    let permDenied = false;
     try {
       file = await openNativeCamera(type);
-    } catch {
+    } catch (e) {
       file = null;
-      if (!cancelledRef.current) {
+      permDenied = e?.code === "PERMISSION_DENIED";
+      if (!cancelledRef.current && mySeq === seqRef.current) {
         setCaptureError(
-          "Couldn't open the camera. Allow camera access in your browser or system settings, then try again."
+          e?.code === "PERMISSION_DENIED" && e?.message
+            ? e.message
+            : "Couldn't open the camera. Allow camera access in your browser or system settings, then try again."
         );
       }
     }
-    if (cancelledRef.current) { setBusy(false); return; }
+    // A newer session (retake / close / reopen) superseded this one, or the
+    // sheet unmounted: drop the stale resolution — it must never overwrite the
+    // current file or restart the camera.
+    if (cancelledRef.current || mySeq !== seqRef.current) { setBusy(false); busyRef.current = false; return; }
     setBusy(false);
-    if (!file) { setStep("type"); return; }
+    busyRef.current = false;
+    if (!file || file.size === 0) {
+      // Cancel OR empty clip: back to the chooser with guidance. NEVER
+      // auto-reopen — the user explicitly taps Photo/Video/Retake to retry.
+      if (file && file.size === 0 && !permDenied) {
+        setCaptureError("That capture was empty — nothing was saved. Try again.");
+      }
+      setStep("type");
+      return;
+    }
     setPendingFile(file);
     setStep("chooser");
   };
 
   const runSend = async (fn, file) => {
     if (!fn || !file) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setCaptureError("");
-    try { await fn(file); } catch { setCaptureError("Couldn't send that capture. Please try again."); setBusy(false); return; }
+    // The File is passed directly (already stashed in state) — the sheet only
+    // closes AFTER the handler resolves, so Send/Post can never close the
+    // sheet before the file is stashed.
+    try { await fn(file); } catch { setCaptureError("Couldn't send that capture. Please try again."); setBusy(false); busyRef.current = false; return; }
     setBusy(false);
+    busyRef.current = false;
     onClose();
   };
 

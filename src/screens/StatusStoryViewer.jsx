@@ -955,7 +955,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       {bgMusic && (
         <div
           className={musicState === "playing" ? "" : "nextext-eq-paused"}
-          style={{ position: "absolute", top: 52, right: 12, zIndex: 11, maxWidth: 220, display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 14, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.14)", pointerEvents: "none" }}
+          style={{ position: "absolute", top: 100, right: 12, zIndex: 11, maxWidth: 220, display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 14, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.14)", pointerEvents: "none" }}
           onTouchStart={(e) => e.stopPropagation()}
           onTouchEnd={(e) => e.stopPropagation()}
         >
@@ -994,7 +994,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
           onClick={(e) => { e.stopPropagation(); unlockMusicPlayback(); }}
           onTouchStart={(e) => e.stopPropagation()}
           onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); unlockMusicPlayback(); }}
-          style={{ position: "absolute", top: 104, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+          style={{ position: "absolute", top: 148, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
         >
           <Volume2 size={14} color="#fff" />
           Tap to play music
@@ -1002,7 +1002,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       )}
       {bgMusic && musicState === "unavailable" && (
         <div
-          style={{ position: "absolute", top: 104, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)", fontSize: 11.5, fontWeight: 600, pointerEvents: "none" }}
+          style={{ position: "absolute", top: 148, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)", fontSize: 11.5, fontWeight: 600, pointerEvents: "none" }}
         >
           Music unavailable for this track
         </div>

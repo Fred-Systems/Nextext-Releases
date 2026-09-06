@@ -936,7 +936,8 @@ export default function StatusBuilderNew(props) {
     display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
     padding: "8px 4px", borderRadius: 12, cursor: "pointer", flex: "1 1 0",
     background: active ? t.primaryLight : "transparent", color: active ? t.primary : t.text,
-    border: "none", fontSize: 10, fontWeight: 700, minWidth: 0,
+    border: "none", fontSize: 10, fontWeight: 700, minWidth: 54, minHeight: 48,
+    flexShrink: 0,
   });
 
   // ══════════ ENTRY ══════════
@@ -950,13 +951,13 @@ export default function StatusBuilderNew(props) {
     return (
       <div style={shell}>
         <div style={phone}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: `1px solid ${t.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
             <button onClick={() => onClose?.()} aria-label="Close status builder" style={{ background: "transparent", border: "none", cursor: "pointer", padding: 4 }}>
               <X size={22} color={t.text} />
             </button>
             <span style={{ fontWeight: 800, fontSize: 18 }}>Create Status</span>
           </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 20 }}>
             <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 16, textAlign: "center" }}>Share a moment for the next 24 hours</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               {cards.map((c) => (
@@ -1000,13 +1001,13 @@ export default function StatusBuilderNew(props) {
     return (
       <div style={shell}>
         <div style={phone}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: `1px solid ${t.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
             <button onClick={handleBack} aria-label="Back to editor" style={{ background: "transparent", border: "none", cursor: "pointer", padding: 4 }}>
               <ChevronLeft size={24} color={t.text} />
             </button>
             <span style={{ fontWeight: 800, fontSize: 18 }}>Final preview</span>
           </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 16 }}>
             <div style={{ borderRadius: 16, overflow: "hidden", background: "#000", minHeight: 220, maxHeight: 380, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
               {mode === "photo" && activePhoto && (
                 <img src={activePhoto.url} alt="Status preview" style={{ width: "100%", maxHeight: 380, objectFit: "contain", filter: liveFilterCss(), transform: `rotate(${activeEdits.rotate || 0}deg)` }} />
@@ -1074,10 +1075,10 @@ export default function StatusBuilderNew(props) {
             <ToggleRow t={t} icon={<MessageCircle size={17} color={t.primary} />} title="Hide comments" sub="Disable comments on this status" value={commentsHidden} onToggle={() => setCommentsHidden((v) => !v)} label="hide comments" />
             {postError && <div style={{ marginTop: 12, color: "#FF3B30", fontSize: 13, textAlign: "center" }}>{postError}</div>}
           </div>
-          <div style={{ padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", borderTop: `1px solid ${t.border}` }}>
+          <div style={{ padding: "12px 16px calc(12px + env(safe-area-inset-bottom))", borderTop: `1px solid ${t.border}`, flexShrink: 0 }}>
             <button
               onClick={handlePost} disabled={posting || !canPost()} aria-label="Post status"
-              style={{ width: "100%", padding: "14px 0", borderRadius: 14, border: "none", background: posting || !canPost() ? t.border : t.primary, color: "#fff", fontWeight: 800, fontSize: 16, cursor: posting || !canPost() ? "default" : "pointer", opacity: posting || !canPost() ? 0.6 : 1 }}
+              style={{ width: "100%", padding: "14px 0", minHeight: 52, borderRadius: 14, border: "none", background: posting || !canPost() ? t.border : t.primary, color: "#fff", fontWeight: 800, fontSize: 16, cursor: posting || !canPost() ? "default" : "pointer", opacity: posting || !canPost() ? 0.6 : 1 }}
             >
               {posting ? (postProgress || "Posting…") : "Post Status"}
             </button>
@@ -1124,7 +1125,7 @@ export default function StatusBuilderNew(props) {
     <div style={shell}>
       <div style={phone}>
         {/* Top bar */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 12px", borderBottom: `1px solid ${t.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 12px", borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
           <button onClick={handleBack} aria-label="Back" style={{ background: "transparent", border: "none", cursor: "pointer", padding: 6 }}>
             <ChevronLeft size={24} color={t.text} />
           </button>
@@ -1146,7 +1147,7 @@ export default function StatusBuilderNew(props) {
         </div>
 
         {/* Canvas */}
-        <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column" }}>
           <div
             ref={tool === "draw" ? drawBoxRef : null}
             style={{
@@ -1307,7 +1308,7 @@ export default function StatusBuilderNew(props) {
         </div>
 
         {/* Bottom toolbar */}
-        <div style={{ display: "flex", gap: 2, padding: "8px 10px calc(10px + env(safe-area-inset-bottom))", borderTop: `1px solid ${t.border}`, background: t.surface, borderRadius: "18px 18px 0 0" }}>
+        <div role="toolbar" aria-label="Status editing tools" style={{ display: "flex", gap: 2, overflowX: "auto", flexShrink: 0, padding: "8px 10px calc(10px + env(safe-area-inset-bottom))", borderTop: `1px solid ${t.border}`, background: t.surface, borderRadius: "18px 18px 0 0" }}>
           {tools.map((tb) => (
             <button key={tb.id} onClick={() => setTool((cur) => (cur === tb.id ? null : tb.id))} aria-label={`${tb.label} tool`} style={toolBtn(tool === tb.id)}>
               {tb.icon}
@@ -1391,14 +1392,16 @@ export default function StatusBuilderNew(props) {
   // ── Tool panels ──
   function renderToolPanel() {
     if (!tool) {
-      if (mode === "text") {
-        return (
-          <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center", padding: "2px 4px" }}>
-            Use the toolbar below — Text, Emoji, Background, Music — to style your status.
-          </div>
-        );
-      }
-      return null;
+      // Hint must name ONLY the tools actually rendered in the bottom
+      // toolbar (Music is gated on provider access, so never promise it
+      // unconditionally — otherwise the hint advertises UI that isn't there).
+      const names = tools.map((tb) => tb.label).join(", ");
+      if (!names) return null;
+      return (
+        <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center", padding: "2px 4px" }}>
+          Use the toolbar below — {names} — to style your status.
+        </div>
+      );
     }
     const panel = { padding: 12, borderRadius: 14, background: t.surface, border: `1px solid ${t.border}` };
     if (tool === "text") {
@@ -1511,7 +1514,7 @@ export default function StatusBuilderNew(props) {
               <button key={em} onClick={() => addTextSticker(em)} aria-label={`Add emoji ${em}`} style={{ fontSize: 24, padding: 6, background: "transparent", border: "none", cursor: "pointer", borderRadius: 8 }}>{em}</button>
             ))}
           </div>
-          <div style={{ fontSize: 11, color: t.textMuted, marginTop: 8 }}>Emoji are added as draggable, resizable canvas text.</div>
+          <div style={{ fontSize: 11, color: t.textMuted, marginTop: 8 }}>{mode === "text" ? "Emoji are appended to your message." : "Emoji are added as draggable, resizable canvas text."}</div>
         </div>
       );
     }
