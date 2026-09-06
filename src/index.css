@@ -342,3 +342,16 @@ body.nextext-no-bounce .nx-scroll {
 #nextext-app-shell.nx-rounded [style*="border-radius:50%"] {
   border-radius: 38% !important;
 }
+
+/* ── Music overlay equalizer (animated while status music plays) ── */
+@keyframes nextext-eq-bounce {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+.nextext-eq-bar {
+  transform-origin: bottom;
+  animation: nextext-eq-bounce 0.9s ease-in-out infinite;
+}
+.nextext-eq-paused .nextext-eq-bar {
+  animation-play-state: paused;
+}

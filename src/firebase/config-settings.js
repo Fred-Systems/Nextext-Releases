@@ -143,6 +143,40 @@ export function resolveMusicDownloadAllowed(globalSettings, userDoc) {
   return globalEnabled;
 }
 
+// ── General app media storage provider ──
+// Authoritative value lives in Firestore config/globalSettings.active_storage_provider.
+// Cloudinary is the intended default (NOT Supabase). Never fall back to Supabase.
+export function getActiveStorageProvider(globalSettings) {
+  return globalSettings?.active_storage_provider === "supabase" ? "supabase" : "cloudinary";
+}
+
+// ── Jewish Status downloads (mirrors the music-download permission architecture) ──
+// globalSettings.jewishStatuses.downloads.enabled (default OFF) + per-user
+// `jewishStatusDownloadsOverride` ("inherit" | "enabled" | "disabled").
+export function resolveJewishStatusDownloadAllowed(globalSettings, userDoc) {
+  const globalEnabled = globalSettings?.jewishStatuses?.downloads?.enabled === true;
+  const override = userDoc?.jewishStatusDownloadsOverride || "inherit";
+  if (override === "enabled") return true;
+  if (override === "disabled") return false;
+  return globalEnabled;
+}
+
+// ── Jewish Status attribution (admin-controllable) ──
+export function resolveJewishStatusAttribution(globalSettings) {
+  const a = globalSettings?.jewishStatuses?.attribution || {};
+  return {
+    show: a.show !== false, // default SHOW
+    text: a.text || "Statuses courtesy of JewishStatus & YidStatus. This app is not affiliated with either service.",
+    jewishStatusLink: a.jewishStatusLink || "https://jewishstatus.com",
+    yidStatusLink: a.yidStatusLink || "https://yidstatus.com",
+  };
+}
+
+// ── Google Sign-In visibility (default HIDDEN — provider not configured) ──
+export function resolveGoogleSignInVisible(globalSettings) {
+  return globalSettings?.auth?.googleSignIn === "show";
+}
+
 // ── Announcements ──
 // Admin posts a site-wide announcement; it shows at the top of every user's chat
 // list until the user dismisses it (dismissal is per-user, stored on their doc).

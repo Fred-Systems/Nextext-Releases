@@ -82,6 +82,7 @@ import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, 
 import { APP_VERSION } from "./version";
 import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
 import { updateGlobalSettings, useGlobalSettings, subscribe as subscribeGlobalSettings, getQuotaSnapshot } from "./firebase/config-settings";
+import AdminPanelGate from "./components/AdminPanelGate";
 import { BUBBLE_STYLE_ORDER, BUBBLE_STYLE_LABELS, getBubbleStyle, setBubbleStyle, resolveBubble } from "./theme/bubbleStyles";
 import { setCloudinaryProxyEnabled } from "./media/mediaProxy";
 import { runPreWarmPing } from "./firebase/prewarm";
@@ -786,6 +787,17 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
   const toggleSection = (key) => setOpenSections((prev) => ({ ...(prev || {}), [key]: !(prev?.[key]) }));
 
+  // ── Hyper Customization first-time explanation ──
+  const [showHyperInfo, setShowHyperInfo] = useState(false);
+  const [hyperDontShowAgain, setHyperDontShowAgain] = useState(false);
+  const toggleHyper = () => {
+    const wasOpen = !!openSections?.hyper;
+    toggleSection("hyper");
+    if (!wasOpen && localStorage.getItem("nextext_hypercustom_seen") !== "1") {
+      setShowHyperInfo(true);
+    }
+  };
+
   const handleGlobalWallpaper = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -853,7 +865,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
       </div>
     );
   };
-  const SectionCard = useMemo(() => ({ title, emoji, children, sectionKey }) => {
+  const SectionCard = useMemo(() => ({ title, emoji, children, sectionKey, onToggle }) => {
     const ctx = React.useContext(SettingsSearchContext) || { query: "", revamped: false };
     const q = (ctx.query || "").trim().toLowerCase();
     // When the user hides emojis (Appearance & Interface), drop the decorative
@@ -879,7 +891,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
       // deliberately different look from the boxed classic cards.
       return (
         <div style={{ marginBottom: 22, ...(hide ? { display: "none" } : null) }}>
-          <div onClick={sectionKey ? () => toggleSection(sectionKey) : undefined} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, cursor: sectionKey ? "pointer" : "default", padding: "6px 4px" }}>
+          <div onClick={sectionKey ? () => (onToggle ? onToggle() : toggleSection(sectionKey)) : undefined} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, cursor: sectionKey ? "pointer" : "default", padding: "6px 4px" }}>
             <span style={{ fontSize: 18, width: 26, textAlign: "center" }}>{showEmoji ? emoji : ""}</span>
             <span style={{ fontWeight: 800, fontSize: 16, color: t.text, flex: 1, letterSpacing: 0.2 }}>{title}</span>
             {sectionKey && <span style={{ fontSize: 12, color: t.textMuted, transition: "transform 0.2s", transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>⌄</span>}
@@ -899,7 +911,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     const headerColor = (bgFirstHex && bgFirstHex > "7") ? "#1E1E1E" : t.text;
     return (
       <div style={{ marginBottom: 18, ...(hide ? { display: "none" } : null) }}>
-        <div onClick={sectionKey ? () => toggleSection(sectionKey) : undefined} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, cursor: sectionKey ? "pointer" : "default" }}>
+        <div onClick={sectionKey ? () => (onToggle ? onToggle() : toggleSection(sectionKey)) : undefined} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, cursor: sectionKey ? "pointer" : "default" }}>
           <span style={{ fontSize: 14 }}>{showEmoji ? emoji : ""}</span>
           <span style={{ fontWeight: 700, fontSize: 14, color: headerColor, flex: 1 }}>{title}</span>
           {sectionKey && <span style={{ fontSize: 11, color: t.textMuted, transition: "transform 0.2s", transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>}
@@ -1390,48 +1402,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               >Save &amp; preview (restarts app to show launch screen)</button>
             </div>
 
-            {/* More rounded UI */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Rounded UI</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Use softer, more rounded corners on cards, buttons and bubbles.</div>
-              </div>
-              <div
-                onClick={() => setMoreRounded(!moreRounded)}
-                style={{ width: 46, height: 26, borderRadius: 13, background: moreRounded ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: moreRounded ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
-
-            {/* Hide my verified badge */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Hide my verified badge</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>If you've been verified, hide the blue check from your profile and search results.</div>
-              </div>
-              <div
-                onClick={() => { const next = !userDoc?.hideVerified; try { updateDoc(doc(db, "users", auth.user.uid), { hideVerified: next }); } catch (e) { setSendError?.("Couldn't update: " + e.message); } }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: userDoc?.hideVerified ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: userDoc?.hideVerified ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
-
-            {/* Dark lettering (inverted text on light bg) */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Dark lettering</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Force dark text/icons on light backgrounds (inverted contrast).</div>
-              </div>
-              <div
-                onClick={() => { const next = !darkLettering; setDarkLettering(next); localStorage.setItem("nextext_dark_lettering", next ? "on" : "off"); }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: darkLettering ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: darkLettering ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
-
             {/* Dark theme (dark bg, light text) */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
               <div style={{ flex: 1 }}>
@@ -1614,144 +1584,9 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
                 Tip: 50 is the sweet spot for speed. Pick "All" only if you need the full history visible at once.
               </div>
             </div>
-            {/* Hide app version number */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Hide app version</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Don't show the version number (e.g. v1.6.45) in the top-right of Settings.</div>
-              </div>
-              <div
-                onClick={() => { const next = !hideVersion; setHideVersion(next); localStorage.setItem("nextext_hide_version", next ? "on" : "off"); }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: hideVersion ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: hideVersion ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
-
-            {/* Lock + button position */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Lock + button position</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Prevent the + button from being moved by accident.</div>
-              </div>
-              <div
-                onClick={() => { const next = localStorage.getItem("nextext_fab_locked") === "on"; localStorage.setItem("nextext_fab_locked", next ? "off" : "on"); forceSettingsRerender(); }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_fab_locked") === "on" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_fab_locked") === "on" ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
-
-            {/* Lock AI widget position */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Lock AI widget position</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Prevent the AI widget from being moved by accident.</div>
-              </div>
-              <div
-                onClick={() => { const next = localStorage.getItem("nextext_ai_locked") === "on"; localStorage.setItem("nextext_ai_locked", next ? "off" : "on"); forceSettingsRerender(); }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_ai_locked") === "on" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_ai_locked") === "on" ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
-
-            {/* Reset FAB & AI positions */}
-            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-              <button
-                onClick={() => { localStorage.removeItem("nextext_fab_pos"); localStorage.removeItem("nextext_ai_pos"); forceSettingsRerender(); }}
-                style={{ width: "100%", padding: "10px 0", borderRadius: 10, border: "none", background: t.bg, color: t.text, fontWeight: 600, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: `1px solid ${t.border}` }}
-              >
-                <RefreshCw size={16} />
-                <span>Reset + button & AI widget to default positions</span>
-              </button>
-            </div>
           </>))}
 
-          {isAdmin && (() => {
-            const nativeGalleryOn = sysConfig?.nativeGallery === true;
-            return (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Native photo picker (Gallery)</div>
-                  <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Open Android's built-in gallery instead of the Files app when picking media.</div>
-                </div>
-                <div
-                  onClick={() => { setSystemConfig({ nativeGallery: !nativeGalleryOn }, myUid); }}
-                  style={{ width: 46, height: 26, borderRadius: 13, background: nativeGalleryOn ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-                >
-                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: nativeGalleryOn ? 23 : 3, transition: "left 0.15s" }} />
-                </div>
-              </div>
-            );
-          })()}
-
-          {renderSub("Message Actions", (<>
-            {/* Forward arrow placement */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Forward arrows outside messages</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Show a forward button beside each message. Turn off to keep it inside the message bubble.</div>
-              </div>
-              <div
-                onClick={() => { const next = localStorage.getItem("nextext_forward_arrows_outside") !== "false"; const val = next ? "off" : "on"; localStorage.setItem("nextext_forward_arrows_outside", val); forceSettingsRerender(); }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_forward_arrows_outside") !== "false" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_forward_arrows_outside") !== "false" ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
-            <ActionChips
-              title="Buttons outside messages"
-              desc="Choose which action buttons appear beside each message. Forward is always shown."
-              storageKey="nextext_outside_actions"
-              fallback={userDoc?.aiApproved ? ["forward", "askai"] : ["forward"]}
-              lockedKeys={[]}
-              options={[
-                { key: "forward", label: "Forward" },
-                { key: "copy", label: "Copy" },
-                ...(userDoc?.aiApproved ? [{ key: "askai", label: "Ask AI" }] : []),
-              ]}
-            />
-            <ActionChips
-              title="Long-press menu actions"
-              desc="Choose which actions appear when you hold a message."
-              storageKey="nextext_longpress_actions"
-              fallback={userDoc?.aiApproved ? ["reply", "copy", "forward", "delete", "askai"] : ["reply", "copy", "forward", "delete"]}
-              lockedKeys={[]}
-              options={[
-                { key: "reply", label: "Reply" },
-                { key: "copy", label: "Copy" },
-                { key: "forward", label: "Forward" },
-                { key: "delete", label: "Delete" },
-                ...(userDoc?.aiApproved ? [{ key: "askai", label: "Ask AI" }] : []),
-              ]}
-            />
-          </>))}
           {renderSub("Text, Fonts & Animations", (<>
-            {/* Fullscreen mode toggle */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0" }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Full Screen Mode</div>
-                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Hide status bar and navigation for immersive experience. (Only available on some devices)</div>
-              </div>
-              <div
-                onClick={() => {
-                  const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
-                  if (isFull) {
-                    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
-                    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-                  } else {
-                    const el = document.documentElement;
-                    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
-                    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-                  }
-                }}
-                style={{ width: 46, height: 26, borderRadius: 13, background: (document.fullscreenElement || document.webkitFullscreenElement) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
-              >
-                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (document.fullscreenElement || document.webkitFullscreenElement) ? 23 : 3, transition: "left 0.15s" }} />
-              </div>
-            </div>
-
             {/* Font */}
             <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
               <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 6 }}>Font</div>
@@ -1787,87 +1622,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               </label>
             </div>
 
-            {/* Message bubble width */}
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Message width</div>
-              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>How much of the screen each message fills.</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {[
-                  { id: "compact", label: "Compact" },
-                  { id: "standard", label: "Standard" },
-                  { id: "wide", label: "Wide" },
-                ].map((opt) => (
-                  <div
-                    key={opt.id}
-                    onClick={() => setMessageWidth(opt.id)}
-                    style={{
-                      flex: 1,
-                      padding: "7px 0",
-                      textAlign: "center",
-                      borderRadius: 8,
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      background: messageWidth === opt.id ? t.primary : t.bg,
-                      color: messageWidth === opt.id ? t.bubbleMeText : t.text,
-                      border: `1px solid ${messageWidth === opt.id ? t.primary : t.border}`,
-                    }}
-                  >
-                    {opt.label}
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Pinch to zoom chat text</span>
-              <Toggle on={pinchZoomOn} onClick={() => { const next = !pinchZoomOn; setPinchZoomOn(next); localStorage.setItem("nextext_pinch_zoom", next ? "true" : "false"); }} />
-            </div>
-            {pinchZoomOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>In any chat, pinch the message list to make text bigger or smaller.</div>}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Animate tab taps (animateOnTap)</span>
-              <Toggle on={animateOnTap} onClick={() => setAnimateOnTap(!animateOnTap)} />
-            </div>
-            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Force page animation when tapping bottom or top bar navigation buttons. (Default: off)</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Page swipe animation</span>
-              <Toggle on={swipeAnimationOn} onClick={() => setSwipeAnimationOn(!swipeAnimationOn)} />
-            </div>
-            {swipeAnimationOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Slide animation when swiping between tabs.</div>}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Overscroll bounce</span>
-              <Toggle on={swipeBounce} onClick={() => setSwipeBounce(!swipeBounce)} />
-            </div>
-            {swipeBounce && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Shows the bounce/glow indicator when you scroll past the top or bottom of a list, and when swiping past the first or last tab.</div>}
-            {swipeAnimationOn && (
-              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                {[
-                  { id: "slow", label: "Slow" },
-                  { id: "normal", label: "Normal" },
-                  { id: "fast", label: "Fast" },
-                ].map((opt) => (
-                  <div
-                    key={opt.id}
-                    onClick={() => {
-                      setSwipeSpeed(opt.id);
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: "7px 0",
-                      textAlign: "center",
-                      borderRadius: 8,
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      background: swipeSpeed === opt.id ? t.primary : t.bg,
-                      color: swipeSpeed === opt.id ? t.bubbleMeText : t.text,
-                      border: `1px solid ${swipeSpeed === opt.id ? t.primary : t.border}`,
-                    }}
-                  >
-                    {opt.label}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
           </>))}
 
@@ -1957,34 +1711,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
           </>))}
         {renderSub("Lists & Other", (<>
           <Row icon={<MessageSquare size={18} color={t.primary} />} label="Link previews" sub={linkPreviewsOn ? "On" : "Off"} right={<Toggle on={linkPreviewsOn} onClick={() => { const next = !linkPreviewsOn; setLinkPreviewsOn(next); localStorage.setItem("nextext_link_previews", next ? "on" : "off"); }} />} />
-          <Row icon={<CircleDot size={18} color={t.primary} />} label="Scroll-to-bottom button" sub={showScrollDown ? "On" : "Off"} right={<Toggle on={showScrollDown} onClick={() => setShowScrollDown(!showScrollDown)} />} />
-          {showScrollDown && (
-            <div style={{ padding: "0 0 8px 36px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>Button size</span>
-                <span style={{ fontSize: 12.5, fontWeight: 700, color: t.primary, minWidth: 40 }}>{Math.round((scrollDownSize / 22) * 100)}%</span>
-              </div>
-              <input type="range" min="14" max="40" step="1" value={scrollDownSize} onChange={(e) => setScrollDownSize(Number(e.target.value))} style={{ width: "100%", accentColor: t.primary }} />
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>Position</span>
-              </div>
-              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                {[["left", "Left"], ["center", "Center"], ["right", "Right"]].map(([key, label]) => (
-                  <div key={key} onClick={() => setScrollDownPos(key)} style={{ flex: 1, padding: "7px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: scrollDownPos === key ? t.primary : t.bg, color: scrollDownPos === key ? t.bubbleMeText : t.text, border: `1px solid ${scrollDownPos === key ? t.primary : t.border}` }}>{label}</div>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => { setScrollDownSize(22); setScrollDownPos("center"); }}
-                style={{ marginTop: 10, display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600, color: t.primary, background: "transparent", border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}
-              >
-                <RotateCcw size={13} /> Reset to default
-              </button>
-            </div>
-          )}
-          <Row icon={<CircleDot size={18} color={t.primary} />} label="Animated scroll entry" sub={animatedScrollEntry ? "Smooth jump" : "Instant mount"} right={<Toggle on={animatedScrollEntry} onClick={() => { const next = !animatedScrollEntry; setAnimatedScrollEntry(next); localStorage.setItem("nextext_animated_scroll_entry", next ? "true" : "false"); }} />} />
           <Row icon={<Users size={18} color={t.primary} />} label="Compact chat list" sub={compactList ? "Denser rows" : "Standard spacing"} right={<Toggle on={compactList} onClick={() => { const next = !compactList; setCompactList(next); localStorage.setItem("nextext_compact_list", next ? "true" : "false"); }} />} />
-          <Row icon={<Smile size={18} color={t.primary} />} label="Large emoji-only messages" sub={emojiBigOn ? "Emoji-only messages shown big" : "Same size as text"} right={<Toggle on={emojiBigOn} onClick={() => { const next = !emojiBigOn; setEmojiBigOn(next); localStorage.setItem("nextext_emoji_big", next ? "on" : "off"); }} />} />
           <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
             <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Sort contacts</div>
             <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Ordering used in the contact list on the Chats tab.</div>
@@ -2009,7 +1736,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               ))}
             </div>
           </div>
-          <Row icon={<Users size={18} color={t.primary} />} label="Hide bottom navigation" sub={hideNav ? "Hidden" : "Visible"} right={<Toggle on={hideNav} onClick={() => setHideNav(!hideNav)} />} />
           <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
             <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Sort chats</div>
             <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>Ordering used in the chat list on the Chats tab.</div>
@@ -2035,7 +1761,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </div>
           </div>
           <Row icon={<Search size={18} color={t.primary} />} label="Show search button" sub={searchMode === "button" ? "Search icon hides bar" : "Search bar always visible"} right={<Toggle on={searchMode === "button"} onClick={() => { const next = searchMode === "button" ? "visible" : "button"; setSearchMode(next); localStorage.setItem("nextext_search_mode", next); }} />} />
-          <Row icon={<Users size={18} color={t.primary} />} label="Show top bar" sub={topBarVisible ? "Visible" : "Hidden"} right={<Toggle on={topBarVisible} onClick={() => { const next = !topBarVisible; setTopBarVisible(next); localStorage.setItem("nextext_top_bar_visible", String(next)); }} />} />
           </>))}
         </SectionCard>
 
@@ -2223,6 +1948,312 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </SectionCard>
           );
         })()}
+
+        {/* ═══ HYPER CUSTOMIZATION ═══ */}
+        <SectionCard title="Hyper Customization" emoji="🧪" sectionKey="hyper" onToggle={toggleHyper}>
+            <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 6 }}>
+              Highly optional, fine-grained controls for users who want to tweak exactly how the app looks and behaves.
+            </div>
+
+            {/* More rounded UI */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Rounded UI</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Use softer, more rounded corners on cards, buttons and bubbles.</div>
+              </div>
+              <div
+                onClick={() => setMoreRounded(!moreRounded)}
+                style={{ width: 46, height: 26, borderRadius: 13, background: moreRounded ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: moreRounded ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Hide my verified badge */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Hide my verified badge</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>If you've been verified, hide the blue check from your profile and search results.</div>
+              </div>
+              <div
+                onClick={() => { const next = !userDoc?.hideVerified; try { updateDoc(doc(db, "users", auth.user.uid), { hideVerified: next }); } catch (e) { setSendError?.("Couldn't update: " + e.message); } }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: userDoc?.hideVerified ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: userDoc?.hideVerified ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Dark lettering (inverted text on light bg) */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Dark lettering</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Force dark text/icons on light backgrounds (inverted contrast).</div>
+              </div>
+              <div
+                onClick={() => { const next = !darkLettering; setDarkLettering(next); localStorage.setItem("nextext_dark_lettering", next ? "on" : "off"); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: darkLettering ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: darkLettering ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Hide app version number */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Hide app version</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Don't show the version number (e.g. v1.6.45) in the top-right of Settings.</div>
+              </div>
+              <div
+                onClick={() => { const next = !hideVersion; setHideVersion(next); localStorage.setItem("nextext_hide_version", next ? "on" : "off"); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: hideVersion ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: hideVersion ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Lock + button position */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Lock + button position</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Prevent the + button from being moved by accident.</div>
+              </div>
+              <div
+                onClick={() => { const next = localStorage.getItem("nextext_fab_locked") === "on"; localStorage.setItem("nextext_fab_locked", next ? "off" : "on"); forceSettingsRerender(); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_fab_locked") === "on" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_fab_locked") === "on" ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Lock AI widget position */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Lock AI widget position</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Prevent the AI widget from being moved by accident.</div>
+              </div>
+              <div
+                onClick={() => { const next = localStorage.getItem("nextext_ai_locked") === "on"; localStorage.setItem("nextext_ai_locked", next ? "off" : "on"); forceSettingsRerender(); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_ai_locked") === "on" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_ai_locked") === "on" ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Reset FAB & AI positions */}
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <button
+                onClick={() => { localStorage.removeItem("nextext_fab_pos"); localStorage.removeItem("nextext_ai_pos"); forceSettingsRerender(); }}
+                style={{ width: "100%", padding: "10px 0", borderRadius: 10, border: "none", background: t.bg, color: t.text, fontWeight: 600, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: `1px solid ${t.border}` }}
+              >
+                <RefreshCw size={16} />
+                <span>Reset + button &amp; AI widget to default positions</span>
+              </button>
+            </div>
+
+            {isAdmin && (() => {
+              const nativeGalleryOn = sysConfig?.nativeGallery === true;
+              return (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Native photo picker (Gallery)</div>
+                    <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Open Android's built-in gallery instead of the Files app when picking media.</div>
+                  </div>
+                  <div
+                    onClick={() => { setSystemConfig({ nativeGallery: !nativeGalleryOn }, myUid); }}
+                    style={{ width: 46, height: 26, borderRadius: 13, background: nativeGalleryOn ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+                  >
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: nativeGalleryOn ? 23 : 3, transition: "left 0.15s" }} />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Forward arrow placement */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Forward arrows outside messages</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Show a forward button beside each message. Turn off to keep it inside the message bubble.</div>
+              </div>
+              <div
+                onClick={() => { const next = localStorage.getItem("nextext_forward_arrows_outside") !== "false"; const val = next ? "off" : "on"; localStorage.setItem("nextext_forward_arrows_outside", val); forceSettingsRerender(); }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: localStorage.getItem("nextext_forward_arrows_outside") !== "false" ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_forward_arrows_outside") !== "false" ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+            <ActionChips
+              title="Buttons outside messages"
+              desc="Choose which action buttons appear beside each message. Forward is always shown."
+              storageKey="nextext_outside_actions"
+              fallback={userDoc?.aiApproved ? ["forward", "askai"] : ["forward"]}
+              lockedKeys={[]}
+              options={[
+                { key: "forward", label: "Forward" },
+                { key: "copy", label: "Copy" },
+                ...(userDoc?.aiApproved ? [{ key: "askai", label: "Ask AI" }] : []),
+              ]}
+            />
+            <ActionChips
+              title="Long-press menu actions"
+              desc="Choose which actions appear when you hold a message."
+              storageKey="nextext_longpress_actions"
+              fallback={userDoc?.aiApproved ? ["reply", "copy", "forward", "delete", "askai"] : ["reply", "copy", "forward", "delete"]}
+              lockedKeys={[]}
+              options={[
+                { key: "reply", label: "Reply" },
+                { key: "copy", label: "Copy" },
+                { key: "forward", label: "Forward" },
+                { key: "delete", label: "Delete" },
+                ...(userDoc?.aiApproved ? [{ key: "askai", label: "Ask AI" }] : []),
+              ]}
+            />
+
+            {/* Fullscreen mode toggle */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Full Screen Mode</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Hide status bar and navigation for immersive experience. (Only available on some devices)</div>
+              </div>
+              <div
+                onClick={() => {
+                  const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
+                  if (isFull) {
+                    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+                    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+                  } else {
+                    const el = document.documentElement;
+                    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+                    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+                  }
+                }}
+                style={{ width: 46, height: 26, borderRadius: 13, background: (document.fullscreenElement || document.webkitFullscreenElement) ? t.primary : t.border, position: "relative", cursor: "pointer", flexShrink: 0 }}
+              >
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: (document.fullscreenElement || document.webkitFullscreenElement) ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+            </div>
+
+            {/* Message bubble width */}
+            <div style={{ marginTop: 14, borderTop: `1px solid ${t.border}`, paddingTop: 13 }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 4 }}>Message width</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8 }}>How much of the screen each message fills.</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[
+                  { id: "compact", label: "Compact" },
+                  { id: "standard", label: "Standard" },
+                  { id: "wide", label: "Wide" },
+                ].map((opt) => (
+                  <div
+                    key={opt.id}
+                    onClick={() => setMessageWidth(opt.id)}
+                    style={{
+                      flex: 1,
+                      padding: "7px 0",
+                      textAlign: "center",
+                      borderRadius: 8,
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      background: messageWidth === opt.id ? t.primary : t.bg,
+                      color: messageWidth === opt.id ? t.bubbleMeText : t.text,
+                      border: `1px solid ${messageWidth === opt.id ? t.primary : t.border}`,
+                    }}
+                  >
+                    {opt.label}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Pinch to zoom chat text</span>
+              <Toggle on={pinchZoomOn} onClick={() => { const next = !pinchZoomOn; setPinchZoomOn(next); localStorage.setItem("nextext_pinch_zoom", next ? "true" : "false"); }} />
+            </div>
+            {pinchZoomOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>In any chat, pinch the message list to make text bigger or smaller.</div>}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Animate tab taps (animateOnTap)</span>
+              <Toggle on={animateOnTap} onClick={() => setAnimateOnTap(!animateOnTap)} />
+            </div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Force page animation when tapping bottom or top bar navigation buttons. (Default: off)</div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Page swipe animation</span>
+              <Toggle on={swipeAnimationOn} onClick={() => setSwipeAnimationOn(!swipeAnimationOn)} />
+            </div>
+            {swipeAnimationOn && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Slide animation when swiping between tabs.</div>}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: t.text }}>Overscroll bounce</span>
+              <Toggle on={swipeBounce} onClick={() => setSwipeBounce(!swipeBounce)} />
+            </div>
+            {swipeBounce && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Shows the bounce/glow indicator when you scroll past the top or bottom of a list, and when swiping past the first or last tab.</div>}
+
+            {swipeAnimationOn && (
+              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                {[
+                  { id: "slow", label: "Slow" },
+                  { id: "normal", label: "Normal" },
+                  { id: "fast", label: "Fast" },
+                ].map((opt) => (
+                  <div
+                    key={opt.id}
+                    onClick={() => {
+                      setSwipeSpeed(opt.id);
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: "7px 0",
+                      textAlign: "center",
+                      borderRadius: 8,
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      background: swipeSpeed === opt.id ? t.primary : t.bg,
+                      color: swipeSpeed === opt.id ? t.bubbleMeText : t.text,
+                      border: `1px solid ${swipeSpeed === opt.id ? t.primary : t.border}`,
+                    }}
+                  >
+                    {opt.label}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <Row icon={<CircleDot size={18} color={t.primary} />} label="Scroll-to-bottom button" sub={showScrollDown ? "On" : "Off"} right={<Toggle on={showScrollDown} onClick={() => setShowScrollDown(!showScrollDown)} />} />
+            {showScrollDown && (
+              <div style={{ padding: "0 0 8px 36px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>Button size</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: t.primary, minWidth: 40 }}>{Math.round((scrollDownSize / 22) * 100)}%</span>
+                </div>
+                <input type="range" min="14" max="40" step="1" value={scrollDownSize} onChange={(e) => setScrollDownSize(Number(e.target.value))} style={{ width: "100%", accentColor: t.primary }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: t.text }}>Position</span>
+                </div>
+                <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                  {[["left", "Left"], ["center", "Center"], ["right", "Right"]].map(([key, label]) => (
+                    <div key={key} onClick={() => setScrollDownPos(key)} style={{ flex: 1, padding: "7px 0", textAlign: "center", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: scrollDownPos === key ? t.primary : t.bg, color: scrollDownPos === key ? t.bubbleMeText : t.text, border: `1px solid ${scrollDownPos === key ? t.primary : t.border}` }}>{label}</div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setScrollDownSize(22); setScrollDownPos("center"); }}
+                  style={{ marginTop: 10, display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600, color: t.primary, background: "transparent", border: `1px solid ${t.border}`, borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}
+                >
+                  <RotateCcw size={13} /> Reset to default
+                </button>
+              </div>
+            )}
+
+            <Row icon={<CircleDot size={18} color={t.primary} />} label="Animated scroll entry" sub={animatedScrollEntry ? "Smooth jump" : "Instant mount"} right={<Toggle on={animatedScrollEntry} onClick={() => { const next = !animatedScrollEntry; setAnimatedScrollEntry(next); localStorage.setItem("nextext_animated_scroll_entry", next ? "true" : "false"); }} />} />
+
+            <Row icon={<Smile size={18} color={t.primary} />} label="Large emoji-only messages" sub={emojiBigOn ? "Emoji-only messages shown big" : "Same size as text"} right={<Toggle on={emojiBigOn} onClick={() => { const next = !emojiBigOn; setEmojiBigOn(next); localStorage.setItem("nextext_emoji_big", next ? "on" : "off"); }} />} />
+
+            <Row icon={<Users size={18} color={t.primary} />} label="Hide bottom navigation" sub={hideNav ? "Hidden" : "Visible"} right={<Toggle on={hideNav} onClick={() => setHideNav(!hideNav)} />} />
+
+            <Row icon={<Users size={18} color={t.primary} />} label="Show top bar" sub={topBarVisible ? "Visible" : "Hidden"} right={<Toggle on={topBarVisible} onClick={() => { const next = !topBarVisible; setTopBarVisible(next); localStorage.setItem("nextext_top_bar_visible", String(next)); }} />} />
+        </SectionCard>
+
       {resetPasswordModal && (
         <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => { setResetPasswordModal(false); setResetPasswordInput(""); }}>
           <div style={{ background: t.surface, borderRadius: 16, padding: 20, maxWidth: 350, width: "100%" }} onClick={(e) => e.stopPropagation()}>
@@ -2269,7 +2300,26 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </div>
           </div>
         </div>
-)}
+      )}
+
+      {showHyperInfo && (
+        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 72, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={() => setShowHyperInfo(false)}>
+          <div style={{ background: t.surface, borderRadius: 16, padding: 20, maxWidth: 340, width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 700, fontSize: 16, color: t.text, marginBottom: 10 }}>Hyper Customization</div>
+            <div style={{ fontSize: 13.5, color: t.text, lineHeight: 1.6, marginBottom: 14 }}>
+              Most people won't need these settings. They're for users who want very fine-grained control over how the app looks and behaves.
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, cursor: "pointer" }}>
+              <div onClick={() => setHyperDontShowAgain(!hyperDontShowAgain)} style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${hyperDontShowAgain ? t.primary : t.border}`, background: hyperDontShowAgain ? t.primary : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                {hyperDontShowAgain && <span style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>✓</span>}
+              </div>
+              <span style={{ fontSize: 13.5, color: t.text }}>Don't show again</span>
+            </label>
+            <button onClick={() => { if (hyperDontShowAgain) localStorage.setItem("nextext_hypercustom_seen", "1"); setShowHyperInfo(false); }} style={{ width: "100%", padding: "11px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Got it</button>
+          </div>
+        </div>
+      )}
+
       {credModal && createPortal(
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999999, padding: 20 }} onClick={() => !credBusy && setCredModal(null)}>
           <div style={{ background: t.surface, borderRadius: 16, padding: 18, width: "100%", maxWidth: 340, boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
@@ -4449,7 +4499,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       {screen === "parental" && <ParentalControlsScreen myUid={myUid} onBack={() => setScreen("settings")} />}
       {screen === "feedback" && <FeedbackScreen myUid={myUid} myUsername={auth.userDoc?.username} onBack={() => setScreen("settings")} />}
       {screen === "announcements" && <AnnouncementsScreen theme={t} onBack={() => setScreen("settings")} />}
-      {screen === "admin" && isAdmin && <AdminDashboard myUid={myUid} onBack={() => setScreen("settings")} />}
+      {screen === "admin" && isAdmin && (
+        <AdminPanelGate myUid={myUid}>
+          <AdminDashboard myUid={myUid} onBack={() => setScreen("settings")} />
+        </AdminPanelGate>
+      )}
       {screen === "iconPicker" && <IconPickerScreen onBack={() => setScreen("settings")} restrictions={auth.userDoc?.restrictions} isAdmin={isAdmin} myUid={myUid} />}
       {screen === "aiChat" && (
         <AIChatScreen myUid={myUid} onBack={() => setScreen("list")} />

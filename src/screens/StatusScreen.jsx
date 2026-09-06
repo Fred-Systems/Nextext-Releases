@@ -536,11 +536,16 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       // or YouTube videoId (Zemer) is streamed on-device by the viewer. Include
       // `provider` and `videoId` so the viewer knows how to play the track.
       const provider = track.source || musicProviderActive;
+      // Apple exposes only a 30s preview; Zemer maps to a full YouTube video.
+      const dur = track.durationSec ? Math.round(track.durationSec) : (provider === "apple" ? 30 : 0);
+      const maxSeg = provider === "apple" ? Math.min(dur || 30, 30) : (dur || 30);
       setBgMusic({
         ...track,
         provider,
         videoId: track.videoId || null,
         start: 0,
+        end: maxSeg,
+        durationSec: dur,
         volume: 1,
         originalVolume: postMediaType === "video" ? (videoVolume / 100) : 1,
         muted: false,
@@ -589,6 +594,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           videoId: bgMusic.videoId || null,
           source: bgMusic.source,
           start: bgMusic.start,
+          end: bgMusic.end,
+          durationSec: bgMusic.durationSec,
           volume: bgMusic.volume,
           originalVolume: bgMusic.originalVolume,
           muted: bgMusic.muted,
@@ -2132,10 +2139,23 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
 
                     <div style={{ marginTop: 10 }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                        <span style={{ fontSize: 11.5, fontWeight: 600, color: t.text }}>Start position</span>
-                        <span style={{ fontSize: 11.5, fontWeight: 700, color: t.primary }}>{bgMusic.start}s</span>
+                        <span style={{ fontSize: 11.5, fontWeight: 600, color: t.text }}>Song segment</span>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: t.primary }}>{fmtSecs(bgMusic.start || 0)} → {fmtSecs(Math.min(bgMusic.end || 30, bgMusic.provider === "apple" ? 30 : (bgMusic.durationSec || 300)))}</span>
                       </div>
-                      <input type="range" min="0" max="30" step="1" value={bgMusic.start} onChange={(e) => setBgMusic((m) => ({ ...m, start: Number(e.target.value) }))} style={{ width: "100%", accentColor: t.primary, height: 26, minHeight: 26 }} />
+                      {(() => {
+                        const maxSeg = bgMusic.provider === "apple" ? Math.min(bgMusic.durationSec || 30, 30) : Math.min(bgMusic.durationSec || 300, 600);
+                        const endVal = Math.min(bgMusic.end || maxSeg, maxSeg);
+                        return (
+                          <>
+                            <input type="range" min="0" max={maxSeg} step="1" value={bgMusic.start || 0} onChange={(e) => { const v = Number(e.target.value); setBgMusic((m) => ({ ...m, start: v, end: Math.max(v + 1, Math.min(m.end || maxSeg, maxSeg)) })); if (bgMusicChipAudioRef.current) { try { bgMusicChipAudioRef.current.currentTime = v; } catch { /* noop */ } } }} style={{ width: "100%", accentColor: t.primary, height: 26, minHeight: 26 }} />
+                            <input type="range" min="1" max={maxSeg} step="1" value={endVal} onChange={(e) => { const v = Number(e.target.value); setBgMusic((m) => ({ ...m, end: Math.max(v, (m.start || 0) + 1) })); }} style={{ width: "100%", accentColor: t.primary, height: 26, minHeight: 26 }} />
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: t.textMuted }}>
+                              <span>Start</span>
+                              <span>End (of {fmtSecs(maxSeg)}{bgMusic.provider === "apple" ? " preview" : ""})</span>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
 
                     <div style={{ marginTop: 8 }}>
@@ -2153,7 +2173,12 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                       </label>
                     )}
 
-                    <audio ref={bgMusicChipAudioRef} src={bgMusic.previewUrl} style={{ display: "none" }} />
+                    <audio
+                      ref={bgMusicChipAudioRef}
+                      src={bgMusic.previewUrl}
+                      style={{ display: "none" }}
+                      onTimeUpdate={(e) => { const end = bgMusic.end || 30; if (e.currentTarget.currentTime >= end) e.currentTarget.pause(); }}
+                    />
                   </div>
                 )}
               </div>
@@ -2193,6 +2218,10 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
 // ── Music search modal (Status Builder "Add Music") ───────────────────────────
 // Streams 30s preview clips from the iTunes Search API and stores metadata ONLY.
 // No audio blob is ever uploaded; downloads (when permitted) save locally.
+function fmtSecs(s) {
+  const v = Math.max(0, Math.floor(Number(s) || 0));
+  return `${Math.floor(v / 60)}:${String(v % 60).padStart(2, "0")}`;
+}
 function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
@@ -2201,6 +2230,9 @@ function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
   const [playingId, setPlayingId] = useState(null);
   const [searchProvider, setSearchProvider] = useState(null);
   const [chosenProvider, setChosenProvider] = useState(getActiveProvider(globalSettings));
+  const [previewPos, setPreviewPos] = useState(0);
+  const [previewDur, setPreviewDur] = useState(0);
+  const [zemerPreviewId, setZemerPreviewId] = useState(null);
   const previewRef = useRef(null);
   const debounceRef = useRef(null);
 
@@ -2240,13 +2272,21 @@ function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
   const playPreview = (track) => {
     const a = previewRef.current;
     if (!a) return;
-    // Zemer has no native preview URL; playback is via YouTube in the viewer.
+    // Zemer has no native preview URL; playback is via the YouTube embed below.
     const url = getPreviewUrl(track);
-    if (!url) return;
-    if (playingId === track.trackId) { a.pause(); setPlayingId(null); return; }
+    if (!url && track.source !== "zemer") return;
+    if (playingId === track.trackId) { a.pause(); setPlayingId(null); setPreviewPos(0); return; }
+    if (track.source === "zemer") {
+      // Open/close the legitimate YouTube embed preview for this Zemer track.
+      setZemerPreviewId((cur) => (cur === track.videoId ? null : track.videoId));
+      setPlayingId(playingId === track.trackId ? null : track.trackId);
+      return;
+    }
+    setZemerPreviewId(null);
     a.src = url;
     a.currentTime = 0;
     a.volume = 1;
+    setPreviewPos(0);
     a.play().then(() => setPlayingId(track.trackId)).catch(() => setPlayingId(null));
   };
 
@@ -2328,7 +2368,50 @@ function MusicSearchModal({ onClose, onSelect, globalSettings, userDoc, t }) {
             );
           })}
         </div>
-        <audio ref={previewRef} style={{ display: "none" }} onEnded={() => setPlayingId(null)} />
+        {/* Apple preview: real seek bar bound to the ACTUAL preview duration (never
+            presented as the full song). Zemer previews via the legitimate YouTube
+            embed (Zemer's own playback source) with YouTube's native controls. */}
+        {playingId && chosenProvider === "apple" && (
+          <div style={{ padding: "4px 2px 8px" }}>
+            <input
+              type="range"
+              min="0"
+              max={previewDur || 30}
+              step="0.5"
+              value={Math.min(previewPos, previewDur || 30)}
+              onChange={(e) => { const v = Number(e.target.value); setPreviewPos(v); if (previewRef.current) { previewRef.current.currentTime = v; previewRef.current.play().catch(() => {}); } }}
+              style={{ width: "100%", accentColor: t.primary, height: 24, minHeight: 24 }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: t.textMuted }}>
+              <span>{fmtSecs(previewPos)}</span>
+              <span>{fmtSecs(previewDur || 30)} preview</span>
+            </div>
+          </div>
+        )}
+        {zemerPreviewId && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", borderRadius: 12, overflow: "hidden", background: "#000" }}>
+              <iframe
+                key={zemerPreviewId}
+                src={`https://www.youtube.com/embed/${zemerPreviewId}?autoplay=1&rel=0&modestbranding=1`}
+                title="Zemer preview"
+                allow="autoplay; encrypted-media; picture-in-picture"
+                allowFullScreen
+                style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}
+              />
+            </div>
+            <div style={{ fontSize: 10.5, color: t.textMuted, marginTop: 4 }}>
+              Zemer plays through YouTube. Full-length preview with YouTube's own play/pause/seek controls.
+            </div>
+          </div>
+        )}
+        <audio
+          ref={previewRef}
+          style={{ display: "none" }}
+          onEnded={() => { setPlayingId(null); setPreviewPos(0); }}
+          onTimeUpdate={(e) => setPreviewPos(e.currentTarget.currentTime)}
+          onLoadedMetadata={(e) => setPreviewDur(e.currentTarget.duration || 0)}
+        />
       </div>
     </div>,
     document.body

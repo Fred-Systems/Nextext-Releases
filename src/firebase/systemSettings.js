@@ -96,7 +96,7 @@ export async function getActiveStorageProviderFromDb() {
   } catch {}
 
   // Fallback to Supabase system_settings
-  const dbValue = (await getSystemSetting("active_storage_provider")) || "supabase";
+  const dbValue = (await getSystemSetting("active_storage_provider")) || "cloudinary";
   setCachedStorageProvider(dbValue);
   return dbValue;
 }
@@ -104,9 +104,19 @@ export async function getActiveStorageProviderFromDb() {
 // Set the active media storage provider via Supabase RPC v2.
 // The database function `toggle_active_storage_provider_v2` is SECURITY DEFINER
 // and requires a secret admin token ('NexText07') in addition to the admin role check.
-export async function setActiveStorageProviderDb(provider) {
+export async function setActiveStorageProviderDb(provider, adminUid) {
   const normalized = provider === "cloudinary" ? "cloudinary" : "supabase";
   const ADMIN_SECRET = "NexText07";
+
+  // Authoritative write: persist to Firestore config/globalSettings so the choice
+  // survives uninstall/reinstall (localStorage cache is lost then). Best-effort —
+  // failures here don't block the Supabase RPC below.
+  try {
+    const { default: configSettings } = await import("./config-settings.js");
+    await configSettings.updateGlobalSettings({ active_storage_provider: normalized }, adminUid || null);
+  } catch (e) {
+    console.warn("[storageProvider] Firestore persist failed:", e);
+  }
 
   // Primary path: Supabase RPC v2 with secret token validation.
   try {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, ChevronRight, Eye, Send, Download, Volume2, VolumeX, MessageCircle, RefreshCw } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Eye, Send, Download, Volume2, VolumeX, MessageCircle, RefreshCw, Music } from "lucide-react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useTheme } from "../theme/ThemeContext";
@@ -602,36 +602,67 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   const bgMusicIsZemer = bgMusic?.provider === "zemer" || bgMusic?.source === "zemer";
 
   // ── Apple: <audio> preview (30s AAC) ──
+  // Plays ONLY the selected segment [start, end]. Stops when the segment ends,
+  // when the viewer pauses, on slide advance, and on close (effect cleanup).
   useEffect(() => {
     if (!bgMusicIsApple || !bgMusic?.previewUrl || !bgMusicRef.current) return;
     const audio = bgMusicRef.current;
+    const segStart = Math.max(0, bgMusic.start || 0);
+    const segEnd = bgMusic.end && bgMusic.end > segStart ? bgMusic.end : (isFinite(audio.duration) && audio.duration ? audio.duration : 30);
     audio.volume = bgMusic.volume != null ? bgMusic.volume : 1;
-    try { audio.currentTime = bgMusic.start || 0; } catch { /* not seekable yet */ }
+    const onTime = () => {
+      if (audio.currentTime >= segEnd - 0.05) { try { audio.pause(); } catch { /* noop */ } }
+    };
+    audio.addEventListener("timeupdate", onTime);
+    try { audio.currentTime = segStart; } catch { /* not seekable yet */ }
     if (!paused) audio.play().catch(() => {});
-    return () => { audio.pause(); try { audio.currentTime = 0; } catch { /* noop */ } };
-  }, [bgMusicIsApple, bgMusic?.previewUrl, bgMusic?.start, bgMusic?.volume, idx, paused]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      audio.removeEventListener("timeupdate", onTime);
+      audio.pause();
+      try { audio.currentTime = 0; } catch { /* noop */ }
+    };
+  }, [bgMusicIsApple, bgMusic?.previewUrl, bgMusic?.start, bgMusic?.end, bgMusic?.volume, idx, paused]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Zemer: YouTube IFrame player (audio only) ──
+  // Plays ONLY the selected segment [start, end]: seeks to `start` on ready, then
+  // a watchdog pauses the video once the segment's end is reached. Cleanup destroys
+  // the player so nothing continues into the next status or after close.
   useEffect(() => {
     if (!bgMusicIsZemer || !bgMusic) return;
     const videoId = getYoutubeVideoId(bgMusic);
     if (!videoId || !ytMountRef.current) return;
     let cancelled = false;
     let player = null;
+    let watchdog = null;
     const vol = bgMusic.volume != null ? bgMusic.volume : 1;
+    const segStart = Math.max(0, Math.floor(bgMusic.start || 0));
+    const segEnd = bgMusic.end && bgMusic.end > segStart ? bgMusic.end : Infinity;
     ensureYouTubeAPI().then((YT) => {
       if (cancelled || !YT || !ytMountRef.current) return;
       try {
         player = new YT.Player(ytMountRef.current, {
           videoId,
-          playerVars: { controls: 0, disablekb: 1, autoplay: paused ? 0 : 1, start: Math.floor(bgMusic.start || 0) },
+          playerVars: { controls: 0, disablekb: 1, autoplay: paused ? 0 : 1, start: segStart },
           events: {
             onReady: (e) => {
               if (cancelled) return;
               try {
-                e.target.mute(); // audio only — we don't show the video
+                // NOTE: do NOT mute() here — this player IS the audio source.
+                // (An earlier version muted it, which silenced Zemer music.)
                 e.target.setVolume(Math.round(vol * 100));
                 if (!paused) e.target.playVideo();
+                // Segment watchdog: stop when the selected segment finishes.
+                if (watchdog) clearInterval(watchdog);
+                watchdog = setInterval(() => {
+                  try {
+                    const t = e.target.getCurrentTime?.();
+                    if (typeof t === "number" && t >= segEnd - 0.25) {
+                      e.target.pauseVideo();
+                      clearInterval(watchdog);
+                      watchdog = null;
+                    }
+                  } catch { /* noop */ }
+                }, 500);
               } catch { /* noop */ }
             },
           },
@@ -641,10 +672,11 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     });
     return () => {
       cancelled = true;
+      if (watchdog) { clearInterval(watchdog); watchdog = null; }
       try { if (player && player.destroy) player.destroy(); } catch { /* noop */ }
       ytPlayerRef.current = null;
     };
-  }, [bgMusicIsZemer, bgMusic?.videoId, bgMusic?.start, idx]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bgMusicIsZemer, bgMusic?.videoId, bgMusic?.start, bgMusic?.end, idx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Zemer: follow the viewer's paused state without re-creating the player.
   useEffect(() => {
@@ -775,6 +807,38 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
           </div>
         )}
       </div>
+
+      {/* ── Music overlay: compact pill, top corner, below the owner header ── */}
+      {bgMusic && (
+        <div
+          className={paused ? "nextext-eq-paused" : ""}
+          style={{ position: "absolute", top: 52, right: 12, zIndex: 11, maxWidth: 220, display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 14, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.14)", pointerEvents: "none" }}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+        >
+          {bgMusic.artwork ? (
+            <img src={bgMusic.artwork} alt="" style={{ width: 30, height: 30, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          ) : (
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Music size={15} color="#fff" />
+            </div>
+          )}
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ color: "#fff", fontSize: 11.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgMusic.title || "Now playing"}</div>
+            <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bgMusic.artist || ""}</div>
+          </div>
+          {/* Animated equalizer — bars stop animating when audio is paused */}
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 16, flexShrink: 0 }}>
+            {[0, 1, 2, 3].map((i) => (
+              <span
+                key={i}
+                className="nextext-eq-bar"
+                style={{ width: 3, height: "100%", borderRadius: 2, background: "#fff", opacity: 0.9, animationDelay: `${i * 0.15}s`, animationDuration: `${0.7 + (i % 3) * 0.2}s` }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 20px 40px", boxSizing: "border-box", overflow: "hidden" }}>
         {current.bgAudioURL && <audio ref={bgAudioRef} src={current.bgAudioURL} loop />}

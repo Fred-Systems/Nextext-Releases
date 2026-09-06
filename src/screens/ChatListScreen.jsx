@@ -38,6 +38,34 @@ const GLOBAL_CAMERA_FILTERS = [
   { id: "bw", label: "B&W", css: "grayscale(1) brightness(1.1)" },
 ];
 
+// Derive the chat-list preview from the last message's TYPE, not just its
+// `text` field. Voice notes store an empty `text`, so naively reading
+// `lastMessage.text` would keep showing an OLDER text message (or "No messages
+// yet") when the newest message is a voice note. Reading `type` guarantees the
+// row always reflects the ACTUAL newest message.
+function getLastMessagePreview(lm) {
+  if (!lm) return "No messages yet";
+  switch (lm.type) {
+    case "voice":
+      return "🎤 Voice message";
+    case "image":
+      return "📷 Photo";
+    case "video":
+      return "🎥 Video";
+    case "file":
+      return "📄 File";
+    case "contact":
+      return lm.text || "📇 Contact";
+    case "location":
+      return lm.text || "📍 Location";
+    case "poll":
+      return lm.text || "📊 Poll";
+    case "text":
+    default:
+      return lm.text || "No messages yet";
+  }
+}
+
 function highlightText(text, query, color) {
   if (!query.trim() || !text) return text;
   const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
@@ -479,7 +507,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         setSearchQuery("");
       } else {
         const q = searchQuery.toLowerCase();
-        base = base.filter((c) => chatDisplayName(c)?.toLowerCase().includes(q) || c.lastMessage?.text?.toLowerCase().includes(q));
+        base = base.filter((c) => chatDisplayName(c)?.toLowerCase().includes(q) || getLastMessagePreview(c.lastMessage).toLowerCase().includes(q));
       }
     }
     return base;
@@ -1120,7 +1148,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         {<ChatRowMeta myUid={myUid} otherUid={otherUid} chatId={c.id} t={t} compact={compactList} isGroup={c.type === "group"} />}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minWidth: 0 }}>
           <span style={{ fontSize: msgSize, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-            {searchQuery.trim() ? highlightText(c.lastMessage?.text || "No messages yet", searchQuery, t.accent) : (c.lastMessage?.text || "No messages yet")}
+            {searchQuery.trim() ? highlightText(getLastMessagePreview(c.lastMessage), searchQuery, t.accent) : getLastMessagePreview(c.lastMessage)}
           </span>
           {c.unreadCount?.[myUid] > 0 && (
             <span style={{ background: t.accent, color: "#fff", fontSize: 11, fontWeight: 700, borderRadius: 10, minWidth: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", flexShrink: 0 }}>

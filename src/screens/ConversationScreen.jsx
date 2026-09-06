@@ -55,6 +55,45 @@ function blobToBase64(blob) {
   });
 }
 
+// Map a real MIME type to a sensible file extension. Used so downloaded media
+// (especially voice notes) gets a correct extension derived from the actual
+// byte Content-Type instead of a bogus/"renamed" one.
+function extFromMime(mime) {
+  const m = (mime || "").toLowerCase();
+  if (!m) return "";
+  if (m.includes("webm")) return "webm";
+  if (m.includes("ogg")) return "ogg";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("mp4") || m.includes("m4a") || m.includes("x-m4a")) return "m4a";
+  if (m.includes("wav")) return "wav";
+  if (m.includes("aac")) return "aac";
+  if (m.includes("flac")) return "flac";
+  if (m.startsWith("image/")) return m.split("/")[1] || "jpg";
+  if (m.startsWith("video/")) return "mp4";
+  return "";
+}
+
+// Build a valid filename + real MIME for a downloaded message. The MIME/ext come
+// from the actual fetched bytes (response Content-Type or blob.type), falling
+// back to the message's stored mime/extension — never the message `type` string
+// (e.g. "voice"), which is NOT a MIME type.
+function mediaDownloadInfo(m, blob, responseContentType) {
+  const mime =
+    responseContentType ||
+    blob?.type ||
+    m?.mimeType ||
+    m?.mediaMimeType ||
+    null;
+  const ext =
+    extFromMime(mime) ||
+    m?.fileExtension ||
+    (m?.type === "voice" ? "webm" : "bin");
+  const baseName = m?.fileName
+    ? String(m.fileName).replace(/\.[^.]+$/, "")
+    : `nextext_${m?.type || "media"}_${m?.id}`;
+  return { fileName: `${baseName}.${ext}`, mime: mime || "application/octet-stream" };
+}
+
 async function saveToNexTextFolder(fileName, blob, mimeType) {
   const NextextNative = (typeof window !== "undefined" && window.Capacitor?.Plugins?.NextextNative) || null;
   const isNative = typeof window !== "undefined" && window.Capacitor?.isNativePlatform && window.Capacitor.isNativePlatform();
@@ -3083,6 +3122,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setMediaBusy((p) => ({ ...p, [m.id]: "saving" }));
     try {
       let blob = null;
+      let responseContentType = null;
       const localUrl = await getLocalMediaUrl(m.id);
       if (localUrl) {
         try { blob = await (await fetch(localUrl)).blob(); } catch { blob = null; }
@@ -3091,10 +3131,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         const res = await fetch(m.mediaURL);
         if (!res.ok) throw new Error("download failed");
         blob = await res.blob();
+        responseContentType = res.headers?.get?.("Content-Type") || null;
       }
       if (!blob) throw new Error("no media");
-      const fileName = m.fileName || `nextext_${m.type}_${m.id}`;
-      await saveToNexTextFolder(fileName, blob, m.type);
+      const { fileName, mime } = mediaDownloadInfo(m, blob, responseContentType);
+      await saveToNexTextFolder(fileName, blob, mime);
       setMediaBusy((p) => ({ ...p, [m.id]: "saved" }));
       setTimeout(() => setMediaBusy((p) => { const n = { ...p }; delete n[m.id]; return n; }), 2500);
     } catch {
@@ -3109,6 +3150,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setMediaBusy((p) => ({ ...p, [m.id]: "downloading" }));
     try {
       let blob = null;
+      let responseContentType = null;
       // Prefer the locally-cached copy (survives the WhatsApp-style purge).
       const localUrl = await getLocalMediaUrl(m.id);
       if (localUrl) {
@@ -3119,14 +3161,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         const res = await fetch(m.mediaURL);
         if (!res.ok) throw new Error("download failed");
         blob = await res.blob();
+        responseContentType = res.headers?.get?.("Content-Type") || null;
       }
       if (!blob) throw new Error("no media");
       await cacheMedia(m.id, blob);
       const url = await getLocalMediaUrl(m.id);
       if (url) setLocalMediaUrls((prev) => ({ ...prev, [m.id]: url }));
       // Save a copy to the device too.
-      const fileName = m.fileName || `nextext_${m.type}_${m.id}`;
-      await saveToNexTextFolder(fileName, blob, m.type);
+      const { fileName, mime } = mediaDownloadInfo(m, blob, responseContentType);
+      await saveToNexTextFolder(fileName, blob, mime);
       // NOTE: we intentionally do NOT purge the server copy here. Keeping the
       // Supabase copy means media stays viewable even after the admin switches
       // the pipeline / storage mode, and expiry is handled by mediaExpiryDays

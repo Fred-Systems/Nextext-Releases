@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useTheme } from "../../theme/ThemeContext";
 import { useGlobalSettings } from "../../firebase/config-settings";
+import { resolveJewishStatusAttribution } from "../../firebase/config-settings";
 import { useAuth } from "../../firebase/useAuth";
 import { buildFeed, refreshFeed } from "./feed";
 import StoryViewer from "./StoryViewer";
@@ -85,6 +86,8 @@ export default function JewishStatusesTab({ onStoryViewerChange }) {
   const { userDoc } = useAuth();
 
   const js = globalSettings?.jewishStatuses || {};
+  // Admin-controllable attribution (show/hide + custom text/links; defaults SHOW).
+  const attribution = resolveJewishStatusAttribution(globalSettings);
   const override = userDoc?.jewishStatusesOverride || "inherit";
   const globalEnabled = js.enabled === true;
 
@@ -555,7 +558,8 @@ export default function JewishStatusesTab({ onStoryViewerChange }) {
         renderLayout()
       )}
 
-      {/* Attribution footer */}
+      {/* Attribution footer (admin-controllable: show/hide, custom text + links) */}
+      {attribution.show && (
       <div
         style={{
           fontSize: 11,
@@ -567,19 +571,18 @@ export default function JewishStatusesTab({ onStoryViewerChange }) {
           lineHeight: 1.4,
         }}
       >
-        Jewish Statuses is powered by content from JewishStatus and YidStatus.
-        <br />
-        A big thank-you to both platforms and the creators who share their content with the Jewish community.
+        {attribution.text}
         <br />
         Visit{" "}
-        <a href="https://jewishstatus.com" target="_blank" rel="noopener noreferrer" style={{ color: t.textMuted, textDecoration: "underline" }}>
+        <a href={attribution.jewishStatusLink} target="_blank" rel="noopener noreferrer" style={{ color: t.textMuted, textDecoration: "underline" }}>
           JewishStatus
         </a>{" "}
         · Visit{" "}
-        <a href="https://yidstatus.com" target="_blank" rel="noopener noreferrer" style={{ color: t.textMuted, textDecoration: "underline" }}>
+        <a href={attribution.yidStatusLink} target="_blank" rel="noopener noreferrer" style={{ color: t.textMuted, textDecoration: "underline" }}>
           YidStatus
         </a>
       </div>
+      )}
 
       {viewerIndex != null && creators[viewerIndex] && (
         <StoryViewer

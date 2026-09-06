@@ -12,6 +12,7 @@ import { getUserMessageStats, formatActiveTime, formatBytes } from "../firebase/
 import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, AI_PERSONA_TRAY } from "../firebase/ai";
 import { getActiveStorageProviderFromDb, setActiveStorageProviderDb, getSystemSetting, writeSystemSetting } from "../firebase/systemSettings";
 import { invalidateStorageProviderCache } from "../services/mediaUpload";
+import { setAdminPanelPinHash, verifyAdminPanelPin } from "../firebase/adminPanelPin";
 import { supabase, MEDIA_BUCKET } from "../supabase/config";
 
 // Categories used by the admin "Jewish Statuses" controls (mirror of App.jsx).
@@ -189,7 +190,7 @@ export default function AdminDashboard({ myUid, onBack }) {
     setError("");
     try {
       const next = activeProvider === "cloudinary" ? "supabase" : "cloudinary";
-      await setActiveStorageProviderDb(next);
+      await setActiveStorageProviderDb(next, myUid);
       setActiveProvider(next);
       setProviderInput("");
     } catch (e) {
@@ -569,6 +570,9 @@ export default function AdminDashboard({ myUid, onBack }) {
   };
 
   // ── Jewish Statuses admin config (lives under globalSettings.jewishStatuses) ──
+  const [pinInput, setPinInput] = useState("");
+  const [pinMsg, setPinMsg] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
   const updateJewish = (patch) => {
     const cur = settings?.jewishStatuses || {};
     updateGlobalSettings({ jewishStatuses: { ...cur, ...patch } }, myUid);
@@ -1060,6 +1064,36 @@ export default function AdminDashboard({ myUid, onBack }) {
                       try {
                         updateDoc(doc(db, "users", selectedUser.uid), { jewishStatusesOverride: val });
                         setSelectedUser((prev) => ({ ...prev, jewishStatusesOverride: val }));
+                      } catch (e) {
+                        setError("Couldn't update override: " + e.message);
+                      }
+                    }}
+                    style={{ flex: 1, textAlign: "center", padding: "10px 6px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text, border: `1px solid ${active ? t.primary : t.border}` }}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Jewish Status Downloads</div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Control this user's ability to download Jewish status media to their device. "Follow global" uses the global download setting (OFF by default); the other options force it on or off for this account only.
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[["inherit", "INHERIT"], ["enabled", "ENABLED"], ["disabled", "DISABLED"]].map(([val, label]) => {
+                const cur = selectedUser.jewishStatusDownloadsOverride || "inherit";
+                const active = cur === val;
+                return (
+                  <div
+                    key={val}
+                    onClick={() => {
+                      setError("");
+                      try {
+                        updateDoc(doc(db, "users", selectedUser.uid), { jewishStatusDownloadsOverride: val });
+                        setSelectedUser((prev) => ({ ...prev, jewishStatusDownloadsOverride: val }));
                       } catch (e) {
                         setError("Couldn't update override: " + e.message);
                       }
@@ -1680,7 +1714,7 @@ export default function AdminDashboard({ myUid, onBack }) {
                     setStorageProviderBusy(true);
                     setStorageProviderError("");
                     try {
-                      await setActiveStorageProviderDb(key);
+                      await setActiveStorageProviderDb(key, myUid);
                       setStorageProvider(key);
                       invalidateStorageProviderCache();
                     } catch (e) {
@@ -1701,6 +1735,63 @@ export default function AdminDashboard({ myUid, onBack }) {
                 Active provider: <strong>{storageProvider === "cloudinary" ? "Cloudinary" : "Supabase"}</strong> — new uploads will route here.
               </div>
             )}
+          </div>
+          {/* Authentication & Panel Security */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Lock size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Authentication &amp; Panel Security</span>
+            </div>
+            {/* Google Sign-In visibility (default HIDDEN — provider not configured) */}
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, marginBottom: 6 }}>Google Sign-In button</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+              {[["hide", "Hide"], ["show", "Show"]].map(([key, label]) => {
+                const on = (settings?.auth?.googleSignIn || "hide") === key;
+                return (
+                  <div
+                    key={key}
+                    onClick={() => updateGlobalSettings({ auth: { ...(settings?.auth || {}), googleSignIn: key } }, myUid)}
+                    style={{ flex: 1, textAlign: "center", padding: "11px 8px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", border: `1px solid ${on ? t.primary : t.border}`, background: on ? t.primary : t.bg, color: on ? "#fff" : t.text }}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 14, lineHeight: 1.4 }}>
+              Default Hide: no Google buttons appear anywhere (Google auth isn't configured). Show: the Google button appears on the auth screen only if the provider is actually functional — never a dead button.
+            </div>
+            {/* Admin panel PIN */}
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, marginBottom: 6 }}>Admin Panel PIN</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+              <input
+                type="password"
+                inputMode="numeric"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="Set a PIN (blank = remove lock)"
+                style={{ flex: 1, boxSizing: "border-box", padding: "10px 12px", borderRadius: 9, border: `1px solid ${t.border}`, fontSize: 13, color: t.text, background: t.bg, outline: "none" }}
+              />
+              <div
+                onClick={async () => {
+                  setPinBusy(true); setPinMsg("");
+                  try {
+                    await setAdminPanelPinHash(pinInput.trim(), myUid);
+                    setPinInput("");
+                    setPinMsg(pinInput.trim() ? "PIN saved (stored as a hash, never plaintext)." : "PIN removed — panel unlocks without a PIN.");
+                  } catch (e) {
+                    setPinMsg("Couldn't save PIN: " + (e?.message || "unknown error"));
+                  } finally { setPinBusy(false); }
+                }}
+                style={{ padding: "10px 16px", borderRadius: 9, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: pinBusy ? "wait" : "pointer", opacity: pinBusy ? 0.6 : 1 }}
+              >
+                Save
+              </div>
+            </div>
+            {pinMsg && <div style={{ fontSize: 11.5, color: t.textMuted }}>{pinMsg}</div>}
+            <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 6, lineHeight: 1.4 }}>
+              Stored server-side as a SHA-256 hash in the admin configuration — never plaintext, never localStorage. The Admin Panel stays in the menu for admin accounts at all times; this PIN is the extra gate to open it.
+            </div>
           </div>
           {/* Status Preview Mode toggle */}
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
@@ -3104,6 +3195,51 @@ export default function AdminDashboard({ myUid, onBack }) {
               <span style={{ fontWeight: 700, fontSize: 14, color: settings?.jewishStatuses?.enabled === true ? "#fff" : t.text }}>
                 {settings?.jewishStatuses?.enabled === true ? "JEWISH STATUSES ON" : "JEWISH STATUSES OFF"}
               </span>
+            </div>
+
+            {/* Jewish Status Downloads (global; per-user override on each user page) */}
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, margin: "16px 0 6px" }}>Jewish Status Downloads</div>
+            <div onClick={() => updateJewish({ downloads: { ...(settings?.jewishStatuses?.downloads || {}), enabled: !(settings?.jewishStatuses?.downloads?.enabled === true) } })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.jewishStatuses?.downloads?.enabled === true ? "#34C759" : t.primaryLight, cursor: "pointer", marginBottom: 6 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.jewishStatuses?.downloads?.enabled === true ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.jewishStatuses?.downloads?.enabled === true ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.jewishStatuses?.downloads?.enabled === true ? "#fff" : t.text }}>
+                {settings?.jewishStatuses?.downloads?.enabled === true ? "DOWNLOADS ON (global)" : "DOWNLOADS OFF (global — default)"}
+              </span>
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 14, lineHeight: 1.4 }}>
+              OFF by default. When OFF, an explicit per-user ENABLED override may still allow downloads; per-user overrides (INHERIT / ENABLED / DISABLED) live on each user's detail page. Media downloads go directly from the original source to the user's device — nothing is stored on our infrastructure.
+            </div>
+
+            {/* Attribution (show/hide + custom text + links) */}
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, marginBottom: 6 }}>Jewish Status Attribution</div>
+            <div onClick={() => updateJewish({ attribution: { ...(settings?.jewishStatuses?.attribution || {}), show: (settings?.jewishStatuses?.attribution?.show !== false) ? false : true } })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.jewishStatuses?.attribution?.show !== false ? "#34C759" : t.primaryLight, cursor: "pointer", marginBottom: 8 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.jewishStatuses?.attribution?.show !== false ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.jewishStatuses?.attribution?.show !== false ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.jewishStatuses?.attribution?.show !== false ? "#fff" : t.text }}>
+                {settings?.jewishStatuses?.attribution?.show !== false ? "ATTRIBUTION SHOWN (default)" : "ATTRIBUTION HIDDEN"}
+              </span>
+            </div>
+            <input
+              value={settings?.jewishStatuses?.attribution?.text || ""}
+              onChange={(e) => updateJewish({ attribution: { ...(settings?.jewishStatuses?.attribution || {}), text: e.target.value } })}
+              placeholder="Attribution text (leave blank for default wording)"
+              style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 9, border: `1px solid ${t.border}`, fontSize: 12.5, color: t.text, background: t.bg, outline: "none", marginBottom: 8 }}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                value={settings?.jewishStatuses?.attribution?.jewishStatusLink || ""}
+                onChange={(e) => updateJewish({ attribution: { ...(settings?.jewishStatuses?.attribution || {}), jewishStatusLink: e.target.value } })}
+                placeholder="JewishStatus link"
+                style={{ flex: 1, minWidth: 0, boxSizing: "border-box", padding: "10px 12px", borderRadius: 9, border: `1px solid ${t.border}`, fontSize: 12.5, color: t.text, background: t.bg, outline: "none" }}
+              />
+              <input
+                value={settings?.jewishStatuses?.attribution?.yidStatusLink || ""}
+                onChange={(e) => updateJewish({ attribution: { ...(settings?.jewishStatuses?.attribution || {}), yidStatusLink: e.target.value } })}
+                placeholder="YidStatus link"
+                style={{ flex: 1, minWidth: 0, boxSizing: "border-box", padding: "10px 12px", borderRadius: 9, border: `1px solid ${t.border}`, fontSize: 12.5, color: t.text, background: t.bg, outline: "none" }}
+              />
             </div>
 
             {/* Per-source toggles */}

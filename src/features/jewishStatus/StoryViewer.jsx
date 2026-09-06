@@ -1,6 +1,47 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, ChevronRight, Play, Pause, SkipForward } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Play, Pause, SkipForward, Download, RefreshCw } from "lucide-react";
+import { useGlobalSettings, resolveJewishStatusDownloadAllowed } from "../../firebase/config-settings";
+import { useAuth } from "../../firebase/useAuth";
+
+// ── Local-device-only download of Jewish Status media ──
+// Downloads straight from the ORIGINAL third-party media URL. Nothing is uploaded
+// to Firebase/Supabase/Cloudinary and nothing is proxied through our servers —
+// the bytes go provider → device. If CORS blocks the fetch (some CDNs do), we
+// fall back to a plain anchor download, which lets the browser/OS handle it.
+async function downloadStatusMedia(url, filename) {
+  if (!url) throw new Error("No media URL.");
+  try {
+    const res = await fetch(url, { mode: "cors" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const href = URL.createObjectURL(blob);
+    triggerDownload(href, filename);
+    setTimeout(() => URL.revokeObjectURL(href), 30000);
+  } catch {
+    // CORS / network fallback: direct navigation to the original URL.
+    triggerDownload(url, filename);
+  }
+}
+
+function triggerDownload(href, filename) {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename || "";
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { try { a.remove(); } catch { /* noop */ } }, 1000);
+}
+
+function extFromType(url, kind) {
+  const m = String(url || "").match(/\.(mp4|mov|m4a|mp3|aac|ogg|wav|jpg|jpeg|png|webp|gif)(\?|$)/i);
+  if (m) return m[1].toLowerCase();
+  if (kind === "video") return "mp4";
+  if (kind === "audio") return "m4a";
+  return "jpg";
+}
 import { useTheme } from "../../theme/ThemeContext";
 
 const DEFAULT_DURATION_MS = 5000;
@@ -182,6 +223,10 @@ function useStoryPlayer(creators, initialIndex, { onFinish, onAdvanceCreator } =
 
 export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose, onViewCreator }) {
   const { t } = useTheme();
+  const globalSettings = useGlobalSettings();
+  const { userDoc } = useAuth();
+  // Admin-controlled download permission (global OFF by default + per-user override).
+  const canDownload = resolveJewishStatusDownloadAllowed(globalSettings, userDoc);
 
   const player = useStoryPlayer(creators, initialCreatorIndex, {
     onFinish: onClose,
@@ -198,6 +243,7 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
   const videoRef = useRef(null);
   const audioRef = useRef(null);
   const [capExpanded, setCapExpanded] = useState(false);
+  const [dlState, setDlState] = useState(""); // "" | "saving" | "done" | "failed"
 
   // Viewer controls state.
   const [zoom, setZoom] = useState(1);
@@ -708,6 +754,27 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
           +10s
         </div>
         <div
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (!canDownload || dlState === "saving" || !post?.mediaUrl) return;
+            setDlState("saving");
+            try {
+              await downloadStatusMedia(post.mediaUrl, `jewishstatus-${Date.now()}.${extFromType(post.mediaUrl, post.kind)}`);
+              setDlState("done");
+              setTimeout(() => setDlState(""), 1800);
+            } catch {
+              setDlState("failed");
+              setTimeout(() => setDlState(""), 2500);
+            }
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          title={canDownload ? "Download to device (from the original source)" : "Downloads are disabled"}
+          style={{ ...ctrlBtn, opacity: canDownload && post?.mediaUrl ? 1 : 0.35, cursor: canDownload && post?.mediaUrl ? "pointer" : "default" }}
+        >
+          {dlState === "saving" ? <RefreshCw size={16} color="#fff" style={{ animation: "nextext-spin 1s linear infinite" }} /> : <Download size={18} color="#fff" />}
+        </div>
+        <div
           onClick={(e) => {
             e.stopPropagation();
             cycleRate();
@@ -721,6 +788,12 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
       </div>
         );
       })()}
+      {/* Download feedback toast */}
+      {dlState && dlState !== "saving" && (
+        <div style={{ position: "absolute", bottom: caption ? 60 : 0, left: 0, right: 0, textAlign: "center", fontSize: 11.5, fontWeight: 600, color: dlState === "done" ? "#34C759" : "#FF3B30", zIndex: 15, textShadow: "0 1px 3px rgba(0,0,0,0.8)" }}>
+          {dlState === "done" ? "Saved to your device" : "Download failed — media unavailable"}
+        </div>
+      )}
     </div>,
     document.body
   );

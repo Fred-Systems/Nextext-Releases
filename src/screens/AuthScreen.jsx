@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { MessageSquare, Eye, EyeOff } from "lucide-react";
+import { MessageSquare, Eye, EyeOff, Lock } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -10,6 +10,10 @@ import { useGlobalSettings } from "../firebase/config-settings";
 export default function AuthScreen({ auth }) {
   const { t } = useTheme();
   const globalSettings = useGlobalSettings();
+  // Google Sign-In visibility is admin-controlled (default HIDE — the provider
+  // isn't configured). When hidden, no Google buttons render and no Google
+  // auth requests can be made. When shown, buttons only render for real flows.
+  const googleVisible = globalSettings?.auth?.googleSignIn === "show";
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -141,6 +145,12 @@ export default function AuthScreen({ auth }) {
             <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5, padding: "0 2px" }}>
               Adding your real phone number helps friends find you automatically. Never enter a fake number — it could connect you with the wrong person.
             </div>
+            <div style={{ display: "flex", gap: 8, background: "#FFEDE6", borderRadius: 10, padding: 10, marginBottom: 12, border: `1px solid #FFB199` }}>
+              <Lock size={15} color="#C0392B" style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 12, color: "#7A2E1D", lineHeight: 1.45 }}>
+                <strong>Messages are not end-to-end encrypted.</strong> NexText can technically access message content because its servers process it to power AI, translation, sync, and web access. By creating an account you acknowledge this is not a zero-knowledge / E2EE messenger.
+              </span>
+            </div>
             <div onClick={() => setAgreedToPrivacy(!agreedToPrivacy)} style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, cursor: "pointer", padding: "0 2px" }}>
               <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${agreedToPrivacy ? t.primary : t.border}`, background: agreedToPrivacy ? t.primary : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, transition: "background 0.15s" }}>
                 {agreedToPrivacy && <span style={{ color: t.bubbleMeText, fontSize: 12, fontWeight: 700 }}>✓</span>}
@@ -171,7 +181,8 @@ export default function AuthScreen({ auth }) {
           <div style={{ flex: 1, height: 1, background: t.border }} />
         </div>
 
-        {mode === "signup" ? (
+        {googleVisible ? (
+        mode === "signup" ? (
           <button disabled={busy || !agreedToPrivacy} onClick={handleGoogleSignup} style={{ ...btnStyle(t, false), opacity: agreedToPrivacy ? 1 : 0.5 }}>
             <svg viewBox="0 0 48 48" style={{ width: 18, height: 18, flexShrink: 0 }}><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.54 28.59A14.5 14.5 0 0 1 9.5 24c0-1.59.28-3.14.76-4.59l-7.98-6.19A23.99 23.99 0 0 0 0 24c0 3.77.87 7.35 2.56 10.56l7.98-5.97z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 5.97C6.51 42.62 14.62 48 24 48z"/></svg>
             Continue with Google
@@ -186,7 +197,8 @@ export default function AuthScreen({ auth }) {
               New here? Sign in with Google on the <span onClick={() => { setMode("signup"); setError(""); setUsernameTaken(false); }} style={{ color: t.primary, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>Sign Up</span> page to create your account.
             </div>
           </>
-        )}
+        )
+        ) : null}
 
         <div onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); setUsernameTaken(false); }} style={{ textAlign: "center", fontSize: 13, color: t.primary, fontWeight: 600, cursor: "pointer", marginTop: 20 }}>
           {mode === "signin" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
@@ -209,6 +221,7 @@ export default function AuthScreen({ auth }) {
               <p style={{ marginBottom: 10 }}><strong>Maintenance:</strong> This application is developed and maintained on a best-effort basis by an independent developer. There is no guaranteed uptime, support SLA, or liability for bugs, data loss, or service interruptions.</p>
               <p style={{ marginBottom: 10 }}><strong>Liability:</strong> By using NexText, you acknowledge and agree that the developers, contributors, and operators of NexText are NOT liable for any data damage, data loss, security exposure, unauthorized access, or any other consequence arising from your use of this application. You use NexText entirely at your own risk.</p>
               <p style={{ marginBottom: 10 }}><strong>Media:</strong> Uploaded images, videos, voice notes, and files are stored on Supabase with public read access via RLS policies. Media may persist beyond account deletion depending on cache and CDN behavior.</p>
+              <p style={{ marginBottom: 10 }}><strong>Encryption:</strong> NexText uses encryption to protect data in transit and at rest, but messages are <strong>not end-to-end encrypted (not E2EE)</strong>. Because NexText's servers process message content to provide features such as AI, translation, synchronization, and web access, NexText's infrastructure may technically be capable of accessing message content. NexText should not be considered a zero-knowledge or E2EE messenger.</p>
               <p><strong>Contact:</strong> Questions about this policy can be submitted through the in-app Feedback screen to the administrator.</p>
             </div>
             <button onClick={() => setShowPrivacyPolicy(false)} style={{ width: "100%", padding: "10px 0", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer", marginTop: 8 }}>Close</button>

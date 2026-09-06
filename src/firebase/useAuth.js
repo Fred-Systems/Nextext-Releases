@@ -14,7 +14,7 @@ import {
   updatePassword,
   updateEmail,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, arrayUnion, collection, query, where, getDocs, limit } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, arrayUnion, collection, query, where, getDocs, limit, onSnapshot } from "firebase/firestore";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { SocialLogin as CapgoSocialLogin } from "@capgo/capacitor-social-login";
 import { auth, googleProvider, db } from "../firebase/config";
@@ -65,6 +65,7 @@ export function useAuth() {
   const [user, setUser] = useState(null);
   const [userDoc, setUserDoc] = useState(null);
   const [loading, setLoading] = useState(true);
+  let userDocUnsub = null;
 
   useEffect(() => {
     let unsub;
@@ -78,9 +79,31 @@ export function useAuth() {
             const ref = doc(db, "users", firebaseUser.uid);
             const snap = await getDoc(ref);
             setUserDoc(snap.exists() ? snap.data() : null);
+            // Live subscription: keeps role (admin), overrides and settings fresh,
+            // and recovers the doc if the initial read failed or came back empty
+            // (fixes the "Admin Panel disappears after reopening the app" bug —
+            // a transient read failure used to permanently null the doc until
+            // the user logged out and back in).
+            try {
+              if (userDocUnsub) { try { userDocUnsub(); } catch { /* noop */ } }
+              userDocUnsub = onSnapshot(ref, (s) => {
+                setUserDoc(s.exists() ? s.data() : null);
+              }, () => { /* keep last known doc on listener errors */ });
+            } catch { /* onSnapshot unavailable — getDoc above still worked */ }
           } catch (e) {
             console.error("[useAuth] Failed to fetch user doc:", e);
-            setUserDoc(null);
+            // Retry a few times before giving up — at cold start the network
+            // may not be ready yet and a single failure wiped admin recognition.
+            let recovered = false;
+            for (let attempt = 1; attempt <= 3 && !recovered; attempt++) {
+              await new Promise((r) => setTimeout(r, 1500 * attempt));
+              try {
+                const ref = doc(db, "users", firebaseUser.uid);
+                const snap = await getDoc(ref);
+                if (snap.exists()) { setUserDoc(snap.data()); recovered = true; }
+              } catch { /* keep retrying */ }
+            }
+            if (!recovered) setUserDoc(null);
           }
         } else {
           // Check for redirect result (Capacitor/WebView Google sign-in)
