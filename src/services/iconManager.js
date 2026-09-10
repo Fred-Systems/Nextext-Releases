@@ -66,6 +66,10 @@ export const ICON_PROFILES = [
   // aliases + NextextNativePlugin mapping).
   { id: "icon16",  label: "Mizrachi mode", kind: "splash", iconPath: "/ic_icon16.png", special: true },
   { id: "icon17",  label: "Mizrachi mode", kind: "splash", iconPath: "/ic_icon17.png", special: true },
+  // v1.7.93 disguise icons (user-supplied artwork, processed with the same
+  // full-bleed square pipeline as icon12/icon13): Calculator + Notepad.
+  { id: "icon18",  label: "Calculator", kind: "calculator", iconPath: "/ic_icon18.png" },
+  { id: "icon19",  label: "Notes",      kind: "notes",       iconPath: "/ic_icon19.png" },
 ];
 
 const DEFAULT_PROFILE = "default";

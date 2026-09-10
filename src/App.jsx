@@ -42,13 +42,14 @@ import { useAuth } from "./firebase/useAuth";
 import { usePresenceHeartbeat, useAppUsageTracker } from "./firebase/presence";
 import { purgeExpiredStatuses, useStatuses } from "./firebase/status";
 import { useContacts } from "./firebase/contacts";
-import { useChats, purgeExpiredChatMedia, markChatRead, setMute } from "./firebase/chats";
+import { useChats, purgeExpiredChatMedia, markChatRead, setMute, useDeliveryReceipts } from "./firebase/chats";
 import { setGlobalWallpaper, fileToWallpaperDataUrl } from "./theme/wallpaper";
-import { ChevronLeft, ChevronRight, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile, Megaphone, LayoutGrid, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Palette, Shield, Lock, MessageSquare, X, ShieldCheck, Phone, Image as ImageIcon, Users, CircleDot, RotateCcw, Camera, Settings as SettingsIcon, Bot, Sparkles, RefreshCw, Search, User, Compass, Bell, BellOff, Smile, Megaphone, LayoutGrid, Trash2, Music, Volume2, Globe, KeyRound, Smartphone, Clock, Heart, Wifi, Star, Eye, Hash, Zap, Moon, Sun, MessageCircle, Mic, AudioLines, Wrench, FlaskConical } from "lucide-react";
 import { FONTS } from "./theme/ThemeContext";
 import Avatar from "./components/Avatar";
 import AvatarColorPicker from "./components/AvatarColorPicker";
 import { uploadChatFile } from "./supabase/media";
+import { describeUploadError } from "./services/mediaUpload";
 import { doc, getDoc, updateDoc, setDoc, onSnapshot, collection, query, where, orderBy, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "./firebase/config";
 import AuthScreen from "./screens/AuthScreen";
@@ -65,6 +66,7 @@ import AIChatScreen from "./screens/AIChatScreen";
 import { useSystemConfigHook, requestAIAccess, setAIPersonality, setSystemConfig, PERSONALITIES, AI_PERSONA_TRAY, getVisiblePersonaTray, AI_CONTACT_UID } from "./firebase/ai";
 import AppLockScreen from "./screens/AppLockScreen";
 import StatusScreen from "./screens/StatusScreen";
+import StatusBuilderNew from "./screens/StatusBuilderNew";
 import GroupInfoScreen from "./screens/GroupInfoScreen";
 import CalculatorScreen from "./screens/CalculatorScreen";
 import NotepadScreen from "./screens/NotepadScreen";
@@ -80,14 +82,19 @@ import UserStatsCard from "./components/UserStatsCard";
 import PageErrorBoundary from "./components/PageErrorBoundary";
 import { checkForUpdate, downloadUpdate, getCurrentVersion, getLastSeenRelease, openDownloadUrl, saveApkToDevice, setLastSeenRelease } from "./updater/updateChecker";
 import { APP_VERSION } from "./version";
+import { useRemoteConfig, getApkUpdateStatus } from "./firebase/remoteConfig";
 import { PING_SOUNDS, playVoicePing } from "./utils/pingSounds";
-import { updateGlobalSettings, useGlobalSettings, subscribe as subscribeGlobalSettings, getQuotaSnapshot, getDefaultLaunchPage } from "./firebase/config-settings";
+import { updateGlobalSettings, useGlobalSettings, subscribe as subscribeGlobalSettings, getQuotaSnapshot, getDefaultLaunchPage, getReceiptColors, saveReceiptColors, resolveCallingEnabled, resolveCallingReplacesSettingsTab } from "./firebase/config-settings";
 import AdminPanelGate from "./components/AdminPanelGate";
 import { BUBBLE_STYLE_ORDER, BUBBLE_STYLE_LABELS, getBubbleStyle, setBubbleStyle, resolveBubble } from "./theme/bubbleStyles";
 import { setCloudinaryProxyEnabled } from "./media/mediaProxy";
 import { runPreWarmPing } from "./firebase/prewarm";
 import { useSystemInsets } from "./utils/useSystemInsets";
 import { changeNames, isNameChangeBlocked, isUsernameAvailable } from "./firebase/names";
+import { CallProvider } from "./calling/CallContext";
+import CallingTab from "./calling/CallingTab";
+import CallOverlay from "./calling/CallOverlay";
+import MissedCallBanner from "./calling/MissedCallBanner";
 
 const UI_SCALE_KEY = "nextext_ui_scale";
 const SCROLL_DOWN_KEY = "nextext_show_scrolldown";
@@ -554,7 +561,7 @@ function VoiceSampleSubmitSection({ t, myUid, userDoc }) {
       setFile(null); setName(""); setDuration(null);
       if (fileRef.current) fileRef.current.value = "";
     } catch (err) {
-      setStatus("Upload failed: " + (err?.message || err));
+      setStatus(describeUploadError(err, "Upload failed"));
     } finally {
       setBusy(false);
     }
@@ -612,7 +619,7 @@ function VoiceSampleSubmitSection({ t, myUid, userDoc }) {
 // preview element for playback. The result stays an in-memory blob URL: no
 // chat message, no upload to Firebase/Supabase/Cloudinary, no permanent
 // record. Blob URLs are revoked when replaced and on unmount.
-function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc }) {
+function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc, myUid }) {
   const [allowed, setAllowed] = useState(null); // null = resolving, then true/false
   const [voices, setVoices] = useState([]);
   const [voiceId, setVoiceId] = useState("");
@@ -621,6 +628,8 @@ function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc }) {
   const [testError, setTestError] = useState("");
   const [previewUrl, setPreviewUrl] = useState(null);
   const previewUrlRef = useRef(null);
+  // Ref to the panel root so "Redo" can scroll the inputs back into view.
+  const sectionRef = useRef(null);
 
   const setPreview = (url) => {
     if (previewUrlRef.current) { try { URL.revokeObjectURL(previewUrlRef.current); } catch {} }
@@ -646,6 +655,25 @@ function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc }) {
     return () => { alive = false; };
   }, [globalSettings, userDoc]);
 
+  const [formatting, setFormatting] = useState(false);
+  // Download permission mirrors the main cloned-voice downloads control
+  // (globalSettings.musicDownloads.enabled + userDoc.musicDownloadsOverride).
+  const [dlAllowed, setDlAllowed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    import("./firebase/config-settings").then((m) => {
+      if (!alive) return;
+      if (typeof m.resolveMusicDownloadAllowed === "function") {
+        setDlAllowed(m.resolveMusicDownloadAllowed(globalSettings, userDoc));
+      } else setDlAllowed(false);
+    }).catch(() => { if (alive) setDlAllowed(false); });
+    return () => { alive = false; };
+  }, [globalSettings, userDoc]);
+  const [previewBlob, setPreviewBlob] = useState(null);
+  // Collapsible: the X/close collapses the test panel (re-openable via the
+  // collapsed toggle) so it never orphans an overlay or breaks navigation.
+  const [closed, setClosed] = useState(false);
+
   // Same Fish Audio voice list the chat composer offers.
   useEffect(() => {
     let alive = true;
@@ -670,6 +698,56 @@ function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc }) {
     return null;
   }
 
+
+  // Local persona-aware fallback — same shape the chat's AI Voice Note uses so
+  // a missing/unavailable AI key never leaves the user with nothing.
+  const buildLocalVoiceScript = (rawIdea, vName, vPrompt) => {
+    const clean = String(rawIdea || "").replace(/[*`_~#]/g, "").trim();
+    if (!clean) return clean;
+    const flavor = vPrompt ? ` ${vName}, ${String(vPrompt).split(/[.!?]/)[0]}.` : "";
+    let s = `[serious]${flavor} ${clean}`;
+    if (s.length > 480) s = s.slice(0, 477).trim() + "...";
+    return s.trim();
+  };
+
+  // SAME auto-format pipeline as the chat's "Auto-Format for Voice": same
+  // instruction, same voiceProfiles style hint, same AI path, same fallback.
+  const autoFormat = async () => {
+    const idea = sampleText.trim();
+    if (!idea || formatting) return;
+    setFormatting(true);
+    setTestError("");
+    const voice = voices.find((v) => v.id === voiceId) || voices[0];
+    const voiceName = voice?.fullName || voice?.name || "the speaker";
+    let profile = null, styleHint = "";
+    try {
+      const { doc, getDoc } = await import("firebase/firestore");
+      const { db } = await import("./firebase/config");
+      const sysSnap = await getDoc(doc(db, "config", "system"));
+      profile = sysSnap.exists()?.data()?.voiceProfiles?.[voiceId] || null;
+    } catch { profile = null; }
+    styleHint = (profile?.speakStyle || profile?.systemPrompt || voice?.prompt || "").toString().trim();
+    const instruction =
+      "You are a script writer for a Fish Audio text-to-speech engine. " +
+      "Write a SHORT spoken line (strictly under 220 characters) based on the user's request, in the voice personality's documented style below. " +
+      "Place Fish Audio emotion/prosody brackets like [serious], [laughing], [angry], [sigh], [pause] naturally where the tone shifts. " +
+      "Rules: no markdown, no asterisks, no stage directions beyond the brackets, and output ONLY the spoken script — " +
+      "never repeat these instructions or any persona/system description. " +
+      "Weave any named person into the line naturally if mentioned." +
+      (styleHint ? `\n\nVoice personality style to imitate:\n${styleHint}` : "");
+    try {
+      const { sendAIMessage } = await import("./firebase/ai");
+      let out = null;
+      for (let attempt = 0; attempt < 2 && !out; attempt++) {
+        try { out = await sendAIMessage(myUid, idea, [], instruction); } catch { out = null; }
+      }
+      const formatted = (out || "").replace(/^["']|["']$/g, "").trim();
+      setSampleText(formatted || buildLocalVoiceScript(idea, voiceName, styleHint));
+    } catch {
+      setSampleText(buildLocalVoiceScript(idea, voiceName, styleHint));
+    } finally { setFormatting(false); }
+  };
+
   const generate = async () => {
     setTestError("");
     const clean = sampleText.trim();
@@ -681,6 +759,7 @@ function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc }) {
       // Same worker path ConversationScreen uses — but we stop at the blob.
       const { synthesizeSpeechBytes } = await import("./firebase/tts");
       const blob = await synthesizeSpeechBytes(clean, voice.referenceId);
+      setPreviewBlob(blob);
       setPreview(URL.createObjectURL(blob));
     } catch (err) {
       setTestError(err?.message || "Couldn't generate the preview.");
@@ -689,11 +768,46 @@ function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc }) {
     }
   };
 
+  const downloadTest = async () => {
+    if (!previewBlob) return;
+    setTestError("");
+    try {
+      const { downloadBlobToDevice } = await import("./media/deviceDownload");
+      await downloadBlobToDevice(previewBlob, `voice-test-${Date.now()}`, previewBlob.type);
+    } catch (err) {
+      setTestError(err?.message || "Couldn't download the audio.");
+    }
+  };
+
+  // Collapsed: show a compact re-open toggle instead of the full panel. This is
+  // the "X/close" exit — it never orphans an overlay or leaves broken nav state.
+  if (closed) {
+    return (
+      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}` }}>
+        <div onClick={() => setClosed(false)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", padding: "4px 0" }}>
+          <span style={{ fontSize: 14 }}>🔊</span>
+          <span style={{ fontWeight: 700, fontSize: 14, color: t.text, flex: 1 }}>Test Cloned Voice</span>
+          <ChevronRight size={16} color={t.textMuted} />
+        </div>
+      </div>
+    );
+  }
+
+  const handleRedo = () => {
+    // Clear the generated preview so the inputs (voice + sample text) return to
+    // the foreground; then scroll the panel top back into view.
+    if (previewUrlRef.current) { try { URL.revokeObjectURL(previewUrlRef.current); } catch {} }
+    setPreviewUrl(null);
+    setPreviewBlob(null);
+    try { sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
+  };
+
   return (
-    <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}` }}>
+    <div ref={sectionRef} style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${t.border}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
         <span style={{ fontSize: 14 }}>🔊</span>
         <span style={{ fontWeight: 700, fontSize: 14, color: t.text, flex: 1 }}>Test Cloned Voice</span>
+        <X size={18} color={t.textMuted} style={{ cursor: "pointer", flexShrink: 0 }} aria-label="Close cloned voice test" onClick={() => setClosed(true)} />
       </div>
       <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 8, lineHeight: 1.5 }}>
         Test only — hear how a cloned voice sounds. Nothing is posted to any chat or uploaded anywhere.
@@ -705,7 +819,7 @@ function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc }) {
         style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, color: t.text, background: t.bg, outline: "none", cursor: "pointer" }}
       >
         {voices.map((v) => (
-          <option key={v.id} value={v.id}>{v.fullName || v.name}</option>
+          <option key={v.id} value={v.id}>{v.name}</option>
         ))}
       </select>
       <div style={{ fontSize: 12, fontWeight: 600, color: t.text, marginTop: 8, marginBottom: 4 }}>Sample text</div>
@@ -716,6 +830,9 @@ function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc }) {
         rows={3}
         style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 13, color: t.text, background: t.bg, outline: "none", resize: "vertical", fontFamily: "inherit" }}
       />
+      <div onClick={autoFormat} style={{ alignSelf: "flex-end", textAlign: "center", padding: "9px 14px", borderRadius: 10, background: t.primary, fontWeight: 700, fontSize: 12.5, color: t.bubbleMeText, cursor: formatting ? "wait" : "pointer", opacity: formatting ? 0.6 : 1, marginBottom: 8, marginTop: 4 }}>
+        {formatting ? "Formatting…" : "Auto-Format for Voice"}
+      </div>
       <button
         onClick={generate}
         disabled={busy}
@@ -728,6 +845,16 @@ function ClonedVoiceTestSection({ t, globalSettings, sysConfig, userDoc }) {
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 4 }}>Preview — in-memory only, not saved anywhere.</div>
           <audio src={previewUrl} controls style={{ width: "100%" }} />
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button onClick={handleRedo} style={{ flex: 1, padding: 10, borderRadius: 10, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              ↺ Redo
+            </button>
+            {dlAllowed && (
+              <button onClick={downloadTest} style={{ flex: 1, padding: 10, borderRadius: 10, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                ⬇ Download
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -844,6 +971,8 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
   const [sttShowInterim, setSttShowInterim] = useState(() => localStorage.getItem("nextext_stt_show_interim") === "on");
   const [sttCancelButton, setSttCancelButton] = useState(() => localStorage.getItem("nextext_stt_cancel_button") !== "off");
   const [hideVersion, setHideVersion] = useState(() => localStorage.getItem("nextext_hide_version") !== "off");
+  const { config: remoteConfig } = useRemoteConfig();
+  const [updateCheckMsg, setUpdateCheckMsg] = useState("");
   const [hideComposerCamera, setHideComposerCamera] = useState(() => localStorage.getItem("nextext_hide_composer_camera") === "on");
   const [useCustomPrompt, setUseCustomPrompt] = useState(() => localStorage.getItem("nextext_ai_custom_instructions_enabled") !== "off");
   const [aiRequestStatus, setAiRequestStatus] = useState("");
@@ -912,7 +1041,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     try { localStorage.setItem("nextext_settings_layout", next); } catch {}
   };
   const [appearanceSubs, setAppearanceSubs] = useState({});
-  const [hideEmojisOn, setHideEmojisOn] = useState(() => localStorage.getItem("nextext_hide_emojis") === "on");
+  const [settingsStyle, setSettingsStyle] = useState(() => localStorage.getItem("nextext_settings_style") || "modern");
   const [resetPasswordModal, setResetPasswordModal] = useState(false);
   const [resetPasswordInput, setResetPasswordInput] = useState("");
   const [disableLockModal, setDisableLockModal] = useState(false);
@@ -1001,12 +1130,38 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
       </div>
     );
   };
+  // Batch 4 item K: map the rough emoji section glyphs to polished, theme-aware
+  // lucide icons (transparent, color follows the active theme). Unmapped emojis
+  // fall back to the original glyph so unrelated icons are never redesigned.
+  const EMOJI_ICON = {
+    "👤": User, "🔐": Lock, "🔔": Bell, "🎨": Palette, "💬": MessageSquare,
+    "📷": Camera, "🎵": Music, "🖼️": ImageIcon, "🔊": Volume2, "📱": Smartphone,
+    "🔍": Search, "🌐": Globe, "🔑": KeyRound, "🛡️": Shield, "👥": Users,
+    "⭐": Star, "📶": Wifi, "⏰": Clock, "❤️": Heart, "👁️": Eye, "⚡": Zap,
+    "🌙": Moon, "☀️": Sun, "💡": Sparkles, "🤖": Bot, "🔄": RefreshCw, "🎯": CircleDot,
+    "🗑️": Trash2, "📣": Megaphone, "😊": Smile, "🧭": Compass, "🔧": SettingsIcon, "✉️": MessageCircle,
+    // ── migrated Settings sections (transparent, theme-matched lucide glyphs) ──
+    "🔒": Lock, "🎤": Mic, "🎙️": AudioLines, "⚙️": SettingsIcon, "🛠️": Wrench, "🧪": FlaskConical,
+  };
+  const renderSectionGlyph = (emoji) => {
+    const Icon = EMOJI_ICON[emoji];
+    // "classic" style shows the original emoji glyphs; "modern" (default) shows
+    // the redesigned lucide icons. Purely a Settings appearance preference.
+    if (settingsStyle === "classic") {
+      return <span style={{ width: 26, textAlign: "center", flexShrink: 0, fontSize: 18 }}>{emoji || "•"}</span>;
+    }
+    if (!Icon) return emoji || "";
+    return <Icon size={18} color={t.primary} style={{ width: 26, textAlign: "center", flexShrink: 0 }} />;
+  };
+
   const SectionCard = useMemo(() => ({ title, emoji, children, sectionKey, onToggle }) => {
     const ctx = React.useContext(SettingsSearchContext) || { query: "", revamped: false };
     const q = (ctx.query || "").trim().toLowerCase();
-    // When the user hides emojis (Appearance & Interface), drop the decorative
-    // emoji glyph from every settings section header.
-    const showEmoji = !hideEmojisOn;
+    // Settings glyphs are rendered via renderSectionGlyph, which chooses between
+    // the Modern (lucide icon) and Classic (emoji) presentation based on the
+    // `settingsStyle` preference (see Hyper Customization). Both styles always
+    // show a glyph; there is no longer a separate "Hide Emojis" toggle.
+    const showEmoji = true;
     const bodyRef = React.useRef(null);
     const [bodyText, setBodyText] = React.useState("");
     React.useLayoutEffect(() => {
@@ -1028,7 +1183,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
       return (
         <div style={{ marginBottom: 22, ...(hide ? { display: "none" } : null) }}>
           <div onClick={sectionKey ? () => (onToggle ? onToggle() : toggleSection(sectionKey)) : undefined} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, cursor: sectionKey ? "pointer" : "default", padding: "6px 4px" }}>
-            <span style={{ fontSize: 18, width: 26, textAlign: "center" }}>{showEmoji ? emoji : ""}</span>
+            <span style={{ fontSize: 18, width: 26, textAlign: "center", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{renderSectionGlyph(emoji)}</span>
             <span style={{ fontWeight: 800, fontSize: 16, color: t.text, flex: 1, letterSpacing: 0.2 }}>{title}</span>
             {sectionKey && <span style={{ fontSize: 12, color: t.textMuted, transition: "transform 0.2s", transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>⌄</span>}
           </div>
@@ -1048,7 +1203,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
     return (
       <div style={{ marginBottom: 18, ...(hide ? { display: "none" } : null) }}>
         <div onClick={sectionKey ? () => (onToggle ? onToggle() : toggleSection(sectionKey)) : undefined} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, cursor: sectionKey ? "pointer" : "default" }}>
-          <span style={{ fontSize: 14 }}>{showEmoji ? emoji : ""}</span>
+          <span style={{ fontSize: 14, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{renderSectionGlyph(emoji)}</span>
           <span style={{ fontWeight: 700, fontSize: 14, color: headerColor, flex: 1 }}>{title}</span>
           {sectionKey && <span style={{ fontSize: 11, color: t.textMuted, transition: "transform 0.2s", transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>}
         </div>
@@ -1059,7 +1214,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
         )}
       </div>
     );
-  }, [t, openSections, hideEmojisOn]);
+  }, [t, openSections, settingsStyle]);
 
   // ── Bottom bar customizer helpers ──
   const ALL_TABS = [
@@ -1464,7 +1619,7 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 
         <SectionCard title="Submit Voice Sample (cloned voice)" emoji="🎙️" sectionKey="voiceSampleSubmit">
           <VoiceSampleSubmitSection t={t} myUid={myUid} userDoc={userDoc} />
-          <ClonedVoiceTestSection t={t} globalSettings={globalSettings} sysConfig={sysConfig} userDoc={userDoc} />
+          <ClonedVoiceTestSection t={t} globalSettings={globalSettings} sysConfig={sysConfig} userDoc={userDoc} myUid={myUid} />
         </SectionCard>
 
         {/* ═══ NOTIFICATION SOUND & VIBRATION ═══ */}
@@ -1480,12 +1635,6 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             label="Settings layout"
             sub={altSettingsView === "revamped" ? "Revamped — searchable & modern" : "Classic"}
             right={<Toggle on={altSettingsView === "revamped"} onClick={toggleAltSettingsView} />}
-          />
-          <Row
-            icon={<Smile size={18} color={t.primary} />}
-            label="Hide emojis in Settings"
-            sub={hideEmojisOn ? "Section emoji icons hidden" : "Emoji icons shown"}
-            right={<Toggle on={hideEmojisOn} onClick={() => { const next = !hideEmojisOn; setHideEmojisOn(next); localStorage.setItem("nextext_hide_emojis", next ? "on" : "off"); }} />}
           />
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
             <div style={{ flex: 1 }}>
@@ -1808,6 +1957,30 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </div>
             <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>Automatically check for a new version each time you open the app.</div>
             <div style={{ fontSize: 11, color: t.textMuted, marginTop: 8, textAlign: "center" }}>NexText v{APP_VERSION}</div>
+
+            <SectionCard title="NexText Updates" emoji="🔄" sectionKey="updates">
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                {[["App (APK)", APP_VERSION], ["Web Build", remoteConfig?.webBuild || "—"], ["Config v", String(remoteConfig?.configVersion || 0)], ["Latest APK", remoteConfig?.latestApkVersion || "—"]].map(([k, v]) => (
+                  <div key={k} style={{ background: t.bg, borderRadius: 10, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 11, color: t.textMuted }}>{k}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: t.text }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              {(() => {
+                const st = getApkUpdateStatus(remoteConfig, APP_VERSION);
+                const label = st.severity === "required" ? "Required update — please update" : st.severity === "recommended" ? "Update recommended" : st.severity === "optional" ? "Update available" : "Up to date";
+                const color = st.severity === "none" ? "#34C759" : st.severity === "optional" ? t.primary : "#FF9500";
+                return <div style={{ fontSize: 13, fontWeight: 700, color, marginBottom: 8 }}>{label}</div>;
+              })()}
+              <button onClick={async () => {
+                try { const u = await checkForUpdate(); setUpdateCheckMsg(u ? `v${u.version} available` : "You're up to date."); }
+                catch (e) { setUpdateCheckMsg(e?.code === "RATE_LIMITED" ? "Update check rate-limited; try later." : "Could not check for updates."); } }}
+                style={{ width: "100%", padding: 10, borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                Check for Updates
+              </button>
+              {updateCheckMsg && <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 8, textAlign: "center" }}>{updateCheckMsg}</div>}
+            </SectionCard>
           </div>
 
           <div style={{ padding: "13px 0" }}>
@@ -1872,6 +2045,22 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
             </div>
 
             {/* More rounded UI */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Settings style</div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1 }}>Modern icons or the classic emoji look.</div>
+              </div>
+              <div style={{ display: "flex", gap: 4, background: t.bg, borderRadius: 10, padding: 3, border: `1px solid ${t.border}`, flexShrink: 0 }}>
+                {["modern", "classic"].map((v) => (
+                  <span
+                    key={v}
+                    onClick={() => { setSettingsStyle(v); localStorage.setItem("nextext_settings_style", v); try { updateDoc(doc(db, "users", myUid), { settingsStyle: v }); } catch (e) {} }}
+                    style={{ padding: "6px 11px", borderRadius: 8, fontSize: 12, fontWeight: 700, textTransform: "capitalize", cursor: "pointer", color: (settingsStyle || "modern") === v ? "#fff" : t.text, background: (settingsStyle || "modern") === v ? t.primary : "transparent" }}
+                  >{v === "modern" ? "Modern" : "Classic Emoji"}</span>
+                ))}
+              </div>
+            </div>
+
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, color: t.text, fontSize: 15 }}>Rounded UI</div>
@@ -1939,6 +2128,31 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
               >
                 <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: localStorage.getItem("nextext_fab_locked") !== "off" ? 23 : 3, transition: "left 0.15s" }} />
               </div>
+            </div>
+
+            {/* Receipt check colors */}
+            <div style={{ padding: "13px 0", borderTop: `1px solid ${t.border}` }}>
+              <div style={{ fontWeight: 600, color: t.text, fontSize: 15, marginBottom: 2 }}>Receipt check colors</div>
+              <div style={{ fontSize: 12.5, color: t.textMuted, marginTop: 1, marginBottom: 10 }}>Customize the double-check ticks on your outgoing messages. Applies to chats and the chat list instantly.</div>
+              {(() => {
+                const rc = getReceiptColors(auth.userDoc);
+                const ReceiptColorRow = ({ label, field }) => (
+                  <div key={field} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 0" }}>
+                    <span style={{ fontSize: 13.5, color: t.text }}>{label}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ width: 18, height: 18, borderRadius: "50%", border: `2px solid ${rc[field]}`, display: "inline-block" }} />
+                      <input type="color" value={rc[field]} onChange={(e) => { const next = { ...rc, [field]: e.target.value }; saveReceiptColors(auth.user.uid, next).catch(() => {}); }} style={{ width: 40, height: 28, border: "none", borderRadius: 6, cursor: "pointer", background: "transparent" }} />
+                    </div>
+                  </div>
+                );
+                return (
+                  <>
+                    <ReceiptColorRow label="Pending / sent" field="pending" />
+                    <ReceiptColorRow label="Delivered / unread" field="delivered" />
+                    <ReceiptColorRow label="Read" field="read" />
+                  </>
+                );
+              })()}
             </div>
 
             {/* Lock AI widget position */}
@@ -2518,19 +2732,41 @@ function SettingsScreen({ myUid, isAdmin, themeKey, onOpenTheme, uiScale, setUiS
 }
 
 const DEFAULT_NAV_CONFIG = [{ key: "chats" }, { key: "status" }, { key: "groups" }, { key: "settings" }];
-const TAB_KEYS = ["chats", "status", "groups", "settings"];
+const TAB_KEYS = ["chats", "status", "groups", "calling", "settings"];
 
 // Single source of truth for the visible tab order (pager + bottom bar).
 // Applies restrictions, forces "chats" to front, "settings" to end when top bar hidden.
-function getEffectiveTabs(navConfig, userRestrictions, topBarVisible) {
+// Also handles calling feature flags: callingEnabled hides the tab entirely, and
+// callingReplacesSettingsTab swaps settings for calling.
+function getEffectiveTabs(navConfig, userRestrictions, topBarVisible, globalSettings) {
+  const callingEnabled = resolveCallingEnabled(globalSettings);
+  const callingReplacesSettings = resolveCallingReplacesSettingsTab(globalSettings);
   const tabs = navConfig
     .filter(({ key }) => {
       if (key === "status" && userRestrictions?.blockStatus === true) return false;
       if (key === "groups" && userRestrictions?.blockGroups === true) return false;
+      if (key === "calling" && !callingEnabled) return false;
+      if (key === "settings" && callingReplacesSettings) return false;
       return TAB_KEYS.includes(key);
     })
     .map(({ key }) => key);
-  if (!topBarVisible && !tabs.includes("settings")) tabs.push("settings");
+  // Inject calling tab when enabled and not already present (unless it replaces settings and we already hid it)
+  if (callingEnabled && !tabs.includes("calling")) {
+    if (callingReplacesSettings) {
+      const settingsIdx = -1;
+      tabs.push("calling");
+    } else {
+      // Insert before settings if present, else append
+      const idx = tabs.indexOf("settings");
+      if (idx >= 0) tabs.splice(idx, 0, "calling");
+      else tabs.push("calling");
+    }
+  }
+  // When calling replaces settings, ensure calling is present even if navConfig never had it
+  if (callingReplacesSettings && callingEnabled && !tabs.includes("calling") && !tabs.includes("settings")) {
+    tabs.push("calling");
+  }
+  if (!topBarVisible && !tabs.includes("settings") && !callingReplacesSettings) tabs.push("settings");
   // Chats must always be reachable; if a (bad) navConfig dropped it, append it.
   // NOTE: we no longer force chats to the front — that broke the user's chosen
   // launch page (cold start must open on launchPage, not always the chat list).
@@ -2795,9 +3031,23 @@ function AppShell({ appLocked, setAppLocked }) {
     } catch { return "chats"; }
   });
   const [activeNavTab, setActiveNavTab] = useState(() => {
+    // Derive the initial highlight from the SAME authority used at cold start
+    // (admin Default Launch Page > local launch-page setting > "chats") so the
+    // bottom bar can never disagree with the opened content on first paint.
+    try {
+      const admin = getDefaultLaunchPage(globalSettings);
+      if (admin === "chats" || admin === "groups") return admin;
+    } catch { /* fall through */ }
     try { return localStorage.getItem("nextext_launch_page") || "chats"; }
     catch { return "chats"; }
   });
+  // ONE authoritative Status Builder navigation state. The builder belongs to the
+  // Status route conceptually, but is rendered once here (portal to body) so it
+  // escapes the transformed pager and is never mistakenly shown by a different
+  // always-mounted tab. `statusBuilder` truthy => builder open.
+  const [statusBuilder, setStatusBuilder] = useState(null);
+  const openStatusBuilder = (init) => setStatusBuilder(init || {});
+  const closeStatusBuilder = () => setStatusBuilder(null);
   // ONE authoritative cold-start destination: explicit deep-link/notification
   // targets are applied by their own handlers afterwards; everything else uses
   // this single value so highlight and content can never disagree.
@@ -3080,6 +3330,18 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid]);
 
+  // Record/update this device in the user's device history (admin "Device History").
+  // Runs once per user session — never per render. Lightweight non-media metadata.
+  useEffect(() => {
+    if (!myUid) return;
+    let cancelled = false;
+    import("./firebase/devices").then(({ recordDevice }) => {
+      if (!cancelled) recordDevice(myUid);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myUid]);
+
 // Cold-start safety net. Runs IMMEDIATELY AFTER the restore effect so any late
   // state writes (a notification tap routing to screen="chat" before the chat
   // list loaded, a stale mid-sign-out app_state, a blocked tab in navConfig)
@@ -3087,6 +3349,12 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // bottom nav visible — the reported "bottom bar missing / dead group row
   // until I tap Settings" cold start. Only fires once per user session.
   const [coldStartComplete, setColdStartComplete] = useState(false);
+  // Startup-authority guards: userNav flips true the moment the user (not the
+  // boot sequence) chooses a destination, so late-arriving server settings can
+  // never yank them elsewhere. settingsArrivalKey re-arms the one-shot
+  // startup re-assert when the server's admin default first lands.
+  const userNavRef = useRef(false);
+  const settingsArrivalKeyRef = useRef("");
   // Temporary boot diagnostic (v1.6.21): shows the real tab state for 12s so a
    const [pagerDebug, setPagerDebug] = useState("");
    // While true, the in-app splash stays fully opaque. The awake-kick releases
@@ -3134,6 +3402,40 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     setColdStartComplete(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid]);
+
+  // Startup authority, part 2: when the server's admin Default Launch Page
+  // first arrives (after the one-shot boot effects already ran), re-assert it —
+  // unless the user has already navigated somewhere themselves. Also a short
+  // post-boot watchdog forces bar<->row agreement no matter what transient
+  // cause (late restore, stale transform) tried to split them.
+  const settingsKey = globalSettings === undefined ? "undef" : (globalSettings === null ? "null" : String(globalSettings?.launchPageDefault || "none"));
+  useEffect(() => {
+    if (!coldStartComplete || !myUid) return;
+    if (settingsArrivalKeyRef.current === settingsKey) return;
+    settingsArrivalKeyRef.current = settingsKey;
+    if (userNavRef.current) return;
+    const want = resolveStartupTab();
+    if (orderedTabs.includes(want) && want !== activeNavTab) navigateToTab(want);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsKey, coldStartComplete, myUid]);
+
+  useEffect(() => {
+    if (!coldStartComplete || !myUid) return;
+    const checks = [250, 800, 2000, 4000].map((ms) => setTimeout(() => {
+      if (userNavRef.current) return;
+      if (screen === "list") {
+        const want = resolveStartupTab();
+        if (orderedTabs.includes(want) && want !== activeNavTab) { navigateToTab(want); return; }
+        const idx = orderedTabs.indexOf(activeNavTab);
+        if (idx >= 0 && pagerRowRef.current) {
+          pagerRowRef.current.style.transition = "none";
+          pagerRowRef.current.style.transform = `translateX(${-idx * 100}%)`;
+        }
+      }
+    }, ms));
+    return () => checks.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coldStartComplete, myUid]);
 
   // Story-viewer invariant: the viewer is only ever mounted while the Status
   // tab is on screen. If storyViewerOpen sticks true on any other screen it
@@ -3447,6 +3749,10 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
   const { contacts } = useContacts(myUid);
   const { chats: myChats } = useChats(myUid);
+  // App-wide background delivery receipts: marks messages delivered as soon as the
+  // recipient's device has them (not only when the chat is opened). Read receipts
+  // remain tied to actually viewing the conversation.
+  useDeliveryReceipts(myUid);
   // Badge count mode: "chats" = number of chats that have unread messages
   // (WhatsApp-style), "messages" = total unread message count. User toggles in
   // Settings (nextext_badge_mode).
@@ -3457,7 +3763,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     : unreadChatCount;
   const contactUids = (contacts || []).filter((c) => c.status === "accepted").map((c) => c.uid);
   const allStatusUids = [myUid, ...contactUids];
-  const allStatuses = useStatuses(myUid ? allStatusUids : []);
+  const allStatuses = useStatuses(myUid ? allStatusUids : [], myUid);
 
   // Device "Share to NexText" receiver. When another app shares text/media to
   // NexText, the native layer stores it (and fires `nextextShare`); we surface a
@@ -3880,12 +4186,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       // screen exists, go there, otherwise let the OS close the app.
       let backListener = null;
       const onBack = () => {
-        // If a status builder / camera sheet is open, let it handle the back
-        // press instead of popping the navigation stack. The status screen
-        // exposes `__nextextStatusBuilderOpen` and listens for `nextextCloseStatusBuilder`.
+        // If the Status Builder is open, let it handle the back press (close it)
+        // instead of popping the navigation stack.
         try {
-          if (window.__nextextStatusBuilderOpen) {
-            window.dispatchEvent(new CustomEvent("nextextCloseStatusBuilder"));
+          if (statusBuilder) {
+            closeStatusBuilder();
             return;
           }
         } catch {}
@@ -4035,7 +4340,19 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   };
 
   // ── Swipeable tab pager (WhatsApp-style drag + snap) ──────────────
-  const orderedTabs = getEffectiveTabs(navConfig, userRestrictions, topBarVisible);
+  const orderedTabs = getEffectiveTabs(navConfig, userRestrictions, topBarVisible, globalSettings);
+
+  // If calling is disabled but user was on calling tab, fall back to chats without reload
+  useEffect(() => {
+    if (!resolveCallingEnabled(globalSettings) && activeNavTab === "calling") {
+      setActiveNavTab("chats");
+      if (screen === "list") setScreen("list");
+    }
+    if (resolveCallingReplacesSettingsTab(globalSettings) && activeNavTab === "settings") {
+      // settings disappeared, go to calling
+      if (orderedTabs.includes("calling")) setActiveNavTab("calling");
+    }
+  }, [globalSettings?.calling?.enabled, globalSettings?.calling?.replacesSettingsTab, activeNavTab, screen, orderedTabs.join(",")]);
 
   const currentTabKey = screen === "status" ? "status"
     : screen === "settings" ? "settings"
@@ -4062,6 +4379,11 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   // so translateX(-index * 100%) is stable and works on first paint.
   const orderedTabsKey = orderedTabs.join(",");
   useLayoutEffect(() => {
+    // A drag ref that exists while no drag is in progress (pagerDragging false)
+    // is STALE — a dropped/cancelled touch that never cleaned up. Left alone it
+    // freezes the row on a stale page while the bar tracks the real tab (the
+    // "bar says Chats, page shows Groups" class of bug). Clear and proceed.
+    if (pagerDragRef.current && !pagerDragging) pagerDragRef.current = null;
     if (pagerRowRef.current && !pagerDragRef.current?.active) {
       pagerRowRef.current.style.transform = `translateX(${-effectiveIndex * 100}%)`;
     }
@@ -4090,7 +4412,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       const metaW = meta ? meta.getAttribute("content") : "?";
       setPagerDebug(`ei=${effectiveIndex} pi=${pageIndex} cti=${currentTabIndex} | ${parts.join("  ")} | shell@${shellX} cont@${containerX} root@${rootX} scroll@${docScroll} pageT=${pageT} rowT=${rowT} iw=${window.innerWidth} meta=${metaW}`);
     } catch {}
-  }, [effectiveIndex, orderedTabsKey, pageIndex, currentTabIndex]);
+  }, [effectiveIndex, orderedTabsKey, pageIndex, currentTabIndex, pagerDragging]);
 
   // Sync the pager position whenever the active tab changes via bottom bar,
   // top-bar buttons, or programmatic navigation (e.g. opening a status).
@@ -4130,6 +4452,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     const coldStartPagerLockRef = useRef(false);
   useEffect(() => {
     if (!myUid) return;
+    if (screen !== "list") return;
     if (orderedTabs.length === 0) return;
     if (coldStartPagerLockRef.current) return;
     coldStartPagerLockRef.current = true;
@@ -4139,8 +4462,19 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   }, [orderedTabs.join(","), myUid, globalSettings?.hideLaunchPage]);
 
   const navigateToTab = (key) => {
+    // If leaving Status while Jewish is selected, normalize to Updates before navigation
+    const leavingStatus = (screen === "status" || activeNavTab === "status") && key !== "status";
+    if (leavingStatus) { try { window.dispatchEvent(new Event("nextextLeaveStatus")); } catch {} }
     if (key === "status") { setStatusOrigin("status"); setScreen("status"); return; }
     if (key === "settings") { setScreen("settings"); return; }
+    if (key === "calling") {
+      const idx = orderedTabs.indexOf(key);
+      if (idx === -1) return;
+      setPageIndex(idx);
+      setActiveNavTab(key);
+      setScreen("list");
+      return;
+    }
     const idx = orderedTabs.indexOf(key);
     if (idx === -1) return;
     setPageIndex(idx);
@@ -4155,7 +4489,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
     // Jewish Statuses creator strip). A horizontal drag that STARTS on one of
     // those must scroll the inner content, not swipe the whole page. Anywhere
     // else on the screen, a horizontal drag still switches pages as normal.
-    if (screen === "status" && e.target && e.target.closest && e.target.closest(".noPagerSwipe")) return;
+    if (e.target && e.target.closest && e.target.closest(".noPagerSwipe")) return;
     // A new drag interrupts any in-flight snap animation — snap back to the
     // tap transition immediately.
     if (snapTimerRef.current) { clearTimeout(snapTimerRef.current); snapTimerRef.current = null; }
@@ -4463,8 +4797,10 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
   if (moreRounded) shellClass.push("nx-rounded");
 
   return (
-    <>
-    <QuotaBanner />
+     <CallProvider>
+     <QuotaBanner />
+     <CallOverlay />
+     <MissedCallBanner />
     <div
       ref={shellRef}
       id="nextext-app-shell"
@@ -4526,21 +4862,28 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           if (key === "chats") return (
             <div key="chats" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Chats">
-                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "chats"} onOpenAI={() => setScreen("aiChat")} showAIWidget={!liveUserDoc?.aiDisabledByUser} />
+                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => { userNavRef.current = true; setScreen("settings"); }} onOpenAdmin={() => { userNavRef.current = true; setScreen("admin"); }} hideNav={hideNav} navTab="chats" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "chats"} onOpenAI={() => setScreen("aiChat")} showAIWidget={!liveUserDoc?.aiDisabledByUser} openStatusBuilder={openStatusBuilder} closeStatusBuilder={closeStatusBuilder} />
               </PageErrorBoundary>
             </div>
           );
           if (key === "groups") return (
             <div key="groups" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Groups">
-                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => setScreen("settings")} hideNav={hideNav} navTab="groups" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "groups"} />
+                <ChatListScreen myUid={myUid} userDoc={liveUserDoc || auth.userDoc} onOpenChat={openChat} onOpenGroupInfo={openGroupInfo} onOpenSettings={() => { userNavRef.current = true; setScreen("settings"); }} onOpenAdmin={() => { userNavRef.current = true; setScreen("admin"); }} hideNav={hideNav} navTab="groups" compactList={compactList} searchMode={searchMode} topBarVisible={topBarVisible} searchBarScale={searchBarScale} isActiveTab={activeNavTab === "groups"} openStatusBuilder={openStatusBuilder} closeStatusBuilder={closeStatusBuilder} />
               </PageErrorBoundary>
             </div>
           );
           if (key === "status") return (
             <div key="status" ref={pageRef} style={pageStyle}>
               <PageErrorBoundary label="Status">
-                <StatusScreen myUid={myUid} myName={auth.userDoc?.displayName || auth.userDoc?.username} myPhoto={auth.userDoc?.photoURL} onBack={() => { setScreen("list"); setActiveNavTab("chats"); setStoryViewerOpen(false); }} onStoryViewerChange={setStoryViewerOpen} initialViewStatuses={initialViewStatuses} statusOrigin={statusOrigin} onConsumeInitialView={() => setInitialViewStatuses(null)} />
+                <StatusScreen myUid={myUid} myName={auth.userDoc?.displayName || auth.userDoc?.username} myPhoto={auth.userDoc?.photoURL} onBack={() => { setScreen("list"); setActiveNavTab("chats"); setStoryViewerOpen(false); }} onStoryViewerChange={setStoryViewerOpen} initialViewStatuses={initialViewStatuses} statusOrigin={statusOrigin} onConsumeInitialView={() => setInitialViewStatuses(null)} openStatusBuilder={openStatusBuilder} closeStatusBuilder={closeStatusBuilder} isActive={screen === "status" || (screen === "list" && activeNavTab === "status")} />
+              </PageErrorBoundary>
+            </div>
+          );
+          if (key === "calling") return (
+            <div key="calling" ref={pageRef} style={pageStyle}>
+              <PageErrorBoundary label="Calling">
+                <CallingTab myUid={myUid} onOpenSettings={() => { userNavRef.current = true; setScreen("settings"); }} />
               </PageErrorBoundary>
             </div>
           );
@@ -4716,14 +5059,15 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
 
 
 
-      {!hideNav && !cameraOpen && !storyViewerOpen && (screen === "list" || screen === "status" || screen === "settings") && (() => {
+      {!hideNav && !cameraOpen && !storyViewerOpen && !statusBuilder && (screen === "list" || screen === "status" || screen === "settings" || screen === "calling") && (() => {
         const ALL_TABS = {
           chats: { icon: MessageSquare, label: "Chats" },
           status: { icon: CircleDot, label: "Status" },
           groups: { icon: Users, label: "Groups" },
+          calling: { icon: Phone, label: "Calling" },
           settings: { icon: SettingsIcon, label: "Settings" },
         };
-        const effectiveTabs = getEffectiveTabs(navConfig, userRestrictions, topBarVisible);
+        const effectiveTabs = getEffectiveTabs(navConfig, userRestrictions, topBarVisible, globalSettings);
         const navTabs = effectiveTabs.map((key) => ({ key, ...ALL_TABS[key] }));
         if (!navTabs.length) return null;
         try {
@@ -4732,7 +5076,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
             {navTabs.map(({ key, icon: Icon, label }) => {
               const isActive = key === "settings" ? screen === "settings" : key === "status" ? screen === "status" : (screen === "list" && activeNavTab === key);
               return (
-              <div key={key} data-tour-nav={key} onClick={() => navigateToTab(key)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "10px 0 12px", cursor: "pointer", color: isActive ? t.primary : t.textMuted, position: "relative" }}>
+              <div key={key} data-tour-nav={key} onClick={() => { userNavRef.current = true; navigateToTab(key); }} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "10px 0 12px", cursor: "pointer", color: isActive ? t.primary : t.textMuted, position: "relative" }}>
                 <div style={{ position: "relative" }}>
                   <Icon size={20} />
                   {key === "chats" && totalUnreadChats > 0 && (
@@ -4762,6 +5106,26 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
           );
         }
       })()}
+
+      {/* Authoritative NEW Status Builder — rendered exactly once, portaled to
+          body so it escapes the transformed pager and is never shown by a
+          different always-mounted tab. Bottom nav is hidden while it's open. */}
+      {statusBuilder && createPortal(
+        <div style={{ position: "fixed", inset: 0, zIndex: 2147483000 }}>
+          <StatusBuilderNew
+            myUid={myUid}
+            userDoc={liveUserDoc || auth.userDoc}
+            globalSettings={globalSettings}
+            sysConfig={sysConfig}
+            initialFile={statusBuilder.initialFile || null}
+            initialFileType={statusBuilder.initialFileType || null}
+            initialText={statusBuilder.initialText || ""}
+            onClose={closeStatusBuilder}
+            onPosted={closeStatusBuilder}
+          />
+        </div>,
+        document.body
+      )}
 
       {askAIGlobal && (
         <AskAIPanel
@@ -4894,7 +5258,7 @@ const [splashVisible, setSplashVisible] = useState(() => localStorage.getItem("n
       )}
 
     </div>
-    </>
+    </CallProvider>
   );
 }
 

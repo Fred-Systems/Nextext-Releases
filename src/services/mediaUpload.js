@@ -1,4 +1,4 @@
-import { supabase, MEDIA_BUCKET, CLOUDINARY_BASE_URL, CLOUDINARY_UPLOAD_PRESET } from "../supabase/config";
+import { CLOUDINARY_BASE_URL, CLOUDINARY_UPLOAD_PRESET, CLOUDINARY_CLOUD_NAME } from "../supabase/config";
 import { compressImage as _compressImage, assertUnderSizeLimit, FileTooLargeError, generateBlurData } from "../media/mediaCompression";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6,82 +6,53 @@ import { compressImage as _compressImage, assertUnderSizeLimit, FileTooLargeErro
 //
 // Every media upload in the app (chat media, status updates, group photos,
 // avatars) goes through uploadMediaFile(). It:
-//   1. Blocks any raw file over 50MB BEFORE compression (user-facing alert).
-//      Videos are allowed up to 50MB (no aggressive pre-compression gate).
+//   1. Blocks any raw file over the active provider's limit BEFORE compression
+//      (100MB on Cloudinary, 50MB on Supabase) — user-facing alert via
+//      RawFileTooLargeError. Videos are allowed up to the provider limit (no
+//      aggressive pre-compression gate).
 //   2. Compresses images to ~70% JPEG quality, capped at 1920px.
 //   3. Extracts a static .jpg thumbnail from the FIRST FRAME of any video.
-//   4. Routes to the active storage provider (supabase | cloudinary) read from
-//      the Supabase `system_settings` table (active_storage_provider).
-//      - cloudinary : ONLY used for image/video media (unsigned upload via
-//                     cloud name 'lsfhbqod', preset 'app_unsigned_preset').
-//                     Non-media files (documents, audio, etc.) are never sent
-//                     to Cloudinary — they always go to Supabase regardless of
-//                     the active provider, because the unsigned preset can't
-//                     handle them and they shouldn't live on a CDN.
-//      - supabase   : uploads to chat-media bucket with cacheControl: 31536000
+//   4. Uploads to Cloudinary ONLY — the single storage backend for all
+//      NexText-owned media (unsigned upload via cloud name 'lsfhbqod',
+//      preset 'app_unsigned_preset'). Supabase Storage / Firebase Storage are
+//      NOT used for NexText-owned media bytes.
 //   5. Returns { url, thumbnailURL, path, sizeBytes, ... } to save into the
 //      messages / statuses tables.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Raw pre-compression gate. Videos and images may be up to 50MB (videos are
-// NOT re-encoded client-side, so the 50MB raw limit is the real upload cap).
-// Other file types also get 50MB but are never routed to Cloudinary.
-const RAW_IMAGE_LIMIT = 50 * 1024 * 1024;
-const RAW_VIDEO_LIMIT = 50 * 1024 * 1024;
-const RAW_OTHER_LIMIT = 50 * 1024 * 1024;
+// Raw pre-compression gate. The cap depends on the ACTIVE storage provider:
+//   - cloudinary : 100MB (Cloudinary free-tier per-file limit)
+//   - supabase   : 50MB  (Supabase free-tier per-file limit)
+// Read live from system_settings so flipping the provider in admin instantly
+// changes the enforced limit (no app update needed). The same values are also
+// applied consistently to chat media, status media, voice notes, and generated
+// app-owned media uploads (all route through assertRawUnderLimit / here).
+const RAW_CLOUDINARY_LIMIT = 100 * 1024 * 1024;
+const RAW_SUPABASE_LIMIT = 50 * 1024 * 1024;
+// Belt-and-braces ceiling: never block higher than the largest provider allows.
+export const RAW_UPLOAD_LIMIT = RAW_CLOUDINARY_LIMIT;
 
 const MAX_IMAGE_DIMENSION = 1200;
 const IMAGE_QUALITY = 0.7;
 const THUMB_WIDTH = 480;
 
-export const RAW_UPLOAD_LIMIT = RAW_VIDEO_LIMIT;
+// Resolve the raw upload byte limit for the currently active provider.
+export async function getRawUploadLimitBytes() {
+  let provider = cachedProvider;
+  if (!provider) provider = await getActiveStorageProvider();
+  return provider === "cloudinary" ? RAW_CLOUDINARY_LIMIT : RAW_SUPABASE_LIMIT;
+}
 
-// Read the active storage provider with 3-tier fallback:
-// 1. localStorage cache (instant, set by the admin toggle)
-// 2. Firestore globalSettings (primary source, same doc the admin panel reads)
-// 3. Supabase system_settings (legacy fallback)
-let cachedProvider = null;
-let providerCheckPromise = null;
+// NexText-owned media is stored in Cloudinary ONLY. Supabase Storage / Firebase
+// Storage MUST NOT contain any NexText-owned media bytes (status photos/videos,
+// chat photos/videos, voice notes, generated images, builder output, etc.).
+// Supabase is still used for NON-MEDIA data (system settings, analytics,
+// engagement metadata). The active-provider toggle therefore no longer routes
+// media; this always resolves to "cloudinary" so uploads can never silently fall
+// back into a Supabase bucket.
+let cachedProvider = "cloudinary";
 export function getActiveStorageProvider() {
-  if (cachedProvider) return Promise.resolve(cachedProvider);
-  if (providerCheckPromise) return providerCheckPromise;
-  providerCheckPromise = (async () => {
-    // Tier 1: localStorage cache (set by the admin toggle)
-    try {
-      const lsVal = localStorage.getItem("nextext_active_storage_provider");
-      if (lsVal === "cloudinary" || lsVal === "supabase") {
-        cachedProvider = lsVal;
-        return cachedProvider;
-      }
-    } catch {}
-
-    // Tier 2: Firestore globalSettings
-    try {
-      const { getSnapshot } = await import("../firebase/config-settings.js");
-      const gs = getSnapshot?.();
-      if (gs?.active_storage_provider) {
-        cachedProvider = gs.active_storage_provider;
-        try { localStorage.setItem("nextext_active_storage_provider", cachedProvider); } catch {}
-        return cachedProvider;
-      }
-    } catch {}
-
-    // Tier 3: Supabase system_settings
-    try {
-      const { data, error } = await supabase
-        .from("system_settings")
-        .select("value")
-        .eq("key", "active_storage_provider")
-        .maybeSingle();
-      if (error) throw error;
-      cachedProvider = data?.value === "cloudinary" ? "cloudinary" : "supabase";
-      try { localStorage.setItem("nextext_active_storage_provider", cachedProvider); } catch {}
-    } catch {
-      cachedProvider = "supabase";
-    }
-    return cachedProvider;
-  })().finally(() => { providerCheckPromise = null; });
-  return providerCheckPromise;
+  return Promise.resolve("cloudinary");
 }
 
 export function setActiveStorageProviderCache(provider) {
@@ -104,16 +75,55 @@ export class RawFileTooLargeError extends Error {
   }
 }
 
-// Strict guard: a raw file over the type-specific limit is blocked immediately,
-// before any compression step. Callers should catch RawFileTooLargeError and alert.
-// Videos and images are allowed up to 50MB; other files up to 50MB as well.
-export function assertRawUnderLimit(file) {
-  let limit = RAW_OTHER_LIMIT;
-  if (file.type.startsWith("video/")) limit = RAW_VIDEO_LIMIT;
-  else if (file.type.startsWith("image/")) limit = RAW_IMAGE_LIMIT;
+// Strict guard: a raw file over the ACTIVE provider's limit is blocked
+// immediately, before any compression/upload step. The limit is provider-aware
+// (100MB on Cloudinary, 50MB on Supabase). Callers should catch
+// RawFileTooLargeError (its message already states the real MB limit) and alert.
+export async function assertRawUnderLimit(file) {
+  const limit = await getRawUploadLimitBytes();
   if (file.size > limit) {
     throw new RawFileTooLargeError(file.size, limit);
   }
+}
+
+// Centralized, user-friendly mapping for media/status upload failures. Returns a
+// plain-language message and NEVER echoes raw provider/Firebase error objects. We
+// also avoid falsely labeling every failure as a "quota/limit" error — network,
+// auth, and provider-rejection errors are reported as such, and only genuine
+// size/limit conditions say "limit"/"too large".
+export function describeUploadError(err, fallbackPrefix = "Upload failed") {
+  if (!err) return `${fallbackPrefix}. Please try again.`;
+  if (err instanceof RawFileTooLargeError || err instanceof FileTooLargeError) return err.message;
+  const message = String(err?.message || err?.code || err || "");
+  const lower = message.toLowerCase();
+  if (lower.includes("failed to fetch") || lower.includes("networkerror") || lower.includes("network error") || lower.includes("couldn't reach") || lower.includes("offline")) {
+    return "We couldn't reach the server. Check your internet connection and try again.";
+  }
+  if (lower.includes("cloudinary network error")) {
+    return "We couldn't reach the media server (Cloudinary). Check your connection and try again.";
+  }
+  if (lower.includes("cloudinary rejected")) {
+    if (lower.includes("too large") || lower.includes("file size") || lower.includes("exceed")) {
+      return "That file is too large for the media service to accept. Try a smaller file.";
+    }
+    if (lower.includes("format") || lower.includes("type") || lower.includes("invalid")) {
+      return "The media service rejected this file (unsupported format or type). Try a different file.";
+    }
+    return "The media service rejected the upload. Please try again.";
+  }
+  if (lower.includes("payload too large") || lower.includes("too large") || lower.includes("entity too large")) {
+    return "That file is too large to upload. Try a smaller file.";
+  }
+  if (lower.includes("storage") || lower.includes("bucket") || lower.includes("row level") || lower.includes("unauthorized") || lower.includes("permission")) {
+    return "The media service blocked this upload (permission or storage error). Please try again.";
+  }
+  if (lower.includes("quota") || lower.includes("limit reached") || lower.includes("resource-exhausted") || lower.includes("rate limit")) {
+    return "You've hit a temporary limit. Please wait a moment and try again.";
+  }
+  if (lower.includes("cancel") || lower.includes("aborted")) {
+    return "Upload was cancelled.";
+  }
+  return `${fallbackPrefix}. Please try again.`;
 }
 
 // Compress an image to JPEG ~70% quality, capped at 1920px longest side.
@@ -192,39 +202,9 @@ export function extractVideoThumbnail(videoFile) {
   });
 }
 
-// ── Provider uploaders ───────────────────────────────────────────────────────
-
-async function uploadToSupabase(chatId, senderUid, file, { thumbnailBlob = null } = {}) {
-  const safeSegment = (s) => String(s).replace(/[^a-zA-Z0-9._-]/g, "_");
-  const safeName = (file.name || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
-  const base = `${safeSegment(chatId)}/${safeSegment(senderUid)}/${Date.now()}`;
-  const mediaPath = `${base}-${safeName}`;
-
-  const { error: mediaErr } = await supabase.storage.from(MEDIA_BUCKET).upload(mediaPath, file, {
-    cacheControl: "31536000",
-    upsert: false,
-    contentType: file.type || "application/octet-stream",
-  });
-  if (mediaErr) throw mediaErr;
-
-  let thumbnailPath = null;
-  let thumbnailURL = null;
-  if (thumbnailBlob) {
-    thumbnailPath = `${base}-thumb.jpg`;
-    const { error: thumbErr } = await supabase.storage.from(MEDIA_BUCKET).upload(thumbnailPath, thumbnailBlob, {
-      cacheControl: "31536000",
-      upsert: false,
-      contentType: "image/jpeg",
-    });
-    if (!thumbErr) {
-      const { data } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(thumbnailPath);
-      thumbnailURL = data.publicUrl;
-    }
-  }
-
-  const { data } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(mediaPath);
-  return { url: data.publicUrl, path: mediaPath, thumbnailURL, thumbnailPath, provider: "supabase" };
-}
+// ── Provider uploader ─────────────────────────────────────────────────────────
+// NexText-owned media is uploaded to Cloudinary ONLY. (The legacy Supabase
+// uploader was removed: Supabase Storage must not hold NexText media.)
 
 export async function uploadToCloudinary(file, { resourceType = "auto", preset } = {}) {
   const formData = new FormData();
@@ -264,6 +244,94 @@ export async function uploadToCloudinary(file, { resourceType = "auto", preset }
   return { url: json.secure_url, path: json.public_id, thumbnailURL: null, thumbnailPath: null, provider: "cloudinary" };
 }
 
+// ── Upload backend resolver (explicit allowlist) ────────────────────────────────
+// NexText-owned MEDIA always goes to Cloudinary. Supabase Storage is ONLY permitted
+// for an explicit allowlist of non-media file types that Cloudinary cannot/should
+// not handle (e.g. application packages). There is NO "Cloudinary failed → Supabase"
+// fallback: such a fallback would recreate the old architecture problem. If a file
+// is neither known NexText media nor an allowlisted non-media type, resolution
+// fails loudly rather than silently routing to Supabase.
+//
+// Categories:
+//   - "cloudinary" : ordinary NexText media (image/video/audio/voice/avatar/etc.)
+//   - "supabase"   : explicitly allowlisted non-media file (e.g. .apk, .zip)
+//   - throws       : unsupported / unknown file
+const SUPABASE_ALLOWLIST_MIME = new Set([
+  "application/vnd.android.package-archive", // .apk
+  "application/octet-stream", // generic binary (treated as non-media file)
+]);
+const SUPABASE_ALLOWLIST_EXT = new Set(["apk", "zip", "bin", "exe", "dmg", "tar", "gz", "7z"]);
+
+export function resolveUploadBackend(file) {
+  if (!file) throw new Error("resolveUploadBackend: no file");
+  const type = (file.type || "").toLowerCase();
+  const name = (file.name || "").toLowerCase();
+  const ext = name.includes(".") ? name.split(".").pop() : "";
+
+  // NexText media → Cloudinary (never Supabase).
+  if (type.startsWith("image/") || type.startsWith("video/") || type.startsWith("audio/")) {
+    return "cloudinary";
+  }
+  // Explicit non-media allowlist → Supabase (file attachment semantics, not media).
+  if (SUPABASE_ALLOWLIST_MIME.has(type) || (ext && SUPABASE_ALLOWLIST_EXT.has(ext))) {
+    return "supabase";
+  }
+  // Unknown: fail clearly. Do NOT default to Supabase.
+  throw new Error(
+    `Unsupported file type for upload: ${type || "unknown"}${ext ? " (." + ext + ")" : ""}. NexText media must be image/video/audio; other binary files are restricted.`
+  );
+}
+
+// ── Cloudinary server-side video segmenting (real trim / split) ────────────────
+// Produces an ACTUAL trimmed copy of a video as a brand-new Cloudinary asset.
+// This is NOT playback metadata — Cloudinary evaluates the `so_` (start offset,
+// seconds) and `eo_` (end offset, seconds) transformation when it fetches the
+// source and stores the result as a separate asset with its own URL. The posted
+// status therefore references genuinely trimmed bytes.
+//
+// publicId is the asset id WITHOUT the "cloudinary:" prefix.
+export async function createCloudinarySegment(publicId, startSec, endSec) {
+  if (!publicId) throw new Error("createCloudinarySegment: missing publicId");
+  // Delivery (fetch) URL carrying the trim transformation. Cloudinary trims on the
+  // server when it ingests this transformed source.
+  const delivery = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/upload/so_${startSec},eo_${endSec}/${publicId}`;
+  const formData = new FormData();
+  formData.append("file", delivery);
+  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  formData.append("resource_type", "video");
+  const endpoint = `${CLOUDINARY_BASE_URL}/video/upload`;
+  let res;
+  try {
+    res = await fetch(endpoint, { method: "POST", body: formData });
+  } catch (fetchErr) {
+    throw new Error(`Cloudinary segment network error: ${fetchErr.message || "fetch failed"}`);
+  }
+  const json = await res.json().catch(() => null);
+  if (!json || json.error || !json.secure_url) {
+    const errMsg = json?.error?.message || json?.error?.reason || `HTTP ${res?.status}`;
+    throw new Error(`Cloudinary segment failed: ${errMsg}`);
+  }
+  return { url: json.secure_url, path: `cloudinary:${json.public_id}`, publicId: json.public_id };
+}
+
+// Split one original video into N evenly-duration parts, each a real, separate,
+// trimmed Cloudinary asset. Returns ordered segments [{ url, path, publicId }].
+// Every resulting piece is independently derived from the original by byte range
+// (Cloudinary trims server-side), so each piece is its own file. Order is
+// preserved (index 0 = first part).
+export async function splitCloudinaryVideo(publicId, durationSec, parts) {
+  const n = Math.max(1, Math.min(5, Math.floor(parts) || 1));
+  const seg = durationSec / n;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const start = Math.round(i * seg * 100) / 100;
+    const end = i === n - 1 ? Math.round(durationSec * 100) / 100 : Math.round((i + 1) * seg * 100) / 100;
+    // eslint-disable-next-line no-await-in-loop
+    out.push(await createCloudinarySegment(publicId, start, end));
+  }
+  return out;
+}
+
 // ── Central router ───────────────────────────────────────────────────────────
 // options:
 //   { thumbnailBlob? }  - pre-supplied video thumbnail (skips extraction)
@@ -272,8 +340,8 @@ export async function uploadToCloudinary(file, { resourceType = "auto", preset }
 //   { skipThumbnail? }  - true to never generate a video thumbnail
 export async function uploadMediaFile(chatId, senderUid, file, options = {}) {
   if (!chatId || !senderUid) throw new Error("uploadMediaFile: missing chatId or senderUid");
-  // 1. Hard 15MB pre-compression gate.
-  assertRawUnderLimit(file);
+  // 1. Hard pre-compression gate — provider-aware (100MB Cloudinary / 50MB Supabase).
+  await assertRawUnderLimit(file);
   // 2. Also respect the existing 50MB hard cap (belt-and-braces).
   assertUnderSizeLimit(file);
 
@@ -288,23 +356,20 @@ export async function uploadMediaFile(chatId, senderUid, file, options = {}) {
     thumbnailBlob = await extractVideoThumbnail(file);
   }
 
-  // 4. Route to the active storage provider.
-  //    - cloudinary : direct UNSIGNED client-side upload. We receive the public
-  //      delivery URL and only that string is persisted downstream (no Supabase
-  //      Storage bucket is used for this pipeline). Posters/previews are derived
-  //      on the fly via the Cloudinary Fetch proxy.
-  //    - supabase   : legacy path (uploads to the chat-media bucket).
-  const provider = options.provider || (await getActiveStorageProvider());
-  let result;
-  if (provider === "cloudinary") {
-    const isVideo = file.type.startsWith("video/");
-    const isImage = file.type.startsWith("image/");
-    const resourceType = isVideo ? "video" : isImage ? "image" : "auto";
-    const preset = isImage ? "chat_image" : isVideo ? "chat_video" : undefined;
-    result = await uploadToCloudinary(uploadFile, { resourceType, preset });
-  } else {
-    result = await uploadToSupabase(chatId, senderUid, uploadFile, { thumbnailBlob });
-  }
+  // 4. Route to Cloudinary — the ONLY store for NexText-owned media.
+  //    Direct UNSIGNED client-side upload; we receive the public delivery URL and
+  //    only that string is persisted downstream (no Supabase Storage bucket is
+  //    used for this pipeline). Posters/previews are derived on the fly via the
+  //    Cloudinary Fetch proxy. (The legacy Supabase branch was removed: NexText
+  //    media must never live in Supabase Storage.)
+  const isVideo = file.type.startsWith("video/");
+  const isImage = file.type.startsWith("image/");
+  const isAudio = file.type.startsWith("audio/");
+  // Cloudinary routes audio under the "video" resource type (it classifies
+  // audio as a video-type delivery), so map audio there instead of "auto".
+  const resourceType = isVideo || isAudio ? "video" : isImage ? "image" : "auto";
+  const preset = isImage ? "chat_image" : isVideo || isAudio ? "chat_video" : undefined;
+  const result = await uploadToCloudinary(uploadFile, { resourceType, preset });
 
   // 5. Small blur placeholder for images (used by chat media blur previews).
   let blurData = null;
@@ -314,6 +379,10 @@ export async function uploadMediaFile(chatId, senderUid, file, options = {}) {
 
   return {
     ...result,
+    // NexText-owned media lives in Cloudinary only. Prefix the path so downstream
+    // delete/resolve helpers route correctly. Legacy media (no prefix) is assumed
+    // to live in Supabase for backward compatibility.
+    path: `cloudinary:${result.path}`,
     sizeBytes: uploadFile.size,
     fileName: file.name,
     blurData,
@@ -326,5 +395,13 @@ export async function uploadVideoWithThumbnail(chatId, senderUid, videoFile, opt
   const thumb = options.thumbnailBlob || (await extractVideoThumbnail(videoFile));
   return uploadMediaFile(chatId, senderUid, videoFile, { ...options, thumbnailBlob: thumb });
 }
+
+// ── Single authoritative NexText-owned media upload ─────────────────────────────
+// ALL NexText-owned media (status photo/video, edited/cropped status media, chat
+// photo/video, voice notes, avatars, group media, generated builder output) must
+// flow through this one function. It routes exclusively to Cloudinary — there is
+// intentionally NO Supabase Storage fallback. Callers can retry on the returned
+// error; they must never re-route media to Supabase.
+export const uploadNexTextMedia = uploadMediaFile;
 
 export { FileTooLargeError };

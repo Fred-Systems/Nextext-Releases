@@ -50,3 +50,8 @@ ios/App/DerivedData/
 .wrangler
 .dev.vars*
 !.dev.vars.example
+
+# Android signing artifacts
+*.idsig
+# Design assets (not source)
+new-icons/

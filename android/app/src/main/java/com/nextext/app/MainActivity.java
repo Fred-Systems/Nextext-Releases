@@ -1,8 +1,13 @@
 package com.nextext.app;
 
 import android.Manifest;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebView;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -269,10 +274,23 @@ public class MainActivity extends BridgeActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
     }
 
+    // Forward file-chooser (camera/recorder) results from the WebView's hidden
+    // <input capture> back to the WebChromeClient so captured media reaches the
+    // app. All other request codes fall through to Capacitor's bridge.
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (chromeClient != null && chromeClient.onActivityFileResult(requestCode, resultCode, data)) {
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
     private static class NextextWebChromeClient extends BridgeWebChromeClient {
         private static final int NEXTTEXT_WEBVIEW_PERMS = 7142;
+        private static final int NEXTTEXT_FILE_CHOOSER = 7144;
         private final MainActivity activity;
         private PermissionRequest pendingPermissionRequest;
+        private ValueCallback<Uri[]> filePathCallback;
 
         NextextWebChromeClient(Bridge bridge, MainActivity activity) {
             super(bridge);
@@ -332,6 +350,38 @@ public class MainActivity extends BridgeActivity {
             if (!audioGranted) missing.add(Manifest.permission.RECORD_AUDIO);
             if (!videoGranted) missing.add(Manifest.permission.CAMERA);
             activity.requestPermissions(missing.toArray(new String[0]), NEXTTEXT_WEBVIEW_PERMS);
+        }
+
+        // On Android the hidden <input type="file" capture> used by the camera
+        // launcher is a no-op unless the WebView client implements this. Without
+        // it the camera/recorder never opens. Implementing it lets the OS camera
+        // and video recorder satisfy the file prompt (used for video capture and
+        // as a fallback for photo).
+        @Override
+        public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback, WebChromeClient.FileChooserParams params) {
+            if (filePathCallback != null) {
+                filePathCallback.onReceiveValue(null);
+                filePathCallback = null;
+            }
+            filePathCallback = callback;
+            Intent intent = params.createIntent();
+            try {
+                activity.startActivityForResult(intent, NEXTTEXT_FILE_CHOOSER);
+            } catch (ActivityNotFoundException e) {
+                filePathCallback = null;
+                return false;
+            }
+            return true;
+        }
+
+        boolean onActivityFileResult(int requestCode, int resultCode, Intent data) {
+            if (requestCode != NEXTTEXT_FILE_CHOOSER) return false;
+            if (filePathCallback != null) {
+                Uri[] results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                filePathCallback.onReceiveValue(results);
+                filePathCallback = null;
+            }
+            return true;
         }
 
         boolean onActivityPermissionResult(int requestCode, int[] grantResults) {

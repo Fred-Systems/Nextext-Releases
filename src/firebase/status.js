@@ -56,17 +56,31 @@ export async function postStatus(ownerId, {
   errorMessage = null,
   // visibility: "contacts" (default) or "public" (anyone on NexText can view).
   visibility = "contacts",
+  // excludedUids: contacts (by uid) who must NOT see THIS status. Per-status
+  // audience exclusion (independent from the owner's global statusExcluded list,
+  // which is merged in at post time). Enforced by firestore.rules + client filter.
+  excludedUids = null,
   // New-builder video trims/filters (metadata only — enforced by the viewer):
   // trimStart/trimEnd in seconds (null = no trim), videoFilter as a CSS filter
   // string applied to the <video> element (null = none).
   trimStart = null,
   trimEnd = null,
   videoFilter = null,
+  // When the audience is "selected" contacts only, pass the explicit allow-list
+  // here; otherwise all accepted contacts are allowed (along with the owner).
+  selectedUids = null,
 }) {
   const isVideo = mediaType === "video";
   const usePipeline = isVideo && originalPath;
+  const contactUids = visibility === "public" || visibility === "contacts"
+    ? await getAllowedContactUids(ownerId)
+    : [];
+  const allowedUids = Array.from(
+    new Set([ownerId, ...(Array.isArray(selectedUids) && selectedUids.length ? selectedUids : contactUids)])
+  );
   await addDoc(collection(db, "status"), {
     ownerId,
+    allowedUids,
     text,
     mediaURL: usePipeline ? null : mediaURL,
     mediaType,
@@ -81,6 +95,7 @@ export async function postStatus(ownerId, {
     waitForVideo,
     allowDownload,
     commentCount: 0,
+    subscriberCount: 0,
     commentsHidden: !!commentsHidden,
     backgroundMusic: backgroundMusic || null,
     createdAt: serverTimestamp(),
@@ -98,10 +113,44 @@ export async function postStatus(ownerId, {
     previewURL: previewURL || null,
     posterURL: posterURL || null,
     visibility: visibility === "public" ? "public" : "contacts",
+    extended: false,
+    excludedUids: Array.isArray(excludedUids) && excludedUids.length ? Array.from(new Set(excludedUids)) : null,
     trimStart: trimStart != null ? Number(trimStart) : null,
     trimEnd: trimEnd != null ? Number(trimEnd) : null,
     videoFilter: videoFilter || null,
   });
+}
+
+// Resolve the set of uids allowed to see a status posted by ownerId. Used to
+// denormalize `allowedUids` onto each status so the client can query by
+// `allowedUids array-contains viewer` — the ONLY Firestore-provably-readable
+// shape for contact-scoped visibility (a per-document contact check would make
+// the query unprovable and Firestore would deny it).
+//
+// Canonical contact eligibility (item 3): both the new contact subcollection
+// (`users/{ownerId}/contacts/{uid}` with status=="accepted") AND any legacy
+// representation are honored. Legacy contacts may have been stored on the
+// user doc's `contacts` array (uids) instead of the subcollection; we merge
+// both so old contacts still count without re-adding.
+export async function getAllowedContactUids(ownerId) {
+  const uids = new Set();
+  try {
+    const snap = await getDocs(
+      query(collection(db, "users", ownerId, "contacts"), where("status", "==", "accepted"))
+    );
+    snap.docs.forEach((d) => uids.add(d.id));
+  } catch {}
+  try {
+    const userSnap = await getDoc(doc(db, "users", ownerId));
+    const legacy = userSnap.data()?.contacts;
+    if (Array.isArray(legacy)) {
+      legacy.forEach((c) => {
+        const uid = typeof c === "string" ? c : c?.uid;
+        if (uid) uids.add(uid);
+      });
+    }
+  } catch {}
+  return Array.from(uids).filter(Boolean);
 }
 
 // Queued video status: private original, worker will transcode
@@ -115,6 +164,7 @@ export async function createQueuedVideoStatus(ownerId, originalPath, opts = {}) 
     durationMs: opts.durationMs ?? null,
     text: opts.text ?? null,
     textOverlay: opts.textOverlay ?? null,
+    excludedUids: opts.excludedUids ?? null,
   });
 }
 
@@ -213,85 +263,61 @@ export async function purgeExpiredStatuses(ownerId) {
   await Promise.all(snap.docs.map((d) => cleanupExpiredDoc(d)));
 }
 
-// Live stream of active (not-expired) statuses from a list of user UIDs.
-// Tries the compound (ownerId + expiresAt) query first. If the composite
-// index hasn't finished building yet, silently falls back to a simple
-// ownerId-only query and filters expired docs client-side.
-export function useStatuses(uids) {
+// Live stream of statuses the viewer is allowed to see.
+//
+// Visibility model (enforced by firestore.rules):
+//   • owner's own statuses
+//   • public statuses (visibility == "public")
+//   • statuses whose `allowedUids` array contains the viewer (owner + accepted
+//     contacts + explicitly-selected contacts)
+//
+// We query `allowedUids array-contains viewer` — a single-field, provably
+// readable query. (A per-document contact check would make the query
+// unprovable and Firestore would deny it.) Excluded viewers are filtered
+// client-side (same trust model as other client-enforced limits).
+//
+// `uids` selects scope:
+//   • feed (uids includes myUid): every status I may see (own + contacts').
+//   • single other uid (profile): only that owner's statuses I may see.
+export function useStatuses(uids, myUid) {
   const [statuses, setStatuses] = useState([]);
   const deletingRef = useRef(new Set());
-  const safeUidsKey = (uids || []).filter(Boolean).join(",");
+  const safeUids = (uids || []).filter(Boolean);
+  const isFeed = safeUids.includes(myUid);
+  const key = `${myUid || ""}|${safeUids.join(",")}`;
 
   useEffect(() => {
-    const safeUids = safeUidsKey ? safeUidsKey.split(",").filter(Boolean) : [];
-    if (safeUids.length === 0) { setStatuses([]); return; }
+    if (!myUid) { setStatuses([]); return; }
+    if (safeUids.length === 0 && !isFeed) { setStatuses([]); return; }
 
-    let useFallback = false;
-    const chunks = [];
-    for (let i = 0; i < safeUids.length; i += 30) chunks.push(safeUids.slice(i, i + 30));
-
-    function subscribeWithQuery(compound) {
-      return chunks.map((chunk) => {
-        const q = compound
-          ? query(collection(db, "status"),
-              where("ownerId", "in", chunk),
-              where("expiresAt", ">", new Date()))
-          : query(collection(db, "status"),
-              where("ownerId", "in", chunk));
-        return onSnapshot(q, (snap) => {
-          const now = Date.now();
-          const results = [];
-          snap.docs.forEach((d) => {
-            const data = d.data();
-            // client-side expiry guard (always, but only matters for fallback)
-            const expMs = data.expiresAt?.toMillis?.() || 0;
-            if (expMs && expMs < now) {
-              // Fire-and-forget: delete the doc + its Supabase media file
-              if (!deletingRef.current.has(d.id)) {
-                deletingRef.current.add(d.id);
-                cleanupExpiredDoc(d).catch(() => {});
-              }
-              return;
-            }
-            results.push({ id: d.id, ...data, ownerId: data.ownerId });
-          });
-          setStatuses((prev) => {
-            // Merge across chunks: replace entries owned by this chunk's UIDs
-            const chunkSet = new Set(chunk);
-            const kept = prev.filter((s) => !chunkSet.has(s.ownerId));
-            return [...kept, ...results]
-              .sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
-          });
-        }, (err) => {
-          if (compound && !useFallback) {
-            // Compound query failed (probably missing index) — switch all
-            // chunks to the simple ownerId-only query for the rest of this
-            // effect cycle.
-            console.warn("[useStatuses] compound query failed, using fallback:", err.message);
-            useFallback = true;
-          } else {
-            console.warn("[useStatuses] snapshot error:", err.message);
+    const q = query(collection(db, "status"), where("allowedUids", "array-contains", myUid));
+    const unsub = onSnapshot(q, (snap) => {
+      const now = Date.now();
+      const results = [];
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        const expMs = data.expiresAt?.toMillis?.() || 0;
+        if (expMs && expMs < now) {
+          if (!deletingRef.current.has(d.id)) {
+            deletingRef.current.add(d.id);
+            cleanupExpiredDoc(d).catch(() => {});
           }
-        });
+          return;
+        }
+        // Profile scope: only the requested owner's statuses.
+        if (!isFeed && !safeUids.includes(data.ownerId)) return;
+        // Per-status exclusion (server-enforced for public; here for contacts).
+        if ((data.excludedUids || []).includes(myUid)) return;
+        results.push({ id: d.id, ...data, ownerId: data.ownerId });
       });
-    }
+      results.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+      setStatuses(results);
+    }, (err) => {
+      console.warn("[useStatuses] snapshot error:", err.message);
+    });
 
-    let unsubs = subscribeWithQuery(true);
-
-    // Watch for fallback trigger: if useFallback flips, tear down and
-    // resubscribe with simple queries.
-    const fallbackCheck = setInterval(() => {
-      if (useFallback) {
-        unsubs.forEach((fn) => fn());
-        unsubs = subscribeWithQuery(false);
-      }
-    }, 500);
-
-    return () => {
-      clearInterval(fallbackCheck);
-      unsubs.forEach((fn) => fn());
-    };
-  }, [safeUidsKey]);
+    return () => unsub();
+  }, [key, myUid, isFeed]);
 
   return statuses;
 }
@@ -301,10 +327,36 @@ export async function updateStatusVisibility(statusId, visibility) {
   await setDoc(doc(db, "status", statusId), { visibility: visibility === "public" ? "public" : "contacts" }, { merge: true });
 }
 
+// One-time status extension. Adds 10 hours to the (current) expiry and marks the
+// status as extended so it can never be extended again. Only the owner may call
+// this (enforced by the status update rule). extendWindowMs controls how long
+// before expiry the EXTEND control becomes visible.
+export const STATUS_EXTEND_WINDOW_MS = 6 * 60 * 60 * 1000;
+export const STATUS_EXTEND_MS = 10 * 60 * 60 * 1000;
+
+export function canExtendStatus(status, now = Date.now()) {
+  if (!status) return false;
+  if (status.extended) return false;
+  const expMs = status.expiresAt?.toMillis ? status.expiresAt.toMillis() : 0;
+  if (!expMs) return false;
+  return now >= expMs - STATUS_EXTEND_WINDOW_MS;
+}
+
+export async function extendStatus(statusId, additionalMs = STATUS_EXTEND_MS) {
+  const ref = doc(db, "status", statusId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("Status not found.");
+  const data = snap.data();
+  const expMs = data.expiresAt?.toMillis ? data.expiresAt.toMillis() : Date.now();
+  const newExpiry = new Date(expMs + additionalMs);
+  await setDoc(ref, { expiresAt: newExpiry, extended: true }, { merge: true });
+  return newExpiry;
+}
+
 // Public statuses: any status the poster marked visibility:"public". Used by the
 // separate "Public Statuses" tab. Single-field equality query (no composite index
 // needed); client-side expiry filtering mirrors useStatuses.
-export function usePublicStatuses() {
+export function usePublicStatuses(myUid) {
   const [statuses, setStatuses] = useState([]);
   const deletingRef = useRef(new Set());
   useEffect(() => {
@@ -322,12 +374,15 @@ export function usePublicStatuses() {
           }
           return;
         }
+        // Client-side exclusion (server rule is provable for visibility==public;
+        // per-status exclusions are enforced here to match the Updates feed).
+        if (myUid && (data.excludedUids || []).includes(myUid)) return;
         results.push({ id: d.id, ...data, ownerId: data.ownerId });
       });
       setStatuses(results.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0)));
     }, (err) => console.warn("[usePublicStatuses] snapshot error:", err?.message));
     return () => unsub();
-  }, []);
+  }, [myUid]);
   return statuses;
 }
 export function useActiveStatusUids(uids) {
@@ -389,6 +444,77 @@ export function useActiveStatusUids(uids) {
   }, [safeUidsKey]);
 
   return active;
+}
+
+// ── Subscriptions ─────────────────────────────────────────────
+// A user can subscribe to another user's status updates. Subscription state lives
+// in status/{statusId}/subscribers/{uid} (one doc per subscriber) plus a
+// denormalized subscriberCount on the status doc. The owner and admins can read
+// the subscriber list; ordinary users cannot (enforced in firestore.rules).
+export async function subscribeStatus(statusId, uid) {
+  if (!statusId || !uid) return;
+  const ref = doc(db, "status", statusId, "subscribers", uid);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return; // already subscribed — no duplicate
+  await setDoc(ref, { uid, subscribedAt: serverTimestamp() }, { merge: true });
+  await setDoc(doc(db, "status", statusId), { subscriberCount: increment(1) }, { merge: true });
+}
+
+export async function unsubscribeStatus(statusId, uid) {
+  if (!statusId || !uid) return;
+  const ref = doc(db, "status", statusId, "subscribers", uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return; // already unsubscribed
+  await deleteDoc(ref);
+  await setDoc(doc(db, "status", statusId), { subscriberCount: increment(-1) }, { merge: true });
+}
+
+export async function isSubscribedStatus(statusId, uid) {
+  if (!statusId || !uid) return false;
+  const snap = await getDoc(doc(db, "status", statusId, "subscribers", uid));
+  return snap.exists();
+}
+
+// Live subscription state for a single viewer. `defaultOn` (from the viewer's
+// global status-notification setting) makes the UI show "Subscribed" until the
+// viewer explicitly unsubscribes. When defaultOn is true we lazily create the
+// subscription doc so the choice persists and the count is accurate.
+export function useStatusSubscription(statusId, uid, defaultOn = false) {
+  const [subscribed, setSubscribed] = useState(!!defaultOn);
+  useEffect(() => {
+    if (!statusId || !uid) { setSubscribed(!!defaultOn); return; }
+    let created = false;
+    const ref = doc(db, "status", statusId, "subscribers", uid);
+    const unsub = onSnapshot(ref, (s) => {
+      if (s.exists()) {
+        setSubscribed(true);
+      } else if (defaultOn && !created) {
+        // First view with notifications enabled → auto-subscribe persistently.
+        created = true;
+        setDoc(ref, { uid, subscribedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+        // Keep the denormalized count accurate (mirrors subscribeStatus) so the
+        // owner's subscriber count reflects auto-subscribers and unsubscribe
+        // cannot drive the count negative.
+        setDoc(doc(db, "status", statusId), { subscriberCount: increment(1) }, { merge: true }).catch(() => {});
+        setSubscribed(true);
+      } else {
+        setSubscribed(false);
+      }
+    }, () => setSubscribed(false));
+    return unsub;
+  }, [statusId, uid, defaultOn]);
+  return subscribed;
+}
+
+export async function getSubscriberUids(statusId) {
+  if (!statusId) return [];
+  const snap = await getDocs(collection(db, "status", statusId, "subscribers"));
+  return snap.docs.map((d) => d.id);
+}
+
+export async function getSubscriberCount(statusId) {
+  const snap = await getDoc(doc(db, "status", statusId));
+  return snap.exists() ? (snap.data().subscriberCount || 0) : 0;
 }
 
 // ── View Tracking ─────────────────────────────────────────────

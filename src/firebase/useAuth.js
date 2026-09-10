@@ -14,11 +14,13 @@ import {
   updatePassword,
   updateEmail,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, arrayUnion, collection, query, where, getDocs, limit, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, arrayUnion, collection, query, where, getDocs, limit, onSnapshot, addDoc } from "firebase/firestore";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { SocialLogin as CapgoSocialLogin } from "@capgo/capacitor-social-login";
 import { auth, googleProvider, db } from "../firebase/config";
 import { changeNames } from "../firebase/names";
+import { APP_VERSION } from "../version";
+import { resolveNotifyOnSignup, getSnapshot } from "../firebase/config-settings";
 
 const LegacyGoogleSignIn = registerPlugin("LegacyGoogleSignIn");
 
@@ -79,6 +81,17 @@ export function useAuth() {
             const ref = doc(db, "users", firebaseUser.uid);
             const snap = await getDoc(ref);
             setUserDoc(snap.exists() ? snap.data() : null);
+            // Keep the user's recorded app version / platform fresh for the admin
+            // directory (item I) — write only when it changed to avoid churn.
+            if (snap.exists()) {
+              const d = snap.data();
+              const plat = typeof navigator !== "undefined"
+                ? (Capacitor.isNativePlatform() ? (Capacitor.getPlatform?.() || "native") : "web")
+                : "unknown";
+              if (d.appVersion !== APP_VERSION || d.platform !== plat) {
+                updateDoc(ref, { appVersion: APP_VERSION, platform: plat }).catch(() => {});
+              }
+            }
             // Live subscription: keeps role (admin), overrides and settings fresh,
             // and recovers the doc if the initial read failed or came back empty
             // (fixes the "Admin Panel disappears after reopening the app" bug —
@@ -412,9 +425,26 @@ export function useAuth() {
       accountType: "standard",
       parentUid: null,
       restrictions: null,
+      appVersion: APP_VERSION,
+      platform: typeof navigator !== "undefined" ? (Capacitor.isNativePlatform() ? (Capacitor.getPlatform?.() || "native") : "web") : "unknown",
       dataUsage: { bytesUsedToday: 0, bytesUsedDate: "", bytesUsedAllTime: 0 },
       dataLimit: { dailyLimitBytes: null },
     }, { merge: true });
+    // Batch 4 item C: notify admins when a new user signs up (only if the admin
+    // enabled the global setting — default OFF preserves current behavior). Wrapped
+    // in try/catch so a notification failure never blocks account creation.
+    try {
+      if (resolveNotifyOnSignup(getSnapshot())) {
+        await addDoc(collection(db, "notifications"), {
+          type: "signup",
+          userId: fbUser.uid,
+          displayName: displayName || username || email || "New user",
+          email: email || null,
+          createdAt: serverTimestamp(),
+          read: false,
+        });
+      }
+    } catch { /* non-fatal */ }
   }
 
   async function logOut() {

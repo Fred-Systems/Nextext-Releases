@@ -18,12 +18,13 @@ import {
 
 const WORKER_FEED = "https://nextext.nextext-app.workers.dev/api/yidstatus-feed";
 
-export async function fetchYidStatusFeed() {
+export async function fetchYidStatusFeed(signal) {
   try {
     const res = await fetch(WORKER_FEED, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ days: 1, since: null }),
+      signal,
     });
     if (!res.ok) throw new Error("worker " + res.status);
     const data = await res.json();

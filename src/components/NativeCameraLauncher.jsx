@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Camera, X, Send, MessageCircle, Image as ImageIcon, ChevronLeft, Video, Megaphone } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
+import { base64ToBlob } from "../media/base64";
 
 // Cross-screen handoff: a photo captured from the ChatList camera button that
 // targets a chat is stashed here so the ConversationScreen can send it on mount
@@ -78,44 +79,43 @@ async function openNativePhoto() {
   const CameraPlugin = window.Capacitor?.Plugins?.Camera;
   if (CameraPlugin && typeof CameraPlugin.getPhoto === "function") {
     try {
+      // Use Base64 (NOT "Uri"): some Android WebViews serve the app from a
+      // different origin than the photo's webPath, so fetch(webPath) fails
+      // cross-origin and the captured photo is silently dropped ("nothing
+      // appears" + a flicker behind the bottom bar). Base64 comes back inline,
+      // so no fetch/across-origin step can lose it. We keep the 1280x1280
+      // downscale so the payload stays small (avoids the full-res OOM the old
+      // Uri path worried about).
       const photo = await CameraPlugin.getPhoto({
-        quality: 85,
+        quality: 80,
         allowEditing: false,
-        resultType: "DATA_URL",
+        resultType: "Base64",
         source: "CAMERA",
         correctOrientation: true,
+        width: 1280,
+        height: 1280,
       });
-      if (photo && photo.dataUrl) {
-        const dataUrl = photo.dataUrl;
-        const comma = dataUrl.indexOf(",");
-        const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-        let bin;
-        try { bin = atob(b64); } catch { bin = null; }
-        if (bin) {
-          const len = bin.length;
-          const u8 = new Uint8Array(len);
-          for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i);
-          return new File([u8], "camera.jpg", { type: "image/jpeg" });
-        }
-      }
+      if (!photo || !photo.base64String) throw new Error("No photo returned");
+      const mime = photo.format === "png" ? "image/png" : "image/jpeg";
+      const blob = base64ToBlob(photo.base64String, mime);
+      return new File([blob], "camera.jpg", { type: mime });
     } catch (e) {
-      // A permission denial must surface guidance, NOT silently fall through to
-      // the file-input path (which would just hit the same denial and look
-      // like the picker "flashed and closed"). Other errors still fall through
-      // to the <input capture> fallback below.
       const msg = e?.message || "";
       if (/denied|permission|not allowed/i.test(msg)) {
         const err = new Error(
-          "Camera permission was denied. Allow camera access in your browser or system settings, then try again."
+          "Camera permission was denied. Allow camera access in your system settings, then try again."
         );
         err.code = "PERMISSION_DENIED";
         throw err;
       }
-      // Plugin unavailable/errored — fall through to the file-input path.
+      // A real native failure (low memory, cancelled intent, etc.) must surface
+      // so the UI shows the error — NOT silently fall through to the <input
+      // capture> path, which on this device returns a null URI and discards the
+      // photo. Only fall back to the file input when the plugin is absent.
+      throw e;
     }
   }
-  // Fallback: hidden <input capture> opens the device camera on mobile WebViews
-  // where the Capacitor Camera plugin isn't registered or was rejected.
+  // Browser / plugin-not-registered fallback.
   return pickFile("image/*", "environment");
 }
 
@@ -328,6 +328,7 @@ export function NativeCameraSheet({ open, onClose, onSendStatus, onSendChat, onS
           </div>
         </div>
       )}
+      {optionBtn(<Camera size={18} color={t.text} />, "Retake", () => startCapture(captureType), false)}
       {statusFn && optionBtn(<Megaphone size={18} color={t.bubbleMeText} />, "Post to Status", () => runSend(statusFn, pendingFile), true)}
       {onSendChat && optionBtn(<Send size={18} color={t.text} />, "Send to this chat", () => runSend(onSendChat, pendingFile))}
       {onSendChatTo && optionBtn(<MessageCircle size={18} color={t.text} />, "Pick a chat", () => setStep("pick"))}

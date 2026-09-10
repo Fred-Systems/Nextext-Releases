@@ -531,7 +531,23 @@ export function describeAIError(error) {
   return detail ? `AI error: ${detail}` : "Something went wrong with the AI. Please try again.";
 }
 
- export async function sendAIMessage(userUid, messageText, chatHistory = [], customInstructions = "", attachment = null, modelOverride = null, voiceEnabled = false) {
+ export async function sendAIMessage(userUid, messageText, chatHistory = [], customInstructions = "", attachment = null, modelOverride = null, voiceEnabled = false, opts = {}) {
+  // BARE MODE: structured-output requests (e.g. the AI podcast script) pass
+  // opts.bare = true. The normal path wraps the caller's instructions with the
+  // persona system prompt, reply-formatting guidance, and the image-gen block —
+  // all of which CONFLICT with "output STRICTLY a JSON array" (the model answers
+  // as a chat assistant instead of returning the array). Bare mode sends the
+  // caller's instruction as the ENTIRE system prompt, verbatim (generous cap),
+  // with no persona/formatting/image additions and no message truncation.
+  if (opts && opts.bare) {
+    const bareConfig = await getSystemConfigForCall();
+    const bareSystem = String(customInstructions || "").slice(0, 8000);
+    const bareMsg = String(messageText || "Generate it now.");
+    if (bareConfig.provider === "gemini") {
+      return callGemini(bareConfig.key, bareSystem, [{ role: "user", content: bareMsg }], bareConfig.model);
+    }
+    return callGroq(bareConfig.key, [{ role: "system", content: bareSystem }, { role: "user", content: bareMsg }], 0.8, bareConfig.model);
+  }
    const config = await getSystemConfigForCall();
    const personalityKey = await getPersonalityKey(userUid);
   // Live Mode (groq/compound) has a tighter practical input limit, so feed it a

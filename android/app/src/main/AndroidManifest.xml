@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
@@ -221,6 +222,32 @@
             android:label="Notes"
             android:icon="@mipmap/ic_icon13"
             android:roundIcon="@mipmap/ic_icon13"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityAlias18"
+            android:targetActivity=".MainActivity"
+            android:label="Calculator"
+            android:icon="@mipmap/ic_icon18"
+            android:roundIcon="@mipmap/ic_icon18"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".MainActivityAlias19"
+            android:targetActivity=".MainActivity"
+            android:label="Notes"
+            android:icon="@mipmap/ic_icon19"
+            android:roundIcon="@mipmap/ic_icon19"
             android:exported="true"
             android:enabled="false">
             <intent-filter>

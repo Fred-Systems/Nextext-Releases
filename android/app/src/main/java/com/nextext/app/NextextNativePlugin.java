@@ -959,14 +959,28 @@ public class NextextNativePlugin extends Plugin {
                     conn.disconnect();
                     return;
                 }
+                // Keep the call alive so we can stream progress events back to JS
+                // (via notifyListeners) before the final resolve/reject.
+                call.setKeepAlive(true);
                 InputStream in = conn.getInputStream();
                 FileOutputStream out = new FileOutputStream(apk);
                 byte[] buf = new byte[8192];
                 int n;
                 long total = 0;
+                long contentLength = conn.getContentLengthLong();
+                if (contentLength < 0) contentLength = 0;
                 while ((n = in.read(buf)) > 0) {
                     out.write(buf, 0, n);
                     total += n;
+                    try {
+                        // Real byte progress — total is 0 when the server omits
+                        // Content-Length (the JS side then falls back to a
+                        // truthful indeterminate display).
+                        JSObject prog = new JSObject();
+                        prog.put("loaded", total);
+                        prog.put("total", contentLength);
+                        notifyListeners("apkDownloadProgress", prog);
+                    } catch (final Exception ignored) { /* never block the download */ }
                 }
                 out.flush();
                 out.close();
@@ -1074,14 +1088,25 @@ public class NextextNativePlugin extends Plugin {
                     conn.disconnect();
                     return;
                 }
+                // Keep the call alive so we can stream progress events back to JS
+                // (via notifyListeners) before the final resolve/reject.
+                call.setKeepAlive(true);
                 InputStream in = conn.getInputStream();
                 FileOutputStream out = new FileOutputStream(temp);
                 byte[] buf = new byte[8192];
                 int n;
                 long total = 0;
+                long contentLength = conn.getContentLengthLong();
+                if (contentLength < 0) contentLength = 0;
                 while ((n = in.read(buf)) > 0) {
                     out.write(buf, 0, n);
                     total += n;
+                    try {
+                        JSObject prog = new JSObject();
+                        prog.put("loaded", total);
+                        prog.put("total", contentLength);
+                        notifyListeners("apkDownloadProgress", prog);
+                    } catch (final Exception ignored) { /* never block the download */ }
                 }
                 out.flush();
                 out.close();
@@ -1447,7 +1472,9 @@ public class NextextNativePlugin extends Plugin {
                      { "icon14",   "com.nextext.app.MainActivityAlias14" },
                      { "icon15",   "com.nextext.app.MainActivityAlias15" },
                      { "icon16",   "com.nextext.app.MainActivityAlias16" },
-                     { "icon17",   "com.nextext.app.MainActivityAlias17" }
+                     { "icon17",   "com.nextext.app.MainActivityAlias17" },
+                     { "icon18",   "com.nextext.app.MainActivityAlias18" },
+                     { "icon19",   "com.nextext.app.MainActivityAlias19" }
                  };
                 for (String[] p : profiles) {
                     String id = p[0];
@@ -1519,8 +1546,10 @@ public class NextextNativePlugin extends Plugin {
              { "icon14",   "NexText",         "ic_icon14" },
              { "icon15",   "NexText",         "ic_icon15" },
              { "icon16",   "Mizrachi mode",   "ic_icon16" },
-             { "icon17",   "Mizrachi mode",   "ic_icon17" }
-         };
+             { "icon17",   "Mizrachi mode",   "ic_icon17" },
+            { "icon18",   "Calculator",      "ic_icon18" },
+            { "icon19",   "Notes",           "ic_icon19" },
+                     };
         try {
             for (String[] p : profiles) {
                 org.json.JSONObject o = new org.json.JSONObject();

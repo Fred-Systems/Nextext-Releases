@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { ChevronLeft, Camera, Plus, MessageSquare, UserPlus, X, Info, ShieldCheck, ShieldOff, Bot, CheckCircle, Clock } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
+import { useGlobalSettings, resolveHideCameraButtons } from "../firebase/config-settings";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import {
@@ -15,6 +16,8 @@ import { AI_CONTACT_UID, useGroupAIRequestHook, requestGroupAI, cancelGroupAIReq
 
 export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onOpenContactProfile }) {
   const { t } = useTheme();
+  const globalSettings = useGlobalSettings();
+  const hideCameras = resolveHideCameraButtons(globalSettings);
   const [group, setGroup] = useState(null);
   const [members, setMembers] = useState([]);
   const [myUser, setMyUser] = useState(null);
@@ -190,7 +193,7 @@ export default function GroupInfoScreen({ myUid, chatId, onBack, onOpenChat, onO
                 <Info size={40} color={t.primary} />
               </div>
             )}
-            {isAdmin && (
+            {isAdmin && !hideCameras && (
               <div onClick={() => photoInputRef.current?.click()} style={{ position: "absolute", bottom: 0, right: 0, width: 30, height: 30, borderRadius: "50%", background: t.primary, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", border: "2px solid #fff" }}>
                 <Camera size={15} color="#fff" />
               </div>

@@ -4,7 +4,8 @@ import { X, ChevronLeft, ChevronRight, Eye, Send, Download, Volume2, VolumeX, Me
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useTheme } from "../theme/ThemeContext";
-import { useStatusViewers, subscribeStatusComments, addStatusComment, voteStatusComment, deleteStatusComment, setStatusCommentsHidden, retryStatus } from "../firebase/status";
+import { useStatusViewers, subscribeStatusComments, addStatusComment, voteStatusComment, deleteStatusComment, setStatusCommentsHidden, retryStatus, useStatusSubscription, subscribeStatus, unsubscribeStatus, getSubscriberCount, canExtendStatus, extendStatus } from "../firebase/status";
+import { useRemoteConfig, getFeatureFlag } from "../firebase/remoteConfig";
 import { getOrCreateDirectChat, sendTextMessage } from "../firebase/chats";
 import Avatar from "../components/Avatar";
 import ZoomableMedia from "../components/ZoomableMedia";
@@ -139,7 +140,7 @@ function ViewersPanel({ contacts, extraProfiles, viewers, ownerName }) {
   );
 }
 
-export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, ownerUid, contacts, onClose, onViewStory, onNext, onExit, onViewedStatus }) {
+export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, ownerUid, contacts, onClose, onViewStory, onNext, onExit, onViewedStatus, onPrev }) {
   const { t, appFont } = useTheme();
   const initializedRef = useRef(false);
   const completedRef = useRef(false);
@@ -199,6 +200,40 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
 
   const isOwner = myUid && ownerUid && myUid === ownerUid;
   const current = statuses[idx];
+
+  // ── Status Extend (owner-only, once per status, +10h) ──
+  const remoteConfig = useRemoteConfig();
+  const extendEnabled = getFeatureFlag(remoteConfig, "statusExtend", { uid: myUid });
+  const canExtend = isOwner && extendEnabled && !!current && canExtendStatus(current);
+  const [extending, setExtending] = useState(false);
+  const handleExtend = async () => {
+    if (!current || extending) return;
+    setExtending(true);
+    try { await extendStatus(current.id); }
+    catch { /* non-fatal */ }
+    finally { setExtending(false); }
+  };
+
+  // ── Subscriptions (Batch 4 item A) ──
+  const statusId = current?.id;
+  // Viewing a status MUST NOT auto-subscribe the viewer. Subscription is an
+  // explicit action: the button shows the real backend state (false until the
+  // user taps Subscribe) and only writes a doc when the user explicitly opts in.
+  const subscribed = useStatusSubscription(statusId, myUid, false);
+  const [subCount, setSubCount] = useState(0);
+  useEffect(() => {
+    if (!isOwner || !statusId) { setSubCount(0); return; }
+    let alive = true;
+    getSubscriberCount(statusId).then((c) => { if (alive) setSubCount(c); }).catch(() => {});
+    return () => { alive = false; };
+  }, [isOwner, statusId]);
+  const toggleSubscribe = async () => {
+    if (!statusId || isOwner) return;
+    try {
+      if (subscribed) await unsubscribeStatus(statusId, myUid);
+      else await subscribeStatus(statusId, myUid);
+    } catch { /* non-fatal */ }
+  };
   // Track locally-viewed status IDs so re-opening resumes at the first unseen one.
   useEffect(() => { if (current?.id && onViewedStatus) onViewedStatus(current.id); }, [current?.id, onViewedStatus]);
   const [hlsUrl, setHlsUrl] = useState(null);
@@ -291,7 +326,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     const dy = clientY - touchStartRef.current.y;
     if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
       if (dx < 0 && idx < statuses.length - 1) advanceRef.current?.();
-      else if (dx > 0 && idx > 0) goBack();
+      else if (dx > 0) goBack();
       return;
     }
     if (Math.abs(dy) > 80 && dy > 0) { onClose(); return; }
@@ -428,6 +463,12 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
     });
     if (idx > 0) {
       setIdx((i) => i - 1);
+    } else if (onPrev) {
+      // Already at the first status of this owner. If the viewer arrived here
+      // from a previous owner's story (auto-advanced via onNext), hand control
+      // back so Back returns to that previous owner's last-viewed post instead
+      // of being stuck/reset at the start of the current owner.
+      onPrev();
     } else {
       if (barRef.current) {
         barRef.current.style.transition = "none";
@@ -443,7 +484,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       }
       timerRef.current = setTimeout(() => advanceRef.current?.(), duration);
     }
-  }, [idx, duration]);
+  }, [idx, duration, onPrev]);
 
   useEffect(() => {
     if (!current) return;
@@ -949,13 +990,34 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
             )}
           </div>
         )}
+        {!isOwner && statusId && (
+          <div
+            onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleSubscribe(); }}
+            style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", flexShrink: 0, padding: "6px 10px", borderRadius: 14, background: subscribed ? "rgba(0,168,132,0.9)" : "rgba(255,255,255,0.22)", color: "#fff", fontSize: 12, fontWeight: 700 }}
+          >
+            {subscribed ? "Subscribed" : "Subscribe"}
+          </div>
+        )}
+        {isOwner && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0, padding: "6px 10px", borderRadius: 14, background: "rgba(255,255,255,0.18)", color: "#fff", fontSize: 12, fontWeight: 700 }}>
+            {subCount} subscriber{subCount === 1 ? "" : "s"}
+          </div>
+        )}
+        {canExtend && (
+          <div
+            onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleExtend(); }}
+            style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0, padding: "6px 10px", borderRadius: 14, background: "rgba(0,168,132,0.9)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+          >
+            {extending ? "Extending…" : "+10h Extend"}
+          </div>
+        )}
       </div>
 
       {/* ── Music overlay: compact pill, top corner, below the owner header ── */}
       {bgMusic && (
         <div
           className={musicState === "playing" ? "" : "nextext-eq-paused"}
-          style={{ position: "absolute", top: 100, right: 12, zIndex: 11, maxWidth: 220, display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 14, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.14)", pointerEvents: "none" }}
+          style={{ position: "absolute", top: 14, right: 64, zIndex: 11, maxWidth: 200, display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 14, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.14)", pointerEvents: "none" }}
           onTouchStart={(e) => e.stopPropagation()}
           onTouchEnd={(e) => e.stopPropagation()}
         >
@@ -994,7 +1056,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
           onClick={(e) => { e.stopPropagation(); unlockMusicPlayback(); }}
           onTouchStart={(e) => e.stopPropagation()}
           onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); unlockMusicPlayback(); }}
-          style={{ position: "absolute", top: 148, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+          style={{ position: "absolute", top: 58, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
         >
           <Volume2 size={14} color="#fff" />
           Tap to play music
@@ -1002,7 +1064,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       )}
       {bgMusic && musicState === "unavailable" && (
         <div
-          style={{ position: "absolute", top: 148, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)", fontSize: 11.5, fontWeight: 600, pointerEvents: "none" }}
+          style={{ position: "absolute", top: 58, right: 12, zIndex: 12, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 20, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)", fontSize: 11.5, fontWeight: 600, pointerEvents: "none" }}
         >
           Music unavailable for this track
         </div>
@@ -1216,17 +1278,17 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
       )}
 
       {!isOwner && !showViewers && (
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 12px 16px", background: "linear-gradient(transparent, rgba(0,0,0,0.6))", zIndex: 20 }} onTouchStart={(e) => { e.stopPropagation(); setPaused(true); setTimeout(() => { try { if (replyInputRef.current) replyInputRef.current.focus(); } catch {} }, 300); }} onPointerDown={(e) => { e.stopPropagation(); setPaused(true); }} onTouchEnd={(e) => e.stopPropagation()}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "8px 12px 16px", boxSizing: "border-box", background: "linear-gradient(transparent, rgba(0,0,0,0.6))", zIndex: 20 }} onTouchStart={(e) => { e.stopPropagation(); setPaused(true); setTimeout(() => { try { if (replyInputRef.current) replyInputRef.current.focus(); } catch {} }, 300); }} onPointerDown={(e) => { e.stopPropagation(); setPaused(true); }} onTouchEnd={(e) => e.stopPropagation()}>
           {replySent ? (
             <div style={{ textAlign: "center", color: "#00A884", fontSize: 13, fontWeight: 600, padding: "10px 0" }}>Reply sent!</div>
           ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: "100%", boxSizing: "border-box", overflow: "hidden" }}>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                 {QUICK_REACTION_EMOJIS.map((emoji) => (
-                  <span key={emoji} onClick={() => handleSendReply(emoji)} style={{ fontSize: 20, cursor: "pointer", opacity: sending ? 0.4 : 1 }}>{emoji}</span>
+                  <span key={emoji} onClick={() => handleSendReply(emoji)} style={{ fontSize: 20, cursor: "pointer", opacity: sending ? 0.4 : 1, flexShrink: 0 }}>{emoji}</span>
                 ))}
               </div>
-              <div style={{ flex: 1, display: "flex", alignItems: "center", background: "rgba(255,255,255,0.15)", borderRadius: 20, padding: "6px 10px 6px 14px", gap: 6 }}>
+              <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", background: "rgba(255,255,255,0.15)", borderRadius: 20, padding: "6px 10px 6px 14px", gap: 6, boxSizing: "border-box" }}>
                 <input
                   ref={replyInputRef}
                   value={replyText}
@@ -1236,7 +1298,7 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
                   onKeyDown={(e) => { if (e.key === "Enter") handleSendReply(replyText); }}
                   placeholder="Reply…"
                   disabled={sending}
-                  style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 13.5, color: "#fff" }}
+                  style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: 13.5, color: "#fff", boxSizing: "border-box" }}
                 />
                 {replyText.trim() && (
                   <Send size={16} color="#00A884" onClick={() => handleSendReply(replyText)} style={{ cursor: "pointer", flexShrink: 0 }} />

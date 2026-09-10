@@ -47,7 +47,7 @@ function dedupeCreators(list) {
   return Object.values(map);
 }
 
-async function browseCreators(category) {
+async function browseCreators(category, signal) {
   const body = {
     p_section: "all",
     p_search: null,
@@ -61,28 +61,40 @@ async function browseCreators(category) {
     method: "POST",
     headers: { ...HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok) throw new Error("browse " + res.status);
   return res.json();
 }
 
-async function fetchPosts(creatorId) {
+// Short-TTL in-memory cache of each creator's posts. The Jewish Status load is
+// dominated by these per-creator fetches; caching them module-wide means a manual
+// Refresh (or a re-browse within the TTL) reuses the already-fetched posts instead
+// of re-hitting the endpoint, keeping repeated visits responsive.
+const POSTS_TTL_MS = 120000;
+const postsCache = new Map(); // creatorId -> { ts, posts }
+
+async function fetchPosts(creatorId, signal) {
+  const cached = postsCache.get(creatorId);
+  if (cached && Date.now() - cached.ts < POSTS_TTL_MS) return cached.posts;
   const url =
     `${REST}/public_posts` +
     `?creator_id=eq.${creatorId}` +
     `&select=id,kind,media_path,thumb_path,caption,text_body,text_bg_color,link_url,duration_seconds,posted_at` +
     `&order=posted_at.desc&limit=20`;
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await fetch(url, { headers: HEADERS, signal });
   if (!res.ok) throw new Error("posts " + res.status);
-  return res.json();
+  const json = await res.json();
+  postsCache.set(creatorId, { ts: Date.now(), posts: json });
+  return json;
 }
 
-export async function fetchJewishStatusFeed() {
+export async function fetchJewishStatusFeed(signal) {
   try {
     // Broad + per-category concurrent browse, then dedupe.
     const settled = await Promise.allSettled([
-      ...CATEGORY_UUIDS.map((c) => browseCreators(c)),
-      browseCreators(null),
+      ...CATEGORY_UUIDS.map((c) => browseCreators(c, signal)),
+      browseCreators(null, signal),
     ]);
     let creators = [];
     for (const r of settled) if (r.status === "fulfilled" && Array.isArray(r.value)) creators = creators.concat(r.value);
@@ -90,7 +102,7 @@ export async function fetchJewishStatusFeed() {
 
     const fetched = await pool(creators, async (c) => {
       try {
-        const posts = await fetchPosts(c.id);
+        const posts = await fetchPosts(c.id, signal);
         return { creator: c, posts };
       } catch {
         return null;

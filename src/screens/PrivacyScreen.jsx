@@ -103,6 +103,16 @@ export default function PrivacyScreen({ myUid, onBack }) {
     await update({ presenceExcluded: next });
   };
 
+  // Status visibility is INDEPENDENT from online/presence visibility: excluding a
+  // contact here hides only your Status posts from them — it does NOT change
+  // whether they can see when you're online, and vice-versa.
+  const [showStatusExceptList, setShowStatusExceptList] = useState(false);
+  const toggleStatusExcept = async (uid) => {
+    const current = privacy.statusExcluded || [];
+    const next = current.includes(uid) ? current.filter((u) => u !== uid) : [...current, uid];
+    await update({ statusExcluded: next });
+  };
+
   if (!privacy) return null;
 
   const acceptedContacts = contacts.filter((c) => c.status === "accepted");
@@ -157,11 +167,11 @@ export default function PrivacyScreen({ myUid, onBack }) {
           <CheckRow t={t} title="Require full username" sub="Only appear in results when someone types your complete @username (no smart/prefix search)" on={searchVis.exactUsername} disabled={savingVis} onClick={() => updateSearchVis({ exactUsername: !searchVis.exactUsername })} />
         </div>
 
-        {/* My Contacts Except... */}
-        <div style={{ fontWeight: 700, color: t.text, fontSize: 14, marginBottom: 8, marginTop: 10 }}>My Contacts Except...</div>
+        {/* My Contacts Except... (ONLINE / PRESENCE only) */}
+        <div style={{ fontWeight: 700, color: t.text, fontSize: 14, marginBottom: 8, marginTop: 10 }}>Hide my online presence from...</div>
         <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
           <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
-            Hide your real-time presence and status updates from selected contacts. They won't see when you're online or your status posts.
+            Hide your real-time presence (last seen / online dot) from selected contacts. This only affects presence — it does NOT hide your Status posts. Use the separate "Status" control below to hide status.
           </div>
           <div onClick={() => setShowExceptList(!showExceptList)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", cursor: "pointer", borderTop: `1px solid ${t.border}`, borderBottom: showExceptList ? `1px solid ${t.border}` : "none" }}>
             <Users size={16} color={t.primary} />
@@ -179,6 +189,40 @@ export default function PrivacyScreen({ myUid, onBack }) {
                 const isExcluded = excludedList.includes(c.uid);
                 return (
                   <div key={c.uid} onClick={() => toggleExcept(c.uid)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
+                    <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={36} />
+                    <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: t.text }}>{c.profile?.displayName || "Unknown"}</span>
+                    <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${isExcluded ? "#FF3B30" : t.border}`, background: isExcluded ? "#FF3B30" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {isExcluded && <span style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>✓</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Status visibility — independent from online presence */}
+        <div style={{ fontWeight: 700, color: t.text, fontSize: 14, marginBottom: 8, marginTop: 4 }}>Hide my Status from...</div>
+        <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+          <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+            Hide your Status posts from specific contacts. This is separate from your online presence — excluding someone here does NOT hide when you're online, and hiding your presence does NOT hide your status. An empty list means everyone allowed can see your status.
+          </div>
+          <div onClick={() => setShowStatusExceptList(!showStatusExceptList)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", cursor: "pointer", borderTop: `1px solid ${t.border}`, borderBottom: showStatusExceptList ? `1px solid ${t.border}` : "none" }}>
+            <EyeOff size={16} color={t.primary} />
+            <span style={{ flex: 1, fontWeight: 600, fontSize: 14, color: t.text }}>
+              {(privacy.statusExcluded || []).length > 0 ? `${(privacy.statusExcluded || []).length} contact${(privacy.statusExcluded || []).length !== 1 ? "s" : ""} excluded` : "Select contacts to exclude"}
+            </span>
+            <span style={{ fontSize: 12, color: t.textMuted }}>{showStatusExceptList ? "▲" : "▼"}</span>
+          </div>
+          {showStatusExceptList && (
+            <div style={{ maxHeight: 300, overflowY: "auto" }}>
+              {acceptedContacts.length === 0 && (
+                <div style={{ padding: 16, textAlign: "center", color: t.textMuted, fontSize: 13 }}>No contacts to exclude.</div>
+              )}
+              {acceptedContacts.map((c) => {
+                const isExcluded = (privacy.statusExcluded || []).includes(c.uid);
+                return (
+                  <div key={c.uid} onClick={() => toggleStatusExcept(c.uid)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", cursor: "pointer", borderBottom: `1px solid ${t.border}` }}>
                     <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={36} />
                     <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: t.text }}>{c.profile?.displayName || "Unknown"}</span>
                     <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${isExcluded ? "#FF3B30" : t.border}`, background: isExcluded ? "#FF3B30" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>

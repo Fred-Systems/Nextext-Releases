@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import { createPortal } from "react-dom";
-import { X, Play, Pause, Music, Download, Search } from "lucide-react";
+import { X, Play, Pause, Music, Download, Search, Flag } from "lucide-react";
 import {
   getActiveProvider,
   resolveSelectableProviders,
@@ -9,6 +9,8 @@ import {
   resolveDownload,
 } from "../media/musicService";
 import { fetchTrackBlob } from "../media/musicCatalog";
+import { addDoc, collection } from "firebase/firestore";
+import { db } from "../firebase/config";
 
 // Shared music picker used by BOTH the original Status Builder and the new
 // WhatsApp-style builder. Identical provider architecture, permissions,
@@ -28,7 +30,6 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
   const [error, setError] = useState("");
   const [playingId, setPlayingId] = useState(null);
   const [searchProvider, setSearchProvider] = useState(null);
-  const [chosenProvider, setChosenProvider] = useState(getActiveProvider(globalSettings));
   const [previewPos, setPreviewPos] = useState(0);
   const [previewDur, setPreviewDur] = useState(0);
   const [zemerPreviewId, setZemerPreviewId] = useState(null);
@@ -36,8 +37,12 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
   const debounceRef = useRef(null);
 
   // Which providers the user may pick between (admin's active + any other enabled
-  // provider when per-user provider choice is enabled).
+  // provider when per-user provider choice is enabled). When BOTH Zemer and Apple
+  // are enabled for the user, default the search to a combined "both" search so a
+  // single search box returns results from both providers at once.
   const selectableProviders = resolveSelectableProviders(globalSettings, userDoc);
+  const bothEnabled = selectableProviders.includes("zemer") && selectableProviders.includes("apple");
+  const [chosenProvider, setChosenProvider] = useState(bothEnabled ? "both" : (selectableProviders[0] || getActiveProvider(globalSettings)));
 
   const runSearch = async (query, providerOverride) => {
     const term = (query || "").trim();
@@ -109,6 +114,33 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
     } catch { /* best effort */ }
   };
 
+  // ── Per-song flagging (Batch 4 item G) ──
+  const [reportingTrack, setReportingTrack] = useState(null);
+  const [reportReason, setReportReason] = useState("");
+  const [reportSent, setReportSent] = useState(false);
+  const submitReport = async () => {
+    if (!reportingTrack) return;
+    const myUid = userDoc?.uid;
+    if (!myUid) return;
+    try {
+      await addDoc(collection(db, "songReports"), {
+        songTrackId: String(reportingTrack.trackId || ""),
+        songTitle: reportingTrack.title || "",
+        songArtist: reportingTrack.artist || "",
+        songPreviewUrl: reportingTrack.previewUrl || "",
+        source: reportingTrack.source || "apple",
+        reason: reportReason.trim() || "Flagged by user",
+        reportedByUid: myUid,
+        createdAt: serverTimestampSafe(),
+        status: "new",
+      });
+      setReportSent(true);
+      setTimeout(() => { setReportSent(false); setReportingTrack(null); setReportReason(""); }, 1500);
+    } catch { /* best effort */ }
+  };
+  // serverTimestamp isn't imported here to keep deps minimal; use a client timestamp.
+  function serverTimestampSafe() { return new Date(); }
+
   return createPortal(
     <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 2147483200, display: "flex", alignItems: "flex-end" }} onClick={onClose}>
       <div style={{ background: t.surface, width: "100%", boxSizing: "border-box", borderRadius: "20px 20px 0 0", padding: "16px 20px 28px", maxHeight: "85vh", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
@@ -122,6 +154,15 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
         </div>
         {selectableProviders.length > 1 && (
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            {bothEnabled && (
+              <div
+                key="both"
+                onClick={() => { setChosenProvider("both"); if (q.trim()) runSearch(q, "both"); }}
+                style={{ flex: 1, textAlign: "center", padding: "8px 0", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: `1px solid ${chosenProvider === "both" ? t.primary : t.border}`, background: chosenProvider === "both" ? t.primaryLight : t.bg, color: chosenProvider === "both" ? t.primary : t.textMuted }}
+              >
+                🎵 Both
+              </div>
+            )}
             {selectableProviders.map((p) => (
               <div
                 key={p}
@@ -135,7 +176,7 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
         )}
         {searchProvider && (
           <div style={{ fontSize: 11.5, fontWeight: 700, color: t.primary, marginBottom: 8 }}>
-            {searchProvider === "apple" ? "🎵 Apple Music" : searchProvider === "zemer" ? "🎵 Zemer" : ""}
+            {searchProvider === "both" ? "🎵 Zemer + Apple" : searchProvider === "apple" ? "🎵 Apple Music" : searchProvider === "zemer" ? "🎵 Zemer" : ""}
           </div>
         )}
         <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
@@ -158,7 +199,12 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
                 <div style={{ width: 44, height: 44, borderRadius: 8, background: t.primaryLight, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: t.primary }}>{(track.title || "?")[0]}</div>
               )}
               <div style={{ flex: 1, minWidth: 0 }} onClick={() => canPreview && playPreview(track)}>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.title}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{track.title}</div>
+                  {chosenProvider === "both" && (
+                    <span style={{ flexShrink: 0, fontSize: 9.5, fontWeight: 700, padding: "1px 5px", borderRadius: 6, background: track.source === "zemer" ? "#e11d4833" : "#8e44ad33", color: track.source === "zemer" ? "#e11d48" : "#8e44ad" }}>{track.source === "zemer" ? "ZEMER" : "APPLE"}</span>
+                  )}
+                </div>
                 <div style={{ fontSize: 12, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.artist}{track.album ? ` · ${track.album}` : ""}</div>
               </div>
               <div onClick={() => canPreview && playPreview(track)} title={canPreview ? "Preview" : "No preview"} style={{ width: 34, height: 34, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", opacity: canPreview ? 1 : 0.4, cursor: canPreview ? "pointer" : "default", flexShrink: 0 }}>
@@ -170,10 +216,28 @@ export function MusicPickerModal({ onClose, onSelect, globalSettings, userDoc, t
                   <Download size={16} color={t.primary} />
                 </div>
               )}
+              <div onClick={() => { setReportingTrack(track); setReportReason(""); }} title="Report this song" style={{ width: 34, height: 34, borderRadius: "50%", background: t.bg, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <Flag size={16} color="#FF3B30" />
+              </div>
             </div>
             );
           })}
         </div>
+        {reportingTrack && (
+          <div style={{ marginTop: 10, padding: 12, borderRadius: 12, background: t.bg, border: `1px solid ${t.border}` }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 6 }}>Report “{reportingTrack.title}”</div>
+            <input
+              value={reportReason}
+              onChange={(e) => setReportReason(e.target.value)}
+              placeholder="Reason (optional)…"
+              style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.surface, color: t.text, outline: "none", marginBottom: 8 }}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={submitReport} disabled={reportSent} style={{ flex: 1, padding: "8px 0", borderRadius: 8, border: "none", background: reportSent ? t.border : "#FF3B30", color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: reportSent ? "default" : "pointer" }}>{reportSent ? "Sent" : "Submit Report"}</button>
+              <button onClick={() => { setReportingTrack(null); setReportReason(""); }} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.surface, color: t.text, fontSize: 12.5, cursor: "pointer" }}>Cancel</button>
+            </div>
+          </div>
+        )}
         {/* Apple preview: real seek bar bound to the ACTUAL preview duration (never
             presented as the full song). Zemer previews via the legitimate YouTube
             embed (Zemer's own playback source) with YouTube's native controls.

@@ -80,6 +80,10 @@ export default function UpdatePrompt({ update, onDownload, onDismiss, downloadin
             padding: "14px 18px",
           }}
         >
+          <style>{`@keyframes nxApkIndeterminate {
+  0% { marginLeft: -40%; }
+  100% { marginLeft: 100%; }
+}`}</style>
           <div
             style={{
               fontSize: 12,
@@ -110,7 +114,7 @@ export default function UpdatePrompt({ update, onDownload, onDismiss, downloadin
               Saving APK to your Downloads folder…
             </div>
           )}
-          {(downloading || saving) && progress && progress.total > 0 && (
+          {progress && progress.total > 0 && (
             <div style={{ marginTop: 10 }}>
               <div style={{ height: 8, borderRadius: 4, background: "rgba(255,255,255,0.15)", overflow: "hidden" }}>
                 <div style={{ height: "100%", width: `${Math.min(100, Math.round((progress.loaded / progress.total) * 100))}%`, background: "linear-gradient(135deg, #10B981, #059669)", transition: "width 0.2s" }} />
@@ -120,9 +124,14 @@ export default function UpdatePrompt({ update, onDownload, onDismiss, downloadin
               </div>
             </div>
           )}
-          {(downloading || saving) && progress && !(progress.total > 0) && progress.loaded > 0 && (
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", fontWeight: 600, marginTop: 10, textAlign: "center" }}>
-              {(progress.loaded / 1048576).toFixed(1)} MB received…
+          {(downloading || saving) && (!progress || !(progress.total > 0)) && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ height: 8, borderRadius: 4, background: "rgba(255,255,255,0.15)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: "40%", background: "linear-gradient(135deg, #10B981, #059669)", animation: "nxApkIndeterminate 1.1s ease-in-out infinite" }} />
+              </div>
+              <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.75)", fontWeight: 600, marginTop: 4, textAlign: "center" }}>
+                {downloading ? "Downloading update…" : "Saving APK to your device…"}
+              </div>
             </div>
           )}
           {error && (

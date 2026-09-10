@@ -1,11 +1,14 @@
 import React, { useState, useRef } from "react";
 import { ChevronLeft, Check, Camera } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
+import { useGlobalSettings, resolveHideCameraButtons } from "../firebase/config-settings";
 import { createGroupChat } from "../firebase/chats";
 import { uploadChatFile } from "../supabase/media";
 
 export default function NewGroupScreen({ myUid, contacts, onBack, onCreated }) {
   const { t } = useTheme();
+  const globalSettings = useGlobalSettings();
+  const hideCameras = resolveHideCameraButtons(globalSettings);
   const [selected, setSelected] = useState([]);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
@@ -54,12 +57,14 @@ export default function NewGroupScreen({ myUid, contacts, onBack, onCreated }) {
             {photoPreview ? (
               <img src={photoPreview} alt="" style={{ width: 56, height: 56, borderRadius: "50%", objectFit: "cover" }} />
             ) : (
-              <Camera size={22} color={t.primary} />
+              !hideCameras && <Camera size={22} color={t.primary} />
             )}
           </div>
+          {!hideCameras && (
           <div style={{ position: "absolute", bottom: 0, right: 0, width: 20, height: 20, borderRadius: "50%", background: t.primary, display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid ${t.bg}` }}>
             <Camera size={10} color="#fff" />
           </div>
+          )}
         </div>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Group name" style={{ flex: 1, padding: "12px 14px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 15, boxSizing: "border-box" }} />
       </div>

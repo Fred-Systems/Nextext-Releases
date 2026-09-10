@@ -156,12 +156,30 @@ export function resolveProviderAccess(globalSettings, userDoc, provider) {
   return resolveOverride(globalEnabled, override);
 }
 
-// Apple search whitelist enforcement (service-layer, before display).
-function applyAppleWhitelist(tracks, whitelist) {
-  if (!whitelist || whitelist.mode !== "whitelist") return tracks;
-  const rules = (whitelist.rules || []).filter((r) => r && r.enabled !== false);
-  if (!rules.length) return []; // whitelist on but no rules → nothing matches
+// Unified search-result policy (service-layer, BEFORE display):
+//   1. Per-user exemption  → userDoc.musicPolicyExemption === true bypasses
+//      whitelist AND blacklist entirely (only the provider being enabled and
+//      the user's provider access still apply).
+//   2. Blacklist           → any matching rule REMOVES the track, everywhere.
+//   3. Whitelist           → when apple.whitelist.mode === "whitelist", only
+//      matching tracks remain (no enabled rules ⇒ nothing matches).
+//   4. Default policy      → no blacklist/whitelist config ⇒ results pass.
+// Rules support artist/album/track/genre/keyword/trackId/artistId (whatever the
+// provider actually exposes) and per-rule enabled flags. Deterministic:
+// blacklist always beats whitelist, and exemption beats both.
+export function applyMusicPolicy(tracks, { globalSettings, provider }) {
+  const cfg = globalSettings?.music || {};
+  if (provider !== "apple" && provider !== "zemer") return tracks;
+  const bl = (cfg.blacklist?.rules || []).filter((r) => r && r.enabled !== false);
+  const wl = cfg.apple?.whitelist;
+  const wlMode = wl?.mode === "whitelist";
+  const wlRules = wlMode ? (wl.rules || []).filter((r) => r && r.enabled !== false) : [];
+  const trackApplies = (t, providerOfTrack) => {
+    // Apple rules apply only to Apple results; Zemer rules only to Zemer.
+    return providerOfTrack === "all" || providerOfTrack === provider;
+  };
   const matchRule = (t, r) => {
+    if (!trackApplies(t, r.provider || provider)) return false;
     const v = String(r.value || "").toLowerCase();
     switch (r.type) {
       case "artist": return (t.artist || "").toLowerCase().includes(v);
@@ -178,14 +196,114 @@ function applyAppleWhitelist(tracks, whitelist) {
       default: return false;
     }
   };
-  return tracks.filter((t) => rules.some((r) => matchRule(t, r)));
+  if (bl.length) tracks = tracks.filter((t) => !bl.some((r) => matchRule(t, r)));
+  if (wlMode) {
+    if (!wlRules.length) return []; // whitelist on but no rules → nothing matches
+    tracks = tracks.filter((t) => wlRules.some((r) => matchRule(t, r)));
+  }
+  return tracks;
+}
+
+// Per-user exemption check (server-side flag users/{uid}.musicPolicyExemption).
+export function hasMusicPolicyExemption(userDoc) {
+  return userDoc?.musicPolicyExemption === true;
+}
+
+// Normalize a search term for casing/spacing-insensitive matching and ranking.
+export function normalizeMusicTerm(s) {
+  return String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// Deterministic, relevance-first ranking for search results. Exact/starts-with
+// matches on artist/title sort first, then alphabetical by artist — so the same
+// query always yields the same predictable order across devices.
+function rankTracks(tracks, rawQuery) {
+  const q = normalizeMusicTerm(rawQuery);
+  if (!q) return tracks;
+  const score = (t) => {
+    const artist = normalizeMusicTerm(t.artist);
+    const title = normalizeMusicTerm(t.title);
+    if (artist === q || title === q) return 0;
+    if (artist.startsWith(q) || title.startsWith(q)) return 1;
+    if (artist.includes(q) || title.includes(q)) return 2;
+    return 3;
+  };
+  return [...tracks].sort((a, b) => {
+    const sa = score(a), sb = score(b);
+    if (sa !== sb) return sa - sb;
+    const aa = (a.artist || "").toLowerCase(), ab = (b.artist || "").toLowerCase();
+    if (aa !== ab) return aa < ab ? -1 : 1;
+    return (a.title || "").toLowerCase() < (b.title || "").toLowerCase() ? -1 : 1;
+  });
+}
+
+// Resolve the providers a user is actually allowed to use (admin-enabled AND
+// not disabled for them via per-user override). Used for combined "both" search.
+export function resolveEnabledProviders(globalSettings, userDoc) {
+  const out = [];
+  for (const p of ["zemer", "apple"]) {
+    if (resolveProviderAccess(globalSettings, userDoc, p)) out.push(p);
+  }
+  return out;
+}
+
+// Simultaneous multi-provider search (when the admin enabled both Zemer and Apple
+// for the user). Issues BOTH searches in parallel, keeps the one(s) that succeed,
+// tags each result with its source, dedupes obvious duplicates, and never lets one
+// provider's failure break the other. Does NOT silently fall back to a single
+// provider's results when both were requested — it always returns both when both work.
+async function searchMusicAll(query, { globalSettings, userDoc, limit = 20 }) {
+  const term = (query || "").trim();
+  const providers = resolveEnabledProviders(globalSettings, userDoc);
+  if (providers.length === 0) {
+    const err = new Error("Music isn't available for your account.");
+    err.code = "noaccess";
+    throw err;
+  }
+  const settled = await Promise.allSettled(
+    providers.map((p) => (p === "zemer" ? zemerSearch(term, { limit }) : appleSearchWrapped(term, { limit })))
+  );
+  let tracks = [];
+  const failed = [];
+  settled.forEach((r, i) => {
+    if (r.status === "fulfilled") {
+      let t = r.value || [];
+      if (!hasMusicPolicyExemption(userDoc)) {
+        t = applyMusicPolicy(t, { globalSettings, provider: providers[i] });
+      }
+      tracks = tracks.concat(t);
+    } else {
+      failed.push(providers[i]);
+    }
+  });
+  // Dedupe obvious duplicates (same source + id, or same title/artist).
+  const seen = new Set();
+  tracks = tracks.filter((tk) => {
+    const key = `${tk.source}:${tk.trackId || tk.id || ""}:${(tk.title || "").toLowerCase()}::${(tk.artist || "").toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  tracks = rankTracks(tracks, term);
+  // If EVERY provider failed, surface the error rather than returning an empty list
+  // that looks like "no results".
+  if (tracks.length === 0 && failed.length === providers.length) {
+    const err = new Error("Music search is temporarily unavailable. Please try again.");
+    err.code = "unavailable";
+    throw err;
+  }
+  return { provider: "both", tracks, providersTried: providers, failedProviders: failed };
 }
 
 // Top-level search used by the Status Builder. Honors active provider + per-user
 // access + (Apple) whitelist. Throws a clear, provider-specific error if unavailable
-// (never silently falls back to the other provider).
+// (never silently falls back to the other provider). `provider: "both"` runs a
+// combined Zemer + Apple search (see searchMusicAll).
 export async function searchMusic(query, { globalSettings, userDoc, limit = 20, provider: overrideProvider } = {}) {
   const provider = overrideProvider || getActiveProvider(globalSettings);
+  if (provider === "both") {
+    return searchMusicAll(query, { globalSettings, userDoc, limit });
+  }
   if (provider === "disabled") {
     const err = new Error("Music is disabled.");
     err.code = "disabled";
@@ -200,9 +318,13 @@ export async function searchMusic(query, { globalSettings, userDoc, limit = 20, 
   try {
     let tracks =
       provider === "zemer" ? await zemerSearch(query, { limit }) : await appleSearchWrapped(query, { limit });
-    if (provider === "apple") {
-      tracks = applyAppleWhitelist(tracks, globalSettings?.music?.apple?.whitelist);
+    // Exempt users bypass blacklist/whitelist entirely (§13/§14 precedence).
+    if (!hasMusicPolicyExemption(userDoc)) {
+      tracks = applyMusicPolicy(tracks, { globalSettings, provider });
     }
+    // Smart search: predictable, relevance-first ordering (whitelist/blacklist
+    // filtering above is already applied to whatever the provider returned).
+    tracks = rankTracks(tracks, query);
     return { provider, tracks };
   } catch (e) {
     if (e.code) throw e;

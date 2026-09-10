@@ -3,12 +3,15 @@ import {
   ChevronLeft, Camera, Video, Type, Mic, X, Undo2, Redo2, Music, PenTool,
   Eraser, Check, Play, Pause, Smile, Trash2, Globe,
   Users, Download,   MessageCircle, Scissors, Volume2, VolumeX, Crop as CropIcon,
-  Sparkles, Plus, Minus, Palette, RotateCw,
+  Sparkles, Plus, Minus, Palette, RotateCw, EyeOff,
 } from "lucide-react";
 import { useTheme, FONTS } from "../theme/ThemeContext";
+import Avatar from "../components/Avatar";
 import { postStatus } from "../firebase/status";
 import { checkStatusAllowed, recordStatusUsage } from "../firebase/limits";
-import { uploadMediaFile } from "../services/mediaUpload";
+import { useContacts } from "../firebase/contacts";
+import { uploadMediaFile, describeUploadError, createCloudinarySegment, splitCloudinaryVideo } from "../services/mediaUpload";
+import { runStatusJob } from "../services/statusUploadManager";
 import { uploadChatFile } from "../supabase/media";
 import { MusicPickerModal } from "../components/MusicPickerModal";
 import {
@@ -69,6 +72,7 @@ const ASPECTS = [
   { id: "square", label: "1:1", ratio: 1 },
   { id: "portrait", label: "4:5", ratio: 4 / 5 },
   { id: "story", label: "9:16", ratio: 9 / 16 },
+  { id: "freeform", label: "Free", ratio: 0 },
 ];
 
 const EMOJI_GRID = ["😀", "😂", "😍", "🥳", "😎", "🤔", "😢", "😡", "👍", "👏", "🙏", "🔥", "❤️", "💯", "🎉", "⭐", "🌙", "☀️", "🌈", "🍕", "⚽", "🎵", "📸", "✈️", "🌹", "💡", "🐶", "🐱", "👋", "💪", "🎂", "🍀"];
@@ -106,76 +110,146 @@ function loadImageFromFile(file) {
   });
 }
 
-// Bake rotation + aspect crop + filter/adjust + draw strokes into a JPEG blob.
+// Bake rotation + crop (fixed-aspect OR freeform rectangle) + filter/adjust +
+// draw strokes into a JPEG blob. `edits.cropRect` (when aspect === "freeform") is
+// normalized 0..1 relative to the rotated image frame, letting the user pick an
+// arbitrary crop region (not just a fixed aspect ratio).
 async function bakePhoto(file, edits, strokes) {
   const img = await loadImageFromFile(file);
   const rot = ((edits.rotate || 0) % 360 + 360) % 360;
   const swapped = rot === 90 || rot === 270;
-  const rw = swapped ? img.naturalHeight : img.naturalWidth;
-  const rh = swapped ? img.naturalWidth : img.naturalHeight;
-  const aspect = ASPECTS.find((a) => a.id === edits.aspect) || ASPECTS[0];
-  let cw = rw;
-  let ch = rh;
-  if (aspect.ratio > 0) {
-    const target = aspect.ratio;
-    const cur = rw / rh;
-    if (cur > target) cw = Math.round(rh * target);
-    else ch = Math.round(rw / target);
-  }
-  const scale = Math.min(1, 1920 / Math.max(cw, ch));
-  const outW = Math.max(1, Math.round(cw * scale));
-  const outH = Math.max(1, Math.round(ch * scale));
-  const canvas = document.createElement("canvas");
-  canvas.width = outW;
-  canvas.height = outH;
-  const ctx = canvas.getContext("2d");
+  const nw = img.naturalWidth, nh = img.naturalHeight;
+  const rw = swapped ? nh : nw;
+  const rh = swapped ? nw : nh;
+  // Scale the full rotated image so its longest side is <= 1920.
+  const scale = Math.min(1, 1920 / Math.max(rw, rh));
+  const bw = Math.max(1, Math.round(rw * scale));
+  const bh = Math.max(1, Math.round(rh * scale));
+  const base = document.createElement("canvas");
+  base.width = bw; base.height = bh;
+  const bctx = base.getContext("2d");
   const filt = PHOTO_FILTERS.find((f) => f.id === edits.filter)?.css || "";
   const adj = `brightness(${edits.bright ?? 1}) contrast(${edits.contrast ?? 1}) saturate(${edits.sat ?? 1})`;
-  try { ctx.filter = [filt, adj].filter(Boolean).join(" "); } catch {}
-  const sx = (rw - cw) / 2;
-  const sy = (rh - ch) / 2;
-  ctx.save();
-  ctx.translate(outW / 2, outH / 2);
-  ctx.rotate((rot * Math.PI) / 180);
-  const dw = swapped ? outH : outW;
-  const dh = swapped ? outW : outH;
-  // Draw the rotated full frame, offset so the center crop lands in the canvas.
-  const srcScale = Math.min(dw / img.naturalWidth, dh / img.naturalHeight);
-  const drawW = img.naturalWidth * srcScale;
-  const drawH = img.naturalHeight * srcScale;
-  ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
-  ctx.restore();
-  try { ctx.filter = "none"; } catch {}
-  void sx; void sy;
-  // Draw strokes (normalized 0..1 coords relative to the displayed frame).
+  try { bctx.filter = [filt, adj].filter(Boolean).join(" "); } catch {}
+  bctx.save();
+  bctx.translate(bw / 2, bh / 2);
+  bctx.rotate((rot * Math.PI) / 180);
+  const dw = swapped ? bh : bw;
+  const dh = swapped ? bw : bh;
+  const srcScale = Math.min(dw / nw, dh / nh);
+  const drawW = nw * srcScale, drawH = nh * srcScale;
+  bctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+  bctx.restore();
+  try { bctx.filter = "none"; } catch {}
+  // Draw strokes (normalized 0..1 coords relative to the rotated frame).
   for (const st of strokes || []) {
     if (!st.points || st.points.length === 0) continue;
-    ctx.strokeStyle = st.eraser ? "#000000" : st.color;
-    ctx.globalCompositeOperation = st.eraser ? "destination-out" : "source-over";
-    ctx.lineWidth = Math.max(1, (st.size || 6) * (outW / 400));
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
+    bctx.strokeStyle = st.eraser ? "#000000" : st.color;
+    bctx.globalCompositeOperation = st.eraser ? "destination-out" : "source-over";
+    bctx.lineWidth = Math.max(1, (st.size || 6) * (bw / 400));
+    bctx.lineCap = "round";
+    bctx.lineJoin = "round";
+    bctx.beginPath();
     st.points.forEach((p, i) => {
-      const x = p.x * outW;
-      const y = p.y * outH;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+      const x = p.x * bw, y = p.y * bh;
+      if (i === 0) bctx.moveTo(x, y); else bctx.lineTo(x, y);
     });
-    ctx.stroke();
+    bctx.stroke();
   }
-  ctx.globalCompositeOperation = "source-over";
-  const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.85));
-  return blob;
+  bctx.globalCompositeOperation = "source-over";
+
+  // Determine the crop region (normalized to the base canvas).
+  let sx = 0, sy = 0, sw = bw, sh = bh;
+  const aspect = ASPECTS.find((a) => a.id === edits.aspect) || ASPECTS[0];
+  if (edits.aspect === "freeform" && edits.cropRect && edits.cropRect.w > 0.01 && edits.cropRect.h > 0.01) {
+    sx = Math.round(edits.cropRect.x * bw);
+    sy = Math.round(edits.cropRect.y * bh);
+    sw = Math.round(edits.cropRect.w * bw);
+    sh = Math.round(edits.cropRect.h * bh);
+  } else if (aspect.ratio > 0) {
+    const target = aspect.ratio;
+    const cur = bw / bh;
+    let cw = bw, ch = bh;
+    if (cur > target) cw = Math.round(bh * target); else ch = Math.round(bw / target);
+    sx = Math.round((bw - cw) / 2); sy = Math.round((bh - ch) / 2); sw = cw; sh = ch;
+  }
+  sx = Math.max(0, Math.min(bw - sw, sx));
+  sy = Math.max(0, Math.min(bh - sh, sy));
+  sw = Math.max(1, Math.min(bw - sx, sw));
+  sh = Math.max(1, Math.min(bh - sy, sh));
+  if (sw === bw && sh === bh) return new Promise((res) => base.toBlob(res, "image/jpeg", 0.85));
+  const out = document.createElement("canvas");
+  out.width = sw; out.height = sh;
+  out.getContext("2d").drawImage(base, sx, sy, sw, sh, 0, 0, sw, sh);
+  return new Promise((res) => out.toBlob(res, "image/jpeg", 0.85));
 }
 
 function defaultImgEdits() {
-  return { filter: "none", bright: 1, contrast: 1, sat: 1, rotate: 0, aspect: "original", strokes: [] };
+  return { filter: "none", bright: 1, contrast: 1, sat: 1, rotate: 0, aspect: "original", cropRect: null, strokes: [] };
+}
+
+// Interactive freeform crop rectangle overlay. Coordinates are normalized (0..1)
+// to the rotated image frame so they map directly onto bakePhoto's base canvas.
+function FreeformCropOverlay({ edits, onChange }) {
+  const boxRef = useRef(null);
+  const rect = edits.cropRect || { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+  const toNorm = (e) => {
+    const el = boxRef.current?.parentElement;
+    if (!el) return { x: 0, y: 0 };
+    const r = el.getBoundingClientRect();
+    return {
+      x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+      y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
+    };
+  };
+  const startDrag = (moveFn) => (e) => {
+    e.stopPropagation();
+    const start = toNorm(e);
+    const orig = { ...rect };
+    const move = (ev) => moveFn(toNorm(ev), start, orig);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const onBackgroundDown = (e) => {
+    if (e.target !== e.currentTarget) return;
+    const p = toNorm(e);
+    const move = (c) => onChange({ x: Math.min(p.x, c.x), y: Math.min(p.y, c.y), w: Math.abs(c.x - p.x), h: Math.abs(c.y - p.y) });
+    startDrag(move)(e);
+  };
+  const onBoxDown = startDrag((c, start, orig) => {
+    let x = Math.min(1 - orig.w, Math.max(0, orig.x + (c.x - start.x)));
+    let y = Math.min(1 - orig.h, Math.max(0, orig.y + (c.y - start.y)));
+    onChange({ ...orig, x, y });
+  });
+  const onHandleDown = startDrag((c, start, orig) => {
+    onChange({ ...orig, w: Math.min(1 - orig.x, Math.max(0.05, c.x - orig.x)), h: Math.min(1 - orig.y, Math.max(0.05, c.y - orig.y)) });
+  });
+  return (
+    <div onPointerDown={onBackgroundDown} style={{ position: "absolute", inset: 0, cursor: "crosshair", touchAction: "none" }}>
+      <div
+        onPointerDown={onBoxDown}
+        style={{ position: "absolute", left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%`, border: "2px solid #fff", boxShadow: "0 0 0 9999px rgba(0,0,0,0.45)", boxSizing: "border-box", cursor: "move" }}
+      >
+        <div onPointerDown={onHandleDown} style={{ position: "absolute", right: -9, bottom: -9, width: 18, height: 18, borderRadius: "50%", background: "#fff", border: "2px solid #007aff", cursor: "nwse-resize" }} />
+      </div>
+    </div>
+  );
 }
 
 export default function StatusBuilderNew(props) {
   const { myUid, userDoc, globalSettings, sysConfig, initialFile, initialFileType, initialText, onClose, onPosted } = props;
   const { t } = useTheme();
+
+  // Height unit that respects the DYNAMIC viewport (avoids the classic mobile
+  // bug where 100vh exceeds the visible area once the browser chrome shows,
+  // which previously pushed the builder's bottom toolbar / Post button below
+  // the fold and clipped them). Fall back to 100vh only where dvh is unsupported.
+  const dvhSupported = typeof window !== "undefined" && window.CSS && typeof window.CSS.supports === "function" && window.CSS.supports("height", "100dvh");
+  const vhUnit = dvhSupported ? "100dvh" : "100vh";
 
   // ── Flow state ──
   const seeded = useRef(false);
@@ -192,6 +266,9 @@ export default function StatusBuilderNew(props) {
   const [videoDurSec, setVideoDurSec] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
+  // Number of evenly-duration parts to split the video into when posting (1 = single
+  // trimmed clip; 2-5 = split into that many separate, genuinely-trimmed assets).
+  const [splitParts, setSplitParts] = useState(1);
   const [videoVolume, setVideoVolume] = useState(100);
   const [muteOriginal, setMuteOriginal] = useState(false);
   const [videoFilter, setVideoFilter] = useState("none");
@@ -210,6 +287,12 @@ export default function StatusBuilderNew(props) {
   const [waitForVideo, setWaitForVideo] = useState(false);
   const [allowDownload, setAllowDownload] = useState(true);
   const [commentsHidden, setCommentsHidden] = useState(false);
+  // Per-status audience exclusion (specific contacts who must NOT see this status).
+  // Merged with the owner's global privacy.statusExcluded at post time.
+  const [excludedUids, setExcludedUids] = useState([]);
+  const [showExcludeList, setShowExcludeList] = useState(false);
+  const { contacts } = useContacts(myUid);
+  const acceptedContactsForExclude = (contacts || []).filter((c) => c.status === "accepted");
   const [audience, setAudience] = useState("contacts");
   const [posting, setPosting] = useState(false);
   const [postProgress, setPostProgress] = useState("");
@@ -258,6 +341,10 @@ export default function StatusBuilderNew(props) {
   const dragRef = useRef(null);
   const pinchRef = useRef(null);
   const videoRef = useRef(null);
+  // Tracks whether this builder is still mounted so an in-flight post can avoid
+  // writing state after unmount (e.g. the user left the Status page mid-upload).
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const urlsToRevoke = useRef([]);
 
   const musicProviderActive = getActiveProvider(globalSettings);
@@ -268,6 +355,32 @@ export default function StatusBuilderNew(props) {
   const activePhoto = photos.find((p) => p.id === activePhotoId) || photos[0] || null;
   const activeEdits = (activePhoto && imgEdits[activePhoto.id]) || defaultImgEdits();
   const activeSticker = textStickers.find((s) => s.id === activeStickerId) || null;
+  // Baked preview: the SAME transformed asset (rotate + crop + filter + draw
+  // strokes) that gets uploaded in handlePost, so the final preview matches the
+  // posted result exactly. Keyed by photo id; rebuilt when entering review.
+  const [bakedPreview, setBakedPreview] = useState({});
+  useEffect(() => {
+    let alive = true;
+    if (step === "review" && mode === "photo") {
+      (async () => {
+        const out = {};
+        for (const p of photos) {
+          const ed = imgEdits[p.id] || defaultImgEdits();
+          try {
+            const blob = await bakePhoto(p.file, ed, ed.strokes || []);
+            if (blob) out[p.id] = { url: URL.createObjectURL(blob), blob };
+          } catch { /* keep original as fallback */ }
+        }
+        if (alive) setBakedPreview(out);
+      })();
+    } else if (Object.keys(bakedPreview).length) {
+      Object.values(bakedPreview).forEach((v) => { try { URL.revokeObjectURL(v.url); } catch {} });
+      setBakedPreview({});
+    }
+    return () => { alive = false; };
+    // Re-bake when (re)entering review or when the source photos change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, mode, photos]);
 
   // ── Seed from props (skip entry when initial content provided) ──
   useEffect(() => {
@@ -350,8 +463,15 @@ export default function StatusBuilderNew(props) {
     const room = Math.max(0, 6 - photos.length);
     const picks = files.slice(0, room || 6);
     if (!picks.length) return;
-    const mapped = picks.map((f) => ({ id: nid("img"), file: f, url: URL.createObjectURL(f) }));
-    mapped.forEach((m) => urlsToRevoke.current.push(m.url));
+    const mapped = picks.map((f) => ({ id: nid("img"), file: f, url: URL.createObjectURL(f), width: 0, height: 0 }));
+    mapped.forEach((m) => {
+      urlsToRevoke.current.push(m.url);
+      const im = new Image();
+      im.onload = () => {
+        setPhotos((prev) => prev.map((p) => (p.id === m.id ? { ...p, width: im.naturalWidth, height: im.naturalHeight } : p)));
+      };
+      im.src = m.url;
+    });
     setPhotos((prev) => {
       const next = [...prev, ...mapped].slice(0, 6);
       if (!activePhotoId && next.length) setActivePhotoId(next[0].id);
@@ -744,6 +864,9 @@ export default function StatusBuilderNew(props) {
     const snapOverlay = null; // textOverlay null when stickers exist (viewer prefers stickers)
     const snapMusic = snapBgMusic();
     const snapVisibility = audience === "public" ? "public" : "contacts";
+    // Merge this status's per-status exclusions with the owner's global
+    // status-exclusion list (privacy.statusExcluded) so both apply to this post.
+    const snapExcluded = Array.from(new Set([...(userDoc?.privacy?.statusExcluded || []), ...excludedUids]));
     const snapDurMs = durationSeconds * 1000;
     const snapAllow = allowDownload;
     const snapHide = commentsHidden;
@@ -752,11 +875,23 @@ export default function StatusBuilderNew(props) {
     const snapVidVol = muteOriginal ? 0 : videoVolume;
     const snapBgAudio = bgAudioFile;
     const chatScope = `status-${myUid}`;
-    setPosting(true);
-    try {
+    // The entire upload + post runs inside the app-level status job manager so it
+    // survives the Status Builder unmounting (e.g. the user leaves the page mid-
+    // upload). The job lives on a module-level promise chain, not the React tree,
+    // so leaving Status cannot cancel the post. A stable jobId prevents a retry
+    // from double-posting the same status.
+    if (mountedRef.current) setPosting(true);
+    const jobId = `status-${myUid}-${mode}-${Date.now()}`;
+    await runStatusJob({
+      jobId,
+      label: mode === "voice" ? "Voice status" : mode === "video" ? "Video status" : mode === "photo" ? "Photo status" : "Text status",
+      task: async ({ update }) => {
+        // Local progress reporter: feeds the job manager AND the component's own
+        // progress UI while the component is still mounted.
+        const report = (x) => { update(x); if (mountedRef.current) setPostProgress(x); };
       // Voice-note status → mediaType "voice" (same as chat voice notes bucket path).
       if (mode === "voice" && voiceBlob) {
-        setPostProgress("Uploading voice note…");
+        report("Uploading voice note…");
         const voiceFile = new File([voiceBlob], `status-voice-${Date.now()}.webm`, { type: voiceBlob.type || "audio/webm" });
         const voiceResult = await uploadMediaFile(chatScope, myUid, voiceFile);
         await postStatus(myUid, {
@@ -772,6 +907,7 @@ export default function StatusBuilderNew(props) {
           commentsHidden: snapHide,
           backgroundMusic: snapMusic,
           visibility: snapVisibility,
+          excludedUids: snapExcluded,
         });
       }
       // Multiple images → separate status updates (max 6), photo edits baked.
@@ -783,7 +919,7 @@ export default function StatusBuilderNew(props) {
         let photoBgAudioVol = null;
         if (snapBgAudio) {
           try {
-            setPostProgress("Uploading voiceover…");
+            report("Uploading voiceover…");
             const audioFile = new File([snapBgAudio], `status-audio-${Date.now()}.mp3`, { type: snapBgAudio.type || "audio/mpeg" });
             const audioResult = await uploadChatFile(chatScope, myUid, audioFile, { compress: false });
             photoBgAudioURL = audioResult.url;
@@ -791,7 +927,7 @@ export default function StatusBuilderNew(props) {
           } catch { photoBgAudioURL = null; }
         }
         for (let i = 0; i < batch.length; i++) {
-          setPostProgress(`Uploading photo ${i + 1} of ${batch.length}…`);
+          report(`Uploading photo ${i + 1} of ${batch.length}…`);
           const p = batch[i];
           const ed = imgEdits[p.id] || defaultImgEdits();
           let fileToUpload = p.file;
@@ -815,12 +951,13 @@ export default function StatusBuilderNew(props) {
             commentsHidden: snapHide,
             backgroundMusic: snapMusic,
             visibility: snapVisibility,
+            excludedUids: snapExcluded,
           });
         }
       }
       // Single video → direct path with preview/poster via generateStatusPreview.
       if (mode === "video" && videoFile && !voiceBlob) {
-        setPostProgress("Uploading video…");
+        report("Uploading video…");
         let bgAudioURL = null;
         let bgAudioVol = null;
         let vidVol = null;
@@ -851,33 +988,103 @@ export default function StatusBuilderNew(props) {
             previewURL = previewResult.url;
           }
         } catch (e) { console.warn("[StatusBuilderNew] preview generation failed:", e?.message); }
-        await postStatus(myUid, {
-          text: (snapText || "").trim() || null,
-          mediaURL: result.url,
-          mediaType: "video",
-          backgroundColor: null,
-          fontFamily: null,
-          durationMs: durationMs || snapDurMs,
-          textOverlay: snapOverlay,
-          textStickers: snapStickers,
-          bgAudioURL,
-          bgAudioVolume: bgAudioVol,
-          videoVolume: vidVol,
-          waitForVideo: snapWait,
-          allowDownload: snapAllow,
-          commentsHidden: snapHide,
-          backgroundMusic: snapMusic,
-          previewURL: previewURL || null,
-          posterURL: posterURL || null,
-          trimStart,
-          trimEnd,
-          videoFilter,
-          visibility: snapVisibility,
-        });
+
+        // ── Real trim / split ──
+        // The original is uploaded as-is; we then create genuinely trimmed, separate
+        // Cloudinary assets via server-side so_/eo_ segmentation. Each part is its
+        // own file. Order is preserved (part 1 → part N). Every piece is independently
+        // checked: if a piece is missing/exceeds limits we surface the error rather
+        // than faking the split.
+        const originalPublicId = (result.path || "").replace(/^cloudinary:/, "");
+        const wantTrim = trimStart > 0 || trimEnd < (videoDurSec || durationMs ? (videoDurSec || (durationMs || 0) / 1000) : 0);
+        const parts = Math.max(1, Math.min(5, splitParts | 0));
+        if (parts > 1 && originalPublicId && videoDurSec > 0) {
+          report(`Splitting into ${parts} parts…`);
+          const segments = await splitCloudinaryVideo(originalPublicId, videoDurSec, parts);
+          for (let pi = 0; pi < segments.length; pi++) {
+            report(`Posting part ${pi + 1} of ${segments.length}…`);
+            await postStatus(myUid, {
+              text: (snapText || "").trim() || null,
+              mediaURL: segments[pi].url,
+              mediaType: "video",
+              backgroundColor: null,
+              fontFamily: null,
+              durationMs: Math.round((videoDurSec / segments.length) * 1000),
+              textOverlay: snapOverlay,
+              textStickers: snapStickers,
+              bgAudioURL: pi === 0 ? bgAudioURL : null,
+              bgAudioVolume: pi === 0 ? bgAudioVol : null,
+              videoVolume: vidVol,
+              waitForVideo: snapWait,
+              allowDownload: snapAllow,
+              commentsHidden: snapHide,
+              backgroundMusic: snapMusic,
+              previewURL: pi === 0 ? previewURL : null,
+              posterURL: pi === 0 ? posterURL : null,
+              trimStart: null,
+              trimEnd: null,
+              videoFilter,
+              visibility: snapVisibility,
+              excludedUids: snapExcluded,
+            });
+          }
+        } else if (wantTrim && originalPublicId) {
+          report("Trimming video…");
+          const seg = await createCloudinarySegment(originalPublicId, trimStart, trimEnd);
+          await postStatus(myUid, {
+            text: (snapText || "").trim() || null,
+            mediaURL: seg.url,
+            mediaType: "video",
+            backgroundColor: null,
+            fontFamily: null,
+            durationMs: durationMs || snapDurMs,
+            textOverlay: snapOverlay,
+            textStickers: snapStickers,
+            bgAudioURL,
+            bgAudioVolume: bgAudioVol,
+            videoVolume: vidVol,
+            waitForVideo: snapWait,
+            allowDownload: snapAllow,
+            commentsHidden: snapHide,
+            backgroundMusic: snapMusic,
+            previewURL: previewURL || null,
+            posterURL: posterURL || null,
+            trimStart: null,
+            trimEnd: null,
+            videoFilter,
+            visibility: snapVisibility,
+            excludedUids: snapExcluded,
+          });
+        } else {
+          await postStatus(myUid, {
+            text: (snapText || "").trim() || null,
+            mediaURL: result.url,
+            mediaType: "video",
+            backgroundColor: null,
+            fontFamily: null,
+            durationMs: durationMs || snapDurMs,
+            textOverlay: snapOverlay,
+            textStickers: snapStickers,
+            bgAudioURL,
+            bgAudioVolume: bgAudioVol,
+            videoVolume: vidVol,
+            waitForVideo: snapWait,
+            allowDownload: snapAllow,
+            commentsHidden: snapHide,
+            backgroundMusic: snapMusic,
+            previewURL: previewURL || null,
+            posterURL: posterURL || null,
+            trimStart,
+            trimEnd,
+            videoFilter,
+            visibility: snapVisibility,
+            excludedUids: snapExcluded,
+          });
+        }
       }
       // Text status (optional background audio + music).
       if (mode === "text") {
-        setPostProgress("Posting status…");
+        report("Posting status…");
         let bgAudioURL = null;
         let bgAudioVol = null;
         if (snapBgAudio) {
@@ -901,17 +1108,26 @@ export default function StatusBuilderNew(props) {
           commentsHidden: snapHide,
           allowDownload: snapAllow,
           visibility: snapVisibility,
+          excludedUids: snapExcluded,
         });
       }
       try { await recordStatusUsage(myUid); } catch {}
-      setPosting(false);
-      setPostProgress("");
-      onPosted?.();
-    } catch (err) {
-      setPosting(false);
-      setPostProgress("");
-      setPostError("Couldn't post status: " + (err?.message || err || "unknown error"));
-    }
+        report("Done");
+      },
+      onDone: () => {
+        if (mountedRef.current) { setPosting(false); setPostProgress(""); }
+        onPosted?.();
+      },
+    }).catch((err) => {
+      // Surface the REAL underlying error in the console (dev diagnosis) instead of
+      // only the generic "Couldn't post your status" the user sees.
+      console.error("[StatusBuilderNew] post failed:", err);
+      if (mountedRef.current) {
+        setPosting(false);
+        setPostProgress("");
+        setPostError(describeUploadError(err, "Couldn't post your status"));
+      }
+    });
   };
 
   // ── Derived preview helpers ──
@@ -922,11 +1138,11 @@ export default function StatusBuilderNew(props) {
   };
 
   const shell = {
-    position: "fixed", inset: 0, zIndex: 2000, display: "flex",
-    alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.75)",
+    position: "fixed", top: 0, left: 0, right: 0, height: vhUnit, zIndex: 2000, display: "flex",
+    alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.75)", boxSizing: "border-box",
   };
   const phone = {
-    width: "min(430px, 100vw)", height: "min(800px, 100vh)", maxHeight: "100vh",
+    width: "min(430px, 100%)", height: "100%", maxHeight: "100%",
     background: t.bg, color: t.text, display: "flex", flexDirection: "column",
     overflow: "hidden", position: "relative",
     borderRadius: window.innerWidth > 500 ? 24 : 0,
@@ -1010,10 +1226,10 @@ export default function StatusBuilderNew(props) {
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 16 }}>
             <div style={{ borderRadius: 16, overflow: "hidden", background: "#000", minHeight: 220, maxHeight: 380, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
               {mode === "photo" && activePhoto && (
-                <img src={activePhoto.url} alt="Status preview" style={{ width: "100%", maxHeight: 380, objectFit: "contain", filter: liveFilterCss(), transform: `rotate(${activeEdits.rotate || 0}deg)` }} />
+                <img src={bakedPreview[activePhoto.id]?.url || activePhoto.url} alt="Status preview" style={{ width: "100%", maxHeight: 380, objectFit: "cover", background: "#000" }} />
               )}
               {mode === "video" && videoURL && (
-                <video src={videoURL} controls playsInline style={{ width: "100%", maxHeight: 380 }} />
+                <video src={videoURL} controls playsInline style={{ width: "100%", maxHeight: 380, filter: PHOTO_FILTERS.find((f) => f.id === videoFilter)?.css || "none" }} />
               )}
               {mode === "text" && (
                 <div style={{ width: "100%", minHeight: 220, background: TEXT_BG_PRESETS[bgIdx], display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -1064,6 +1280,35 @@ export default function StatusBuilderNew(props) {
                   </button>
                 ))}
               </div>
+            </div>
+            {/* Per-status audience exclusion */}
+            <div style={{ marginTop: 12, padding: "12px 14px", borderRadius: 12, background: t.surface, border: `1px solid ${t.border}` }}>
+              <div onClick={() => setShowExcludeList((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                <EyeOff size={16} color={t.primary} />
+                <span style={{ flex: 1, fontWeight: 700, fontSize: 14, color: t.text }}>
+                  {excludedUids.length > 0 ? `Hidden from ${excludedUids.length} contact${excludedUids.length !== 1 ? "s" : ""}` : "Don't show to specific contacts"}
+                </span>
+                <span style={{ fontSize: 12, color: t.textMuted }}>{showExcludeList ? "▲" : "▼"}</span>
+              </div>
+              {showExcludeList && (
+                <div style={{ maxHeight: 260, overflowY: "auto", marginTop: 10 }}>
+                  {acceptedContactsForExclude.length === 0 && (
+                    <div style={{ padding: 12, textAlign: "center", color: t.textMuted, fontSize: 13 }}>No contacts to exclude.</div>
+                  )}
+                  {acceptedContactsForExclude.map((c) => {
+                    const isEx = excludedUids.includes(c.uid);
+                    return (
+                      <div key={c.uid} onClick={() => setExcludedUids((prev) => isEx ? prev.filter((u) => u !== c.uid) : [...prev, c.uid])} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
+                        <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={34} />
+                        <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.profile?.displayName || "Unknown"}</span>
+                        <div style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${isEx ? "#FF3B30" : t.border}`, background: isEx ? "#FF3B30" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {isEx && <span style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>✓</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             {mode === "video" && (
               <label style={{ marginTop: 12, padding: "12px 14px", borderRadius: 12, background: t.surface, border: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 13 }}>
@@ -1153,18 +1398,25 @@ export default function StatusBuilderNew(props) {
             style={{
               position: "relative", borderRadius: 18, overflow: "hidden", background: "#000",
               minHeight: 380, maxHeight: 480, display: "flex", alignItems: "center", justifyContent: "center",
-              aspectRatio: mode === "photo" && activeEdits.aspect !== "original"
-                ? String(ASPECTS.find((a) => a.id === activeEdits.aspect)?.ratio || "4/5").replace("/", " / ")
-                : undefined,
+              aspectRatio: mode === "photo" && (activeEdits.aspect === "freeform"
+                ? (() => {
+                    const w = activePhoto?.width || 1, h = activePhoto?.height || 1;
+                    const sw = (activeEdits.rotate || 0) % 360 === 90 || (activeEdits.rotate || 0) % 360 === 270;
+                    return sw ? h / w : w / h;
+                  })()
+                : activeEdits.aspect !== "original"
+                  ? String(ASPECTS.find((a) => a.id === activeEdits.aspect)?.ratio || "4/5").replace("/", " / ")
+                  : undefined),
               touchAction: tool === "draw" ? "none" : "pan-x pan-y",
             }}
           >
             {mode === "photo" && activePhoto && (
               <img
                 src={activePhoto.url} alt="Status canvas" draggable={false}
-                style={{ width: "100%", height: "100%", maxHeight: 480, objectFit: activeEdits.aspect === "original" ? "contain" : "cover", filter: liveFilterCss(), transform: `rotate(${activeEdits.rotate || 0}deg)`, pointerEvents: "none" }}
+                style={{ width: "100%", height: "100%", maxHeight: 480, objectFit: activeEdits.aspect === "freeform" || activeEdits.aspect === "original" ? "contain" : "cover", filter: liveFilterCss(), transform: `rotate(${activeEdits.rotate || 0}deg)`, pointerEvents: "none" }}
               />
             )}
+            {mode === "photo" && activePhoto && tool === "crop" && activeEdits.aspect === "freeform" && <FreeformCropOverlay edits={activeEdits} onChange={(rect) => patchEdits({ cropRect: rect })} />}
             {mode === "video" && videoURL && (
               <video
                 ref={videoRef} src={videoURL} playsInline controls={tool !== "draw"}
@@ -1360,9 +1612,10 @@ export default function StatusBuilderNew(props) {
       </span>
     );
     const card = {
-      position: "absolute", left: 12, right: 12, bottom: 12, zIndex: 8,
+      position: "absolute", top: 12, right: 12, left: "auto", bottom: "auto", zIndex: 8,
       display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
       borderRadius: 14, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)",
+      maxWidth: "calc(100% - 24px)",
     };
     if (musicStyle === "minimal") {
       return (
@@ -1583,7 +1836,17 @@ export default function StatusBuilderNew(props) {
           <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>Aspect</div>
           <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
             {ASPECTS.map((a) => (
-              <button key={a.id} onClick={() => patchEdits({ aspect: a.id })} aria-label={`Aspect ${a.label}`} style={{ flex: 1, padding: "8px 0", borderRadius: 9, border: `1.5px solid ${activeEdits.aspect === a.id ? t.primary : t.border}`, background: activeEdits.aspect === a.id ? t.primaryLight : "transparent", color: activeEdits.aspect === a.id ? t.primary : t.textMuted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{a.label}</button>
+              <button key={a.id} onClick={() => {
+                // Selecting "Free" seeds a sensible default crop rectangle so the
+                // freeform box is immediately real and baked at publish (otherwise a
+                // user who just taps "Free" and posts would get the full, uncropped
+                // image because bakePhoto only crops when a cropRect exists).
+                const patch = { aspect: a.id };
+                if (a.id === "freeform" && !(activeEdits.cropRect && activeEdits.cropRect.w > 0.01)) {
+                  patch.cropRect = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+                }
+                patchEdits(patch);
+              }} aria-label={`Aspect ${a.label}`} style={{ flex: 1, padding: "8px 0", borderRadius: 9, border: `1.5px solid ${activeEdits.aspect === a.id ? t.primary : t.border}`, background: activeEdits.aspect === a.id ? t.primaryLight : "transparent", color: activeEdits.aspect === a.id ? t.primary : t.textMuted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{a.label}</button>
             ))}
           </div>
           <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>Rotate</div>
@@ -1599,8 +1862,8 @@ export default function StatusBuilderNew(props) {
       const max = Math.max(1, videoDurSec || 1);
       return (
         <div style={panel}>
-          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>Trim & Mute (stored as metadata)</div>
-          <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 8 }}>Start {trimStart.toFixed(1)}s · End {trimEnd.toFixed(1)}s of {max}s</div>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>Trim &amp; Split</div>
+          <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 8 }}>Start {trimStart.toFixed(1)}s · End {trimEnd.toFixed(1)}s of {max}s — the posted clip is actually trimmed on the server.</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
             <span style={{ fontSize: 12, color: t.textMuted, width: 40 }}>Start</span>
             <input type="range" min="0" max={Math.max(0, max - 1)} step="0.5" value={Math.min(trimStart, Math.max(0, max - 1))} onChange={(e) => setTrimStart(Math.min(Number(e.target.value), trimEnd - 1))} aria-label="Trim start" style={{ flex: 1, accentColor: t.primary }} />
@@ -1624,6 +1887,12 @@ export default function StatusBuilderNew(props) {
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {PHOTO_FILTERS.map((f) => (
               <button key={f.id} onClick={() => setVideoFilter(f.id)} aria-label={`Video filter ${f.label}`} style={{ padding: "6px 12px", borderRadius: 9, border: `1.5px solid ${videoFilter === f.id ? t.primary : t.border}`, background: videoFilter === f.id ? t.primaryLight : "transparent", color: videoFilter === f.id ? t.primary : t.textMuted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{f.label}</button>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6, marginTop: 10 }}>Split into parts (each a separate, trimmed clip)</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button key={n} onClick={() => setSplitParts(n)} aria-label={`Split into ${n} parts`} style={{ padding: "6px 14px", borderRadius: 9, border: `1.5px solid ${splitParts === n ? t.primary : t.border}`, background: splitParts === n ? t.primaryLight : "transparent", color: splitParts === n ? t.primary : t.textMuted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{n === 1 ? "No split" : `${n} parts`}</button>
             ))}
           </div>
         </div>

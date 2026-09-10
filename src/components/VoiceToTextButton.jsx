@@ -398,29 +398,36 @@ export default function VoiceToTextButton({ myUid, onResult, onAutoSend, autoSen
       )}
       {recording && showInterim && interimText ? (
         <div style={{
-          position: "absolute", bottom: dim + 6, left: "50%", transform: "translateX(-50%)",
-          maxWidth: 240, background: "rgba(0,0,0,0.82)", color: "#fff", fontSize: 12.5,
+          position: "fixed", bottom: dim + 6, left: "50%", transform: "translateX(-50%)",
+          maxWidth: "calc(100vw - 24px)", background: "rgba(0,0,0,0.82)", color: "#fff", fontSize: 12.5,
           padding: "6px 10px", borderRadius: 10, whiteSpace: "pre-wrap", wordBreak: "break-word",
           textAlign: "center", lineHeight: 1.3, boxShadow: "0 4px 16px rgba(0,0,0,0.3)", zIndex: 50,
+          boxSizing: "border-box",
         }}>{interimText}</div>
       ) : null}
       {error ? (
         <div style={{
-          position: "absolute", bottom: dim + 6, left: "50%", transform: "translateX(-50%)",
-          maxWidth: 240, background: "#FF3B30", color: "#fff", fontSize: 12,
+          position: "fixed", bottom: dim + 6, left: "50%", transform: "translateX(-50%)",
+          maxWidth: "calc(100vw - 24px)", background: "#FF3B30", color: "#fff", fontSize: 12,
           padding: "6px 10px", borderRadius: 10, textAlign: "center", lineHeight: 1.3, zIndex: 50,
+          boxSizing: "border-box",
         }}>{error}</div>
       ) : null}
       {pendingSend ? (
         <div style={{
-          position: "absolute", bottom: dim + 6, left: "50%", transform: "translateX(-50%)",
+          position: "fixed", bottom: dim + 6, left: "50%", transform: "translateX(-50%)",
           display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.88)", color: "#fff",
           padding: "7px 10px", borderRadius: 12, fontSize: 12.5, zIndex: 60, whiteSpace: "nowrap",
           boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
-          maxWidth: "calc(100vw - 24px)", boxSizing: "border-box",
+          maxWidth: "calc(100vw - 24px)", boxSizing: "border-box", flexWrap: "wrap",
+          rowGap: 4, justifyContent: "center", overflow: "hidden",
+          // Centered on the VIEWPORT (fixed) and capped to 100vw-24px so the
+          // Cancel button can never be cut off on narrow screens — even when the
+          // mic sits near the right edge (old absolute centering pushed it past).
+          width: "max-content",
         }}>
           <span>Auto-sending in {pendingSend.left}s</span>
-          <button onClick={cancelAutoSend} style={{ background: color, color: "#fff", border: "none", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}>Cancel</button>
+          <button onClick={cancelAutoSend} style={{ background: color, color: "#fff", border: "none", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>Cancel</button>
         </div>
       ) : null}
     </div>

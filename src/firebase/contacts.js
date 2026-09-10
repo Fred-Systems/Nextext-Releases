@@ -141,7 +141,10 @@ function loadContactsCache(myUid) {
   try {
     const raw = localStorage.getItem(contactsCacheKey(myUid));
     if (!raw) return [];
-    return JSON.parse(raw);
+    const rows = JSON.parse(raw);
+    // Cache must obey the same accepted-only rule as the live query — older
+    // caches may contain pending/stray docs from before the filter existed.
+    return Array.isArray(rows) ? rows.filter((r) => r && r.status === "accepted") : [];
   } catch { return []; }
 }
 
@@ -160,8 +163,16 @@ export function useContacts(myUid) {
     if (!myUid) return;
     const ref = collection(db, "users", myUid, "contacts");
     const unsub = onSnapshot(ref, async (snap) => {
+      // PRIVACY: only ACCEPTED contacts belong in the contact list. The
+      // subcollection also holds "pending" docs — both incoming requests and
+      // the sender-side mirror of a request the recipient hasn't accepted.
+      // Including those made "start a chat with someone" silently appear as a
+      // contact on the other side (any request path creates a pending doc on
+      // both ends, so merely opening a conversation leaked into contacts).
+      // Pending requests are handled by their own request UI, never here.
+      const acceptedDocs = snap.docs.filter((d) => d.data()?.status === "accepted");
       const rows = await Promise.all(
-        snap.docs.map(async (d) => {
+        acceptedDocs.map(async (d) => {
           const contactData = d.data();
           const profileSnap = await getDocs(
             query(collection(db, "users"), where("__name__", "==", d.id))

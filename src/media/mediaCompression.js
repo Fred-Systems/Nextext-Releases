@@ -1,20 +1,25 @@
 import imageCompression from "browser-image-compression";
 
-export const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB hard limit -- matches Supabase's free-tier per-file cap
+// Belt-and-braces ceiling. This is the absolute maximum any provider allows
+// (Cloudinary = 100MB). The authoritative, provider-aware limit is enforced
+// earlier in mediaUpload.assertRawUnderLimit (100MB Cloudinary / 50MB Supabase),
+// so this only catches anything that slips past that gate.
+export const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 
 export class FileTooLargeError extends Error {
   constructor(sizeBytes) {
-    super("Files must be under 50MB.");
+    super("This file is too large to upload.");
     this.name = "FileTooLargeError";
     this.sizeBytes = sizeBytes;
   }
 }
 
 // Call this before ANY upload (image, video, voice note, file) — throws
-// FileTooLargeError if over the hard cap, so callers can catch it and show
-// a friendly toast. This is the frontend half of the limit; the Storage
-// security rules enforce the same 100MB cap server-side as the real,
-// unbypassable backstop (see storage.rules).
+// FileTooLargeError if over the hard ceiling, so callers can catch it and show
+// a friendly toast. The authoritative, provider-aware limit (100MB Cloudinary /
+// 50MB Supabase) is enforced earlier in mediaUpload.assertRawUnderLimit; this is
+// the final backstop. Storage security rules enforce the same caps server-side
+// as the real, unbypassable backstop (see storage.rules).
 export function assertUnderSizeLimit(file) {
   if (file.size > MAX_FILE_SIZE_BYTES) {
     throw new FileTooLargeError(file.size);

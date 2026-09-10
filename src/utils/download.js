@@ -1,11 +1,7 @@
-// Internal: programmatically click an anchor to start a download.
-function triggerDownload(href, filename) {
-  const a = document.createElement("a");
-  a.href = href;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { try { document.body.removeChild(a); } catch {} }, 2000);
+import { downloadBlobToDevice, downloadMediaToDevice } from "../media/deviceDownload";
+
+function defaultImageName() {
+  return `nextext-image-${Date.now()}.png`;
 }
 
 // Trigger a browser/WebView download of a media URL to the device.
@@ -36,11 +32,20 @@ export async function downloadMedia(url, filename) {
 // Robust image download. Many image hosts (e.g. Pollinations) send
 // Access-Control-Allow-Origin, so we render the image to a canvas with
 // crossOrigin and export a PNG — this works even when a plain <a download>
-// would be blocked by the browser for cross-origin resources. Falls back to the
-// generic blob-fetch downloader if the canvas is tainted or export fails.
+// would be blocked by the browser for cross-origin resources. Falls back to a
+// direct fetch + device write (via deviceDownload) if the canvas is tainted or
+// export fails. On Android/Capacitor this writes to Documents/NexText and opens
+// the share sheet; on web it uses the normal browser download. Throws on
+// failure — callers must surface the error (do NOT treat as silent success).
 export async function downloadImage(url, filename) {
-  if (!url) return false;
-  if (url.startsWith("blob:")) return downloadMedia(url, filename);
+  if (!url) throw new Error("Image is unavailable.");
+  const name = filename || defaultImageName();
+  if (url.startsWith("blob:")) {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    if (!blob || !blob.size) throw new Error("The image came back empty.");
+    return downloadBlobToDevice(blob, name, "image/png");
+  }
   try {
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -57,11 +62,9 @@ export async function downloadImage(url, filename) {
     ctx.drawImage(img, 0, 0);
     const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
     if (!blob) throw new Error("toBlob failed");
-    const objUrl = URL.createObjectURL(blob);
-    triggerDownload(objUrl, filename || `nextext-image-${Date.now()}.png`);
-    setTimeout(() => { try { URL.revokeObjectURL(objUrl); } catch {} }, 2500);
-    return true;
+    return downloadBlobToDevice(blob, name, "image/png");
   } catch {
-    return downloadMedia(url, filename);
+    // Tainted canvas / load failure: fall back to fetch + device write.
+    return downloadMediaToDevice(url, name);
   }
 }

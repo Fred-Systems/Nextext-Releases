@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, Check, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound, ImageIcon, RefreshCw, Video, Radio, Volume2 } from "lucide-react";
+import { ChevronLeft, ShieldCheck, Search, Megaphone, Trash2, Send, Users, Bot, Power, CheckCircle, Check, UserPlus, EyeOff, UserMinus, SlidersHorizontal, Share2, Terminal, Camera, Mic, Zap, Lock, Tag, Globe, Compass, FileText, KeyRound, ImageIcon, RefreshCw, Video, Radio, Volume2, Bell, Smartphone, Phone } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit, doc, updateDoc, onSnapshot, addDoc, serverTimestamp, deleteDoc, orderBy, getDoc, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { AI_CONTACT_UID, PERSONALITIES } from "../firebase/ai";
 import { setFishAudioKey, getFishAudioKey, getAvailableVoices } from "../firebase/tts";
 import { getOrCreateDirectChat } from "../firebase/chats";
-import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings, setAnnouncement, clearAnnouncement, setPersona, deletePersona } from "../firebase/config-settings";
+import { ensureGlobalSettingsExist, useGlobalSettings, updateGlobalSettings, setAnnouncement, clearAnnouncement, setPersona, deletePersona, resolveAllowAdminStatusAccess } from "../firebase/config-settings";
+import { useUserDevices, formatDeviceTime } from "../firebase/devices";
+import { getSubscriberUids } from "../firebase/status";
+import { useRemoteConfig, setRemoteConfigPatch, setFeatureFlag, bumpRemoteConfigVersion, rollBackRemoteConfig, REMOTE_FEATURE_KEYS, DEFAULT_REMOTE_CONFIG, getApkUpdateStatus } from "../firebase/remoteConfig";
+import { APP_VERSION, APP_VERSION_CODE, compareVersions } from "../version";
 import { getPreWarmConfig, setPreWarmEnabled } from "../firebase/prewarm";
 import { getUserMessageStats, formatActiveTime, formatBytes } from "../firebase/stats";
 import { ensureSystemConfig, useSystemConfigHook, setSystemConfig, useAIRequestsHook, approveAIRequest, approveAllAIRequests, GROQ_MODEL_OPTIONS, GROQ_LIVE_MODEL_OPTIONS, AI_MODE_OPTIONS, useGroupAIRequestsHook, approveGroupAIRequest, rejectGroupAIRequest, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, AI_PERSONA_TRAY } from "../firebase/ai";
@@ -160,16 +164,201 @@ function AnalyticsTab() {
   );
 }
 
+// ── Admin: per-user Status Subscriber management (Batch 4.1 item A) ──
+// Reuses the existing persisted subscriber data (status/{statusId}/subscribers/{uid})
+// and the existing read APIs (getSubscriberUids). Firestore rules still gate access:
+// ordinary users cannot enumerate another user's subscribers; an authorized admin may
+// only when globalSettings.allowAdminStatusAccess is enabled (enforced in firestore.rules).
+function StatusSubscribersPanel({ ownerUid, settings }) {
+  const { t } = useTheme();
+  const allow = resolveAllowAdminStatusAccess(settings);
+  const [statuses, setStatuses] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [expanded, setExpanded] = useState(null);
+  const [subLists, setSubLists] = useState({});
+  const [nameCache, setNameCache] = useState({});
+
+  useEffect(() => {
+    if (!allow || !ownerUid) { setStatuses([]); return undefined; }
+    let active = true;
+    setLoading(true);
+    setErr("");
+    const q = query(collection(db, "status"), where("ownerId", "==", ownerUid));
+    const unsub = onSnapshot(q, (snap) => {
+      if (!active) return;
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+      setStatuses(list);
+      setLoading(false);
+    }, (e) => { if (active) { setErr(e.message || "Failed to load statuses"); setLoading(false); } });
+    return () => { active = false; unsub(); };
+  }, [allow, ownerUid]);
+
+  const resolveName = async (uid) => {
+    if (nameCache[uid]) return nameCache[uid];
+    try {
+      const s = await getDoc(doc(db, "users", uid));
+      const d = s.data();
+      const n = d?.displayName || d?.username || (uid ? uid.slice(0, 8) : "Unknown");
+      setNameCache((prev) => ({ ...prev, [uid]: n }));
+      return n;
+    } catch { return uid || "Unknown"; }
+  };
+
+  const toggleExpand = async (statusId) => {
+    if (expanded === statusId) { setExpanded(null); return; }
+    setExpanded(statusId);
+    if (!subLists[statusId]) {
+      try {
+        const uids = await getSubscriberUids(statusId);
+        const resolved = await Promise.all(
+          uids.map(async (uid) => ({ uid, name: await resolveName(uid) }))
+        );
+        setSubLists((prev) => ({ ...prev, [statusId]: resolved }));
+      } catch (e) {
+        setSubLists((prev) => ({ ...prev, [statusId]: { error: e.message || "Failed to load subscribers" } }));
+      }
+    }
+  };
+
+  if (!allow) {
+    return (
+      <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Status Subscribers</div>
+        <div style={{ fontSize: 12, color: t.textMuted, lineHeight: 1.5 }}>
+          Enable <strong>Admin Status Access</strong> (in the System tab) to view this user's status subscriber data for moderation.
+        </div>
+      </div>
+    );
+  }
+
+  const totalSubs = statuses.reduce((sum, s) => sum + (s.subscriberCount || 0), 0);
+
+  return (
+    <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+      <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Status Subscribers</div>
+      <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+        {statuses.length} status update{statuses.length === 1 ? "" : "s"} · {totalSubs} total subscribers (real, read from Firestore).
+      </div>
+      {loading && <div style={{ fontSize: 12.5, color: t.textMuted }}>Loading…</div>}
+      {err && <div style={{ fontSize: 12.5, color: "#FF3B30" }}>{err}</div>}
+      {!loading && !err && statuses.length === 0 && <div style={{ fontSize: 12.5, color: t.textMuted }}>No status posts for this user.</div>}
+      {statuses.map((s) => (
+        <div key={s.id} style={{ borderTop: `1px solid ${t.border}`, padding: "10px 0" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {s.text ? (s.text.length > 42 ? s.text.slice(0, 42) + "…" : s.text) : (s.mediaType ? s.mediaType : "Status")}
+              </div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>
+                {(s.createdAt?.toDate ? s.createdAt.toDate().toLocaleString() : "")}{s.createdAt?.toDate ? " · " : ""}{s.subscriberCount || 0} subscribers
+              </div>
+            </div>
+            <div onClick={() => toggleExpand(s.id)} style={{ padding: "6px 10px", borderRadius: 8, background: t.bg, border: `1px solid ${t.border}`, fontSize: 11.5, fontWeight: 700, color: t.primary, cursor: "pointer", flexShrink: 0 }}>
+              {expanded === s.id ? "Hide" : "View list"}
+            </div>
+          </div>
+          {expanded === s.id && (
+            <div style={{ marginTop: 8 }}>
+              {!subLists[s.id] && <div style={{ fontSize: 11.5, color: t.textMuted }}>Loading subscribers…</div>}
+              {subLists[s.id]?.error && <div style={{ fontSize: 11.5, color: "#FF3B30" }}>{subLists[s.id].error}</div>}
+              {Array.isArray(subLists[s.id]) && subLists[s.id].length === 0 && <div style={{ fontSize: 11.5, color: t.textMuted }}>No subscribers.</div>}
+              {Array.isArray(subLists[s.id]) && subLists[s.id].map((sub) => (
+                <div key={sub.uid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderTop: `1px solid ${t.border}` }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: t.primary }}>{sub.name?.[0] || "?"}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub.name}</div>
+                    <div style={{ fontSize: 10.5, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub.uid}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function JewishAnalyticsPanel({ t }) {
+  const [clicks, setClicks] = useState([]);
+  const [userStats, setUserStats] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive=true;
+    Promise.all([
+      import("../firebase/jewishAnalytics").then(m=>m.getPopularStatuses(100)).catch(()=>[]),
+      (async ()=>{
+        try{
+          const q=query(collection(db,"jewishUserStats"), orderBy("totalClicks","desc"), fbLimit(50));
+          const snap=await getDocs(q);
+          return snap.docs.map(d=>({uid:d.id, ...d.data()}));
+        }catch{return []}
+      })()
+    ]).then(([c,u])=>{ if(!alive) return; setClicks(c||[]); setUserStats(u||[]); setLoading(false); }).catch(()=>{ if(alive) setLoading(false); });
+    return ()=>{ alive=false; };
+  }, []);
+  const fmtTime=(ms)=>{
+    const s=Math.floor((ms||0)/1000);
+    const m=Math.floor(s/60);
+    const r=s%60;
+    return `${m}m ${r}s`;
+  };
+  if(loading) return <div style={{fontSize:12,color:t.textMuted,marginTop:10}}>Loading Jewish analytics…</div>;
+  return (
+    <div style={{marginTop:14, borderTop:`1px solid ${t.border}`, paddingTop:12}}>
+      <div style={{fontWeight:700,fontSize:13,color:t.text,marginBottom:8}}>Jewish Status Engagement</div>
+      <div style={{fontSize:11.5,color:t.textMuted,marginBottom:8}}>Per-status clicks (real user opens) • Popular ranking • Per-user totals</div>
+      <div style={{fontWeight:600,fontSize:12,color:t.text,marginBottom:4}}>Per-Status Clicks (Top 50)</div>
+      {clicks.length===0 ? <div style={{fontSize:12,color:t.textMuted}}>No engagement yet.</div> : (
+        <div style={{maxHeight:260, overflowY:"auto", border:`1px solid ${t.border}`, borderRadius:8}}>
+          {clicks.map((r,i)=>(
+            <div key={r.id} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 10px", borderBottom:`1px solid ${t.border}`}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12.5,fontWeight:600,color:t.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>#{i+1} {r.creatorName||r.creatorKey||r.statusId} — {r.title?String(r.title).slice(0,40):r.statusId}</div>
+                <div style={{fontSize:11,color:t.textMuted}}>{r.statusId}</div>
+              </div>
+              <div style={{fontSize:13,fontWeight:700,color:t.primary, marginLeft:8}}>{r.clickCount||0} clicks</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{fontWeight:600,fontSize:12,color:t.text,margin:"12px 0 4px"}}>Per-User Jewish Status Analytics</div>
+      {userStats.length===0 ? <div style={{fontSize:12,color:t.textMuted}}>No user engagement yet.</div> : (
+        <div style={{maxHeight:260, overflowY:"auto", border:`1px solid ${t.border}`, borderRadius:8}}>
+          {userStats.map(u=>(
+            <div key={u.uid} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 10px", borderBottom:`1px solid ${t.border}`}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12.5,fontWeight:600,color:t.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{u.uid.slice(0,8)}</div>
+                <div style={{fontSize:11,color:t.textMuted}}>Clicks: {u.totalClicks||0} • Time: {fmtTime(u.totalPageTimeMs)}</div>
+              </div>
+              <div style={{fontSize:11,color:t.textMuted}}>{u.totalClicks||0} views</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminDashboard({ myUid, onBack }) {
   const { t } = useTheme();
   const settings = useGlobalSettings();
   const sysConfig = useSystemConfigHook();
+  const { config: remoteConfig, loading: rcLoading, error: rcError } = useRemoteConfig();
+  const [updateMgrMsg, setUpdateMgrMsg] = useState("");
+  const [savingRemote, setSavingRemote] = useState(false);
+  const apkStatus = getApkUpdateStatus(remoteConfig, APP_VERSION);
+  const rcInput = { padding: "7px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.bg, color: t.text, outline: "none" };
+  const rcBtn = { padding: "9px 14px", borderRadius: 10, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 12.5, cursor: "pointer" };
   const [tab, setTab] = useState("users");
   const [search, setSearch] = useState("");
   const [results, setResults] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedUserStats, setSelectedUserStats] = useState(null);
   const [selectedUserStatsLoading, setSelectedUserStatsLoading] = useState(false);
+  const [deviceHistoryUid, setDeviceHistoryUid] = useState(null);
   const [reports, setReports] = useState([]);
   const [feedback, setFeedback] = useState([]);
   const [systemMsg, setSystemMsg] = useState("");
@@ -237,6 +426,9 @@ export default function AdminDashboard({ myUid, onBack }) {
   }, [allUsers, directorySearch]);
   const [expiryInput, setExpiryInput] = useState("");
   const [expiryNever, setExpiryNever] = useState(false);
+  const [retentionDaysInput, setRetentionDaysInput] = useState(undefined);
+  const [signupAlerts, setSignupAlerts] = useState([]);
+  const [songFlags, setSongFlags] = useState([]);
   const [allGroups, setAllGroups] = useState([]);
   const [allGroupsLoading, setAllGroupsLoading] = useState(false);
   const [pendingSamples, setPendingSamples] = useState([]);
@@ -253,6 +445,21 @@ export default function AdminDashboard({ myUid, onBack }) {
   useEffect(() => {
     getPreWarmConfig().then((c) => setPreWarmOn(!!c.preWarmEnabled)).catch(() => {});
   }, []);
+  // Load admin moderation queues (Batch 4 items C + G) when their tabs open.
+  useEffect(() => {
+    if (tab === "signups") {
+      const unsub = onSnapshot(query(collection(db, "notifications"), where("type", "==", "signup"), orderBy("createdAt", "desc")), (s) => {
+        setSignupAlerts(s.docs.map((d) => ({ id: d.id, ...d.data() })));
+      }, () => {});
+      return () => unsub();
+    }
+    if (tab === "songFlags") {
+      const unsub = onSnapshot(query(collection(db, "songReports"), orderBy("createdAt", "desc")), (s) => {
+        setSongFlags(s.docs.map((d) => ({ id: d.id, ...d.data() })));
+      }, () => {});
+      return () => unsub();
+    }
+  }, [tab]);
   const [aiModeDraft, setAiModeDraft] = useState(sysConfig?.aiMode || "old");
   const [aiLiveDraft, setAiLiveDraft] = useState(sysConfig?.aiLiveModel || "groq/compound");
   const [aiSaved, setAiSaved] = useState(false);
@@ -637,6 +844,54 @@ export default function AdminDashboard({ myUid, onBack }) {
     const rules = (appleWhitelist.rules || []).filter((r) => r.id !== id);
     updateAppleWhitelist({ ...appleWhitelist, rules });
   };
+  // ── Unified music blacklist (service-layer; beats whitelist; per-rule on/off).
+  const blacklistRules = settings?.music?.blacklist?.rules || [];
+  const [blacklistType, setBlacklistType] = useState("artist");
+  const [blacklistValue, setBlacklistValue] = useState("");
+  const [blacklistScope, setBlacklistScope] = useState("all");
+  const addBlacklistRule = () => {
+    const v = blacklistValue.trim();
+    if (!v) return;
+    const rule = { id: `bl_${Date.now()}_${Math.floor(Math.random() * 1e6)}`, type: blacklistType, value: v, enabled: true, provider: blacklistScope };
+    updateMusic({ blacklist: { ...(settings?.music?.blacklist || {}), rules: [...blacklistRules, rule] } });
+    setBlacklistValue("");
+  };
+  const toggleBlacklistRule = (id) =>
+    updateMusic({ blacklist: { ...(settings?.music?.blacklist || {}), rules: blacklistRules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)) } });
+  const deleteBlacklistRule = (id) =>
+    updateMusic({ blacklist: { ...(settings?.music?.blacklist || {}), rules: blacklistRules.filter((r) => r.id !== id) } });
+
+  // Bulk add (comma / newline / CSV) — normalizes + dedupes against existing rules.
+  const parseBulkValues = (raw) =>
+    String(raw || "")
+      .split(/[\n,]+/)
+      .map((s) => s.trim().replace(/^"|"$/g, ""))
+      .filter(Boolean);
+  const [bulkBlacklist, setBulkBlacklist] = useState("");
+  const addBulkBlacklist = () => {
+    const vals = parseBulkValues(bulkBlacklist);
+    if (!vals.length) return;
+    const existing = new Set(blacklistRules.map((r) => `${r.type}|${r.provider}|${String(r.value).toLowerCase()}`));
+    const additions = vals
+      .filter((v) => !existing.has(`${blacklistType}|${blacklistScope}|${v.toLowerCase()}`))
+      .map((v, i) => ({ id: `bl_${Date.now()}_${Math.floor(Math.random() * 1e6)}_${i}`, type: blacklistType, value: v, enabled: true, provider: blacklistScope }));
+    if (!additions.length) { setBulkBlacklist(""); return; }
+    updateMusic({ blacklist: { ...(settings?.music?.blacklist || {}), rules: [...blacklistRules, ...additions] } });
+    setBulkBlacklist("");
+  };
+  const [bulkWhitelist, setBulkWhitelist] = useState("");
+  const addBulkWhitelist = () => {
+    const vals = parseBulkValues(bulkWhitelist);
+    if (!vals.length) return;
+    const existing = new Set((appleWhitelist.rules || []).map((r) => String(r.value).toLowerCase()));
+    const additions = vals
+      .filter((v) => !existing.has(v.toLowerCase()))
+      .map((v, i) => ({ id: `rule_${Date.now()}_${Math.floor(Math.random() * 1e6)}_${i}`, type: whitelistType, value: v, enabled: true }));
+    if (!additions.length) { setBulkWhitelist(""); return; }
+    updateAppleWhitelist({ ...appleWhitelist, rules: [...(appleWhitelist.rules || []), ...additions] });
+    setBulkWhitelist("");
+  };
+
   const downloadsEnabled = settings?.music?.downloads?.enabled === true;
   const toggleDownloads = () =>
     updateMusic({ downloads: { ...(settings?.music?.downloads || {}), enabled: !downloadsEnabled } });
@@ -961,8 +1216,10 @@ export default function AdminDashboard({ myUid, onBack }) {
         </div>
         <div className="nx-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 16 }}>
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
-            <div style={{ fontSize: 13, color: t.textMuted }}>Username</div><div style={{ fontSize: 15, fontWeight: 600, color: t.text, marginBottom: 10 }}>@{selectedUser.username}</div>
-            <div style={{ fontSize: 13, color: t.textMuted }}>Email</div><div style={{ fontSize: 15, fontWeight: 600, color: t.text, marginBottom: 10 }}>{selectedUser.email}</div>
+            <div style={{ fontSize: 13, color: t.textMuted }}>Display Name</div><div style={{ fontSize: 15, fontWeight: 600, color: t.text, marginBottom: 10 }}>{selectedUser.displayName || "—"}</div>
+            <div style={{ fontSize: 13, color: t.textMuted }}>Username</div><div style={{ fontSize: 15, fontWeight: 600, color: t.text, marginBottom: 10 }}>@{selectedUser.username || "—"}</div>
+            <div style={{ fontSize: 13, color: t.textMuted }}>Email</div><div style={{ fontSize: 15, fontWeight: 600, color: t.text, marginBottom: 10 }}>{selectedUser.email || "—"}</div>
+            <div style={{ fontSize: 13, color: t.textMuted }}>Phone Number</div><div style={{ fontSize: 15, fontWeight: 600, color: t.text, marginBottom: 10 }}>{(selectedUser.phoneNumber || selectedUser.phone) ? String(selectedUser.phoneNumber || selectedUser.phone) : <span style={{ color: t.textMuted, fontWeight: 400 }}>Not provided</span>}</div>
             {Array.isArray(selectedUser.emailHistory) && selectedUser.emailHistory.length > 0 && (
               <div style={{ marginBottom: 10 }}>
                 <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 4 }}>Previous emails</div>
@@ -1084,6 +1341,8 @@ export default function AdminDashboard({ myUid, onBack }) {
             </div>
           </div>
 
+          <StatusSubscribersPanel ownerUid={selectedUser.uid} settings={settings} />
+
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Jewish Status Downloads</div>
             <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
@@ -1133,6 +1392,36 @@ export default function AdminDashboard({ myUid, onBack }) {
                         setSelectedUser((prev) => ({ ...prev, clonedVoiceTestOverride: val }));
                       } catch (e) {
                         setError("Couldn't update override: " + e.message);
+                      }
+                    }}
+                    style={{ flex: 1, textAlign: "center", padding: "10px 6px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text, border: `1px solid ${active ? t.primary : t.border}` }}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: t.text, marginBottom: 6 }}>Music Policy Exemption</div>
+            <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              EXEMPTED users bypass the music blacklist AND whitelist entirely (provider availability and per-provider access still apply). Non-exempted users follow the normal policy.
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[["off", "OFF"], ["on", "EXEMPTED"]].map(([val, label]) => {
+                const cur = selectedUser.musicPolicyExemption === true;
+                const active = (val === "on") === cur;
+                return (
+                  <div
+                    key={val}
+                    onClick={async () => {
+                      setError("");
+                      try {
+                        await updateDoc(doc(db, "users", selectedUser.uid), { musicPolicyExemption: val === "on" });
+                        setSelectedUser((prev) => ({ ...prev, musicPolicyExemption: val === "on" }));
+                      } catch (e) {
+                        setError("Couldn't update exemption: " + e.message);
                       }
                     }}
                     style={{ flex: 1, textAlign: "center", padding: "10px 6px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", background: active ? t.primary : t.bg, color: active ? t.bubbleMeText : t.text, border: `1px solid ${active ? t.primary : t.border}` }}
@@ -1216,13 +1505,84 @@ export default function AdminDashboard({ myUid, onBack }) {
         <span style={{ color: t.text, fontWeight: 700, fontSize: 17 }}>Admin Dashboard</span>
       </div>
       <div style={{ display: "flex", overflowX: "auto", borderBottom: `1px solid ${t.border}`, flexShrink: 0, WebkitOverflowScrolling: "touch" }}>
-        {[["users", "Users"], ["directory", "Directory"], ["groups", "Groups"], ["voices", "Voice Samples"], ["jewish", "Jewish Statuses"], ["analytics", "Analytics"], ["reports", "Reports"], ["feedback", "Feedback"], ["broadcast", "Broadcast"], ["system", "System"], ["ai", "AI"]].map(([key, label]) => (
+        {[["users", "Users"], ["directory", "Directory"], ["groups", "Groups"], ["voices", "Voice Samples"], ["jewish", "Jewish Statuses"], ["analytics", "Analytics"], ["reports", "Reports"], ["signups", "Signups"], ["songFlags", "Song Flags"], ["feedback", "Feedback"], ["broadcast", "Broadcast"], ["updates", "Update Mgr"], ["system", "System"], ["ai", "AI"]].map(([key, label]) => (
           <div key={key} onClick={() => setTab(key)} style={{ flex: "0 0 auto", textAlign: "center", padding: "12px 14px", fontSize: 11, fontWeight: 600, color: tab === key ? t.primary : t.textMuted, borderBottom: tab === key ? `2px solid ${t.primary}` : "2px solid transparent", cursor: "pointer", whiteSpace: "nowrap" }}>{label}</div>
         ))}
       </div>
       {error && <div style={{ color: "#FF3B30", fontSize: 12.5, padding: "8px 16px" }}>{error}</div>}
 
       <div style={{ flex: 1, overflowY: "auto" }}>
+        {tab === "updates" && (
+          <div style={{ padding: 16 }}>
+            <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: t.text, marginBottom: 10 }}>Update Manager</div>
+              <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
+                Web/config updates (feature flags, web build, config version) are separate from the native APK version. APK updates are delivered through the normal release channel.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
+                {[["Installed APK", APP_VERSION], ["Web Build", remoteConfig.webBuild || "—"], ["Remote Config", String(remoteConfig.configVersion || 0)], ["Latest APK", remoteConfig.latestApkVersion || "—"], ["Min APK", remoteConfig.minApkVersion || "—"], ["Severity", apkStatus.severity]].map(([k, v]) => (
+                  <div key={k} style={{ background: t.bg, borderRadius: 10, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 11, color: t.textMuted }}>{k}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: t.text }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              {rcLoading && <div style={{ fontSize: 12, color: t.textMuted }}>Loading remote config…</div>}
+              {rcError && <div style={{ fontSize: 12, color: "#FF9500", marginBottom: 8 }}>Config read issue (using cached): {rcError.message}</div>}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                <input defaultValue={remoteConfig.latestApkVersion || APP_VERSION} id="rc_latest" placeholder="Latest APK ver" style={rcInput} />
+                <input defaultValue={remoteConfig.minApkVersion || "1.7.95"} id="rc_min" placeholder="Min APK ver" style={rcInput} />
+                <select defaultValue={remoteConfig.updateSeverity || "optional"} id="rc_sev" style={rcInput}>
+                  <option value="optional">optional</option>
+                  <option value="recommended">recommended</option>
+                  <option value="required">required</option>
+                </select>
+              </div>
+              <input defaultValue={remoteConfig.updateMessage || ""} id="rc_msg" placeholder="Update message (optional)" style={{ ...rcInput, width: "100%", marginBottom: 8 }} />
+              <button
+                disabled={savingRemote}
+                onClick={async () => {
+                  setSavingRemote(true); setUpdateMgrMsg("");
+                  try {
+                    const prev = { ...remoteConfig };
+                    const patch = {
+                      latestApkVersion: document.getElementById("rc_latest").value.trim() || APP_VERSION,
+                      minApkVersion: document.getElementById("rc_min").value.trim() || "1.7.95",
+                      updateSeverity: document.getElementById("rc_sev").value,
+                      updateMessage: document.getElementById("rc_msg").value.trim(),
+                    };
+                    await setRemoteConfigPatch(patch, myUid);
+                    await bumpRemoteConfigVersion(myUid);
+                    setUpdateMgrMsg("Saved & config version bumped.");
+                  } catch (e) { setUpdateMgrMsg("Error: " + (e?.message || e)); }
+                  finally { setSavingRemote(false); }
+                }}
+                style={rcBtn}
+              >{savingRemote ? "Saving…" : "Save APK policy & bump config"}</button>
+            </div>
+
+            <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: t.text, marginBottom: 4 }}>Feature Flags</div>
+              <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 10 }}>Toggle features remotely. Changes apply to clients on their next config refresh (startup / foreground).</div>
+              {REMOTE_FEATURE_KEYS.map((name) => {
+                const f = remoteConfig.features?.[name] || { enabled: false, rolloutPct: 100 };
+                return (
+                  <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${t.border}` }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 600, color: t.text }}>{name}</div>
+                      <div style={{ fontSize: 11, color: t.textMuted }}>{f.enabled ? `on · rollout ${f.rolloutPct ?? 100}%${f.minApk ? ` · min APK ${f.minApk}` : ""}` : "off"}</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={async () => { try { await setFeatureFlag(name, { enabled: !f.enabled }, myUid); setUpdateMgrMsg(`Flag ${name} → ${!f.enabled}`); } catch (e) { setUpdateMgrMsg("Err: " + (e?.message || e)); } }} style={{ ...rcBtn, background: f.enabled ? "#FF9500" : t.primary }}>{f.enabled ? "Disable" : "Enable"}</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {updateMgrMsg && <div style={{ fontSize: 12.5, color: t.primary, marginBottom: 8 }}>{updateMgrMsg}</div>}
+          </div>
+        )}
         {tab === "users" && (
         <>
           <div style={{ padding: "14px 16px 8px" }}>
@@ -1485,6 +1845,34 @@ export default function AdminDashboard({ myUid, onBack }) {
               </div>
             </div>
 
+            {/* Calling — admin global feature flags */}
+            <div style={{ background: t.surface, borderRadius: 12, padding: 12, marginTop: 10, border: `1px solid ${t.border}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <Phone size={16} color={t.primary} />
+                <span style={{ fontWeight: 700, fontSize: 14, color: t.text }}>Calling</span>
+              </div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+                Voice & video calls via WebRTC (STUN, optional TURN). When OFF, all calling UI disappears. "Replace Settings" swaps the bottom tab.
+              </div>
+              <div onClick={() => updateGlobalSettings({ calling: { ...(settings?.calling || {}), enabled: !(settings?.calling?.enabled === true) } }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.calling?.enabled === true ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+                <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.calling?.enabled === true ? "#34C759" : t.border, position: "relative" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.calling?.enabled === true ? 23 : 3, transition: "left 0.15s" }} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: 13, color: settings?.calling?.enabled === true ? "#fff" : t.text }}>{settings?.calling?.enabled === true ? "CALLING ENABLED" : "CALLING DISABLED"}</span>
+              </div>
+              {settings?.calling?.enabled === true && (
+                <>
+                  <div onClick={() => updateGlobalSettings({ calling: { ...(settings?.calling || {}), replacesSettingsTab: !(settings?.calling?.replacesSettingsTab === true) } }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.calling?.replacesSettingsTab === true ? "#34C759" : t.primaryLight, cursor: "pointer", marginTop: 8 }}>
+                    <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.calling?.replacesSettingsTab === true ? "#34C759" : t.border, position: "relative" }}>
+                      <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.calling?.replacesSettingsTab === true ? 23 : 3, transition: "left 0.15s" }} />
+                    </div>
+                    <span style={{ fontWeight: 700, fontSize: 13, color: settings?.calling?.replacesSettingsTab === true ? "#fff" : t.text }}>{settings?.calling?.replacesSettingsTab === true ? "REPLACES SETTINGS TAB" : "SHOW CALLING TAB + SETTINGS"}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: t.textMuted, marginTop: 6, lineHeight: 1.4 }}>When ON, Calling replaces Settings in the bottom bar. When OFF, Calling appears alongside Settings.</div>
+                </>
+              )}
+            </div>
+
            </div>
           )}
           <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>
@@ -1543,7 +1931,7 @@ export default function AdminDashboard({ myUid, onBack }) {
                 <div style={{ width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: t.primary }}>{u.displayName?.[0]}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.displayName} <span style={{ color: t.textMuted, fontWeight: 400 }}>@{u.username}</span></div>
-                  <div style={{ fontSize: 11.5, color: t.textMuted }}>{u.email}{u.role === "admin" ? " · Admin" : ""}</div>
+                   <div style={{ fontSize: 11.5, color: t.textMuted }}>{u.email}{u.role === "admin" ? " · Admin" : ""}{u.appVersion ? ` · v${u.appVersion}${u.platform ? ` (${u.platform})` : ""}` : ""}</div>
                   {(isOnlineNow || u.lastSeen) && (
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                       <span style={{ width: 8, height: 8, borderRadius: "50%", background: isOnlineNow ? "#34C759" : "#8E8E93", flexShrink: 0 }} />
@@ -1592,6 +1980,10 @@ export default function AdminDashboard({ myUid, onBack }) {
                     <span style={{ fontSize: 10, fontWeight: 700, color: "#FF3B30" }}>Reset</span>
                   </div>
                 )}
+                <div onClick={(e) => { e.stopPropagation(); setDeviceHistoryUid(u.uid); }} title="View this user's device history" style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 8, background: t.bg, border: `1px solid ${t.border}`, cursor: "pointer", flexShrink: 0 }}>
+                  <Smartphone size={12} color={t.textMuted} />
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: t.textMuted }}>Devices</span>
+                </div>
                 <div onClick={(e) => { e.stopPropagation(); toggleUserHideAISettings(u.uid, !!u.hideAISettings); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 8, background: u.hideAISettings ? "#FFF3CD" : t.bg, border: `1px solid ${u.hideAISettings ? "#856404" : t.border}`, cursor: "pointer", flexShrink: 0 }}>
                   <EyeOff size={12} color={u.hideAISettings ? "#856404" : t.textMuted} />
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: u.hideAISettings ? "#856404" : t.textMuted }}>{u.hideAISettings ? "AI Settings Hidden" : "AI Settings Visible"}</span>
@@ -1705,6 +2097,48 @@ export default function AdminDashboard({ myUid, onBack }) {
         </div>
       )}
 
+      {tab === "signups" && (
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
+            New user signups (only recorded when the admin enables "Signup Notify" in System). Most-recent first.
+          </div>
+          {signupAlerts.length === 0 && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No signup notifications.</div>}
+          {signupAlerts.map((a) => (
+            <div key={a.id} style={{ background: t.surface, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.text }}>{a.displayName || "New user"}</div>
+              <div style={{ fontSize: 11.5, color: t.textMuted }}>{a.email || ""}{a.email ? " · " : ""}{a.userId || ""}</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>{a.createdAt?.toDate ? a.createdAt.toDate().toLocaleString() : ""}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "songFlags" && (
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
+            Flagged Apple Music / Zemer songs reported by users. Review and act: add to blacklist, dismiss, or delete the claim.
+          </div>
+          {songFlags.length === 0 && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No song reports.</div>}
+          {songFlags.map((f) => (
+            <div key={f.id} style={{ background: t.surface, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.text }}>{f.songTitle || "Unknown song"}{f.songArtist ? ` — ${f.songArtist}` : ""}</div>
+              <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 6 }}>trackId: {f.songTrackId || "n/a"} · source: {f.source || "n/a"} · reason: {f.reason || "—"}</div>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8 }}>reported by {f.reportedByUid} · {f.createdAt?.toDate ? f.createdAt.toDate().toLocaleString() : ""}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button onClick={async () => {
+                  const rule = { id: `flag_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, type: "trackId", value: String(f.songTrackId || f.songTitle || ""), enabled: true, provider: f.source || "apple" };
+                  if (!rule.value) return;
+                  await updateGlobalSettings({ music: { ...(settings?.music || {}), blacklist: { ...(settings?.music?.blacklist || { rules: [] }), rules: [...(settings?.music?.blacklist?.rules || []), rule] } } }, myUid);
+                  await deleteDoc(doc(db, "songReports", f.id));
+                }} style={{ padding: "7px 12px", borderRadius: 8, border: "none", background: "#FF3B30", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Add to Blacklist</button>
+                <button onClick={async () => { await updateDoc(doc(db, "songReports", f.id), { status: "dismissed" }).catch(() => {}); }} style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${t.border}`, background: t.bg, color: t.text, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Dismiss</button>
+                <button onClick={async () => { await deleteDoc(doc(db, "songReports", f.id)); }} style={{ padding: "7px 12px", borderRadius: 8, border: "none", background: t.border, color: t.text, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Delete Claim</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {tab === "feedback" && (
         <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
           {feedback.length === 0 && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 20 }}>No feedback yet.</div>}
@@ -1785,6 +2219,35 @@ export default function AdminDashboard({ myUid, onBack }) {
                 Active provider: <strong>{storageProvider === "cloudinary" ? "Cloudinary" : "Supabase"}</strong> — new uploads will route here.
               </div>
             )}
+          </div>
+          {/* Notifications / signup (Batch 4 items C + status-notifications) */}
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Bell size={18} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Status Notifications</span>
+            </div>
+            <div onClick={() => updateGlobalSettings({ notifyOnSignup: !(settings?.notifyOnSignup === true) }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.notifyOnSignup === true ? "#34C759" : t.primaryLight, cursor: "pointer", marginBottom: 6 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.notifyOnSignup === true ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.notifyOnSignup === true ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.notifyOnSignup === true ? "#fff" : t.text }}>
+                {settings?.notifyOnSignup === true ? "SIGNUP NOTIFY ON" : "SIGNUP NOTIFY OFF"}
+              </span>
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 12, lineHeight: 1.4 }}>
+              When ON, admins are notified when a new user signs up. Default OFF to preserve the current expected behavior.
+            </div>
+            <div onClick={() => updateGlobalSettings({ statusNotifications: { ...(settings?.statusNotifications || {}), enabled: !(settings?.statusNotifications?.enabled !== false) } }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.statusNotifications?.enabled !== false ? "#34C759" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.statusNotifications?.enabled !== false ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.statusNotifications?.enabled !== false ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.statusNotifications?.enabled !== false ? "#fff" : t.text }}>
+                {settings?.statusNotifications?.enabled !== false ? "STATUS NOTIFICATIONS ON" : "STATUS NOTIFICATIONS OFF"}
+              </span>
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 8, lineHeight: 1.4 }}>
+              Global default for status subscription notifications. Users can override per-account (inherit/enabled/disabled).
+            </div>
           </div>
           {/* Authentication & Panel Security */}
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
@@ -1891,6 +2354,18 @@ export default function AdminDashboard({ myUid, onBack }) {
                 </div>
               </div>
             )}
+            {/* Admin status access override (Batch 4 item D) — moderation only */}
+            <div onClick={() => updateGlobalSettings({ allowAdminStatusAccess: !(settings?.allowAdminStatusAccess === true) }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.allowAdminStatusAccess === true ? "#34C759" : t.primaryLight, cursor: "pointer", marginTop: 12 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.allowAdminStatusAccess === true ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.allowAdminStatusAccess === true ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.allowAdminStatusAccess === true ? "#fff" : t.text }}>
+                {settings?.allowAdminStatusAccess === true ? "ADMIN STATUS ACCESS ON" : "ADMIN STATUS ACCESS OFF"}
+              </span>
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 8, lineHeight: 1.4 }}>
+              When ON, authorized admins can view any status for moderation — even statuses that would otherwise be hidden by visibility or exclusions. Enforced server-side in firestore.rules.
+            </div>
           </div>
           {/* Status Preview Mode toggle */}
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginBottom: 14 }}>
@@ -2766,6 +3241,27 @@ export default function AdminDashboard({ myUid, onBack }) {
 
           <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Camera size={18} color="#8E8E93" />
+              <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Hide All Camera Buttons</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.5 }}>
+              Hide every camera entry point app-wide (status, chat attachment, profile/avatar, group, native camera). Gallery/photo-picker stays available.
+            </div>
+            <div onClick={() => {
+              const newVal = !settings?.hideCameraButtons;
+              updateGlobalSettings({ hideCameraButtons: newVal }, myUid);
+            }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.hideCameraButtons ? "#FF3B30" : t.primaryLight, cursor: "pointer" }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.hideCameraButtons ? "#FF3B30" : t.border, position: "relative" }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.hideCameraButtons ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.hideCameraButtons ? "#fff" : t.text }}>
+                {settings?.hideCameraButtons ? "ALL CAMERA BUTTONS HIDDEN" : "Camera buttons visible"}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ background: t.surface, borderRadius: 14, padding: 16, marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <ImageIcon size={18} color="#8E8E93" />
               <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>Native Photo Picker (Gallery)</span>
             </div>
@@ -3338,6 +3834,40 @@ export default function AdminDashboard({ myUid, onBack }) {
               </span>
             </div>
 
+            {/* Jewish Status retention window (Batch 4 item H) */}
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.text, margin: "16px 0 6px" }}>Jewish Status Retention</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <input
+                type="number"
+                min="0"
+                value={retentionDaysInput ?? (settings?.jewishStatuses?.retentionDays ?? "")}
+                onChange={(e) => setRetentionDaysInput(e.target.value)}
+                placeholder="Days (blank = no limit)"
+                style={{ width: 160, padding: "7px 9px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.bg, color: t.text, outline: "none" }}
+              />
+              <button onClick={() => {
+                const d = retentionDaysInput === "" || retentionDaysInput == null ? null : Math.max(0, parseInt(retentionDaysInput, 10) || 0);
+                updateJewish({ retentionDays: d });
+                setRetentionDaysInput(undefined);
+              }} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Save</button>
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 10, lineHeight: 1.4 }}>
+              Statuses older than this many days are hidden from normal Jewish Status browsing. Third-party source data is never deleted — the filter is applied at the display layer only.
+            </div>
+
+            {/* Updates/Public Status "Jewish-style" mode (Batch 4 item E) */}
+            <div onClick={() => updateGlobalSettings({ updatesJewishMode: { enabled: !(settings?.updatesJewishMode?.enabled === true) } }, myUid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.updatesJewishMode?.enabled === true ? "#34C759" : t.primaryLight, cursor: "pointer", marginBottom: 6 }}>
+              <div style={{ width: 46, height: 26, borderRadius: 13, background: settings?.updatesJewishMode?.enabled === true ? "#34C759" : t.border, position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: settings?.updatesJewishMode?.enabled === true ? 23 : 3, transition: "left 0.15s" }} />
+              </div>
+              <span style={{ fontWeight: 700, fontSize: 14, color: settings?.updatesJewishMode?.enabled === true ? "#fff" : t.text }}>
+                {settings?.updatesJewishMode?.enabled === true ? "UPDATES JEWISH-STYLE ON" : "UPDATES JEWISH-STYLE OFF"}
+              </span>
+            </div>
+            <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 14, lineHeight: 1.4 }}>
+              When ON, the Updates/Public Status feed uses the Jewish Status layout/type system and smart search. The Jewish Status tab itself is never affected and still never shows the Post Status composer.
+            </div>
+
             {/* Jewish Status Downloads (global; per-user override on each user page) */}
             <div style={{ fontWeight: 600, fontSize: 13, color: t.text, margin: "16px 0 6px" }}>Jewish Status Downloads</div>
             <div onClick={() => updateJewish({ downloads: { ...(settings?.jewishStatuses?.downloads || {}), enabled: !(settings?.jewishStatuses?.downloads?.enabled === true) } })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: settings?.jewishStatuses?.downloads?.enabled === true ? "#34C759" : t.primaryLight, cursor: "pointer", marginBottom: 6 }}>
@@ -3437,6 +3967,8 @@ export default function AdminDashboard({ myUid, onBack }) {
                 </div>
               ))}
             </div>
+            {/* Jewish Status Analytics */}
+            <JewishAnalyticsPanel t={t} />
           </div>
 
           {/* ── Music admin section (lives under globalSettings.music) ── */}
@@ -3497,6 +4029,40 @@ export default function AdminDashboard({ myUid, onBack }) {
                 Per-user Apple access overrides live on each user's detail page (Apple Music Access selector).
               </div>
 
+              {/* Unified Blacklist (beats whitelist; all providers; per-rule scope) */}
+              <div style={{ fontWeight: 600, fontSize: 13, color: t.text, margin: "14px 0 6px" }}>Music Blacklist (blocked everywhere)</div>
+              <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 8, lineHeight: 1.4 }}>
+                Precedence: per-user <b>Music Policy Exemption</b> beats everything → <b>Blacklist</b> always blocks → <b>Whitelist</b> (when ON) allows only listed content. A rule in both lists stays blocked.
+              </div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                <select value={blacklistType} onChange={(e) => setBlacklistType(e.target.value)} style={{ padding: "9px 8px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.bg, color: t.text, cursor: "pointer" }}>
+                  {["artist", "track", "album", "genre", "keyword"].map((tp) => <option key={tp} value={tp}>{tp}</option>)}
+                </select>
+                <select value={blacklistScope} onChange={(e) => setBlacklistScope(e.target.value)} style={{ padding: "9px 8px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.bg, color: t.text, cursor: "pointer" }}>
+                  <option value="all">All sources</option>
+                  <option value="apple">Apple only</option>
+                  <option value="zemer">Zemer only</option>
+                </select>
+                <input value={blacklistValue} onChange={(e) => setBlacklistValue(e.target.value)} placeholder="Value to block…" style={{ flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.bg, color: t.text, outline: "none" }} />
+                <div onClick={addBlacklistRule} style={{ padding: "9px 14px", borderRadius: 8, background: "#FF3B30", color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: "pointer", flexShrink: 0 }}>Block</div>
+              </div>
+              <div style={{ maxHeight: 190, overflowY: "auto", WebkitOverflowScrolling: "touch", border: `1px solid ${t.border}`, borderRadius: 10, padding: 8, background: t.surface, marginBottom: 8 }}>
+                {[...blacklistRules].sort((a, b) => (a.value || "").toLowerCase().localeCompare((b.value || "").toLowerCase())).map((r) => (
+                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: t.bg, marginBottom: 6 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: "#FF3B30", textTransform: "uppercase", flexShrink: 0 }}>{r.type}{r.provider && r.provider !== "all" ? ` · ${r.provider}` : " · all"}</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: r.enabled !== false ? t.text : t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: r.enabled !== false ? "none" : "line-through" }}>{r.value}</span>
+                    <div onClick={() => toggleBlacklistRule(r.id)} style={{ fontSize: 11, fontWeight: 700, color: r.enabled !== false ? t.primary : t.textMuted, cursor: "pointer", flexShrink: 0 }}>{r.enabled !== false ? "On" : "Off"}</div>
+                    <Trash2 size={14} color="#FF3B30" onClick={() => deleteBlacklistRule(r.id)} style={{ cursor: "pointer", flexShrink: 0 }} />
+                  </div>
+                ))}
+                {blacklistRules.length === 0 && <div style={{ fontSize: 11.5, color: t.textMuted }}>No blocked content. Blacklisted artists/tracks are hidden from every user (except exempted users) before results are shown.</div>}
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 600, fontSize: 12.5, color: t.text, marginBottom: 4 }}>Bulk add (comma, newline, or CSV)</div>
+                <textarea value={bulkBlacklist} onChange={(e) => setBulkBlacklist(e.target.value)} placeholder={"One per line, or comma/CSV separated:\nArtist A, Artist B\nsong title"} style={{ width: "100%", minHeight: 64, padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.bg, color: t.text, outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+                <button onClick={addBulkBlacklist} disabled={!bulkBlacklist.trim()} style={{ marginTop: 6, padding: "8px 14px", borderRadius: 8, border: "none", background: bulkBlacklist.trim() ? "#FF3B30" : t.border, color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: bulkBlacklist.trim() ? "pointer" : "not-allowed" }}>Block All Listed</button>
+              </div>
+
               {/* Apple Search Whitelist */}
               <div style={{ fontWeight: 600, fontSize: 13, color: t.text, margin: "14px 0 6px" }}>Apple Search Whitelist</div>
               <div onClick={toggleAppleWhitelistMode} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: appleWhitelist.mode === "whitelist" ? "#34C759" : t.primaryLight, cursor: "pointer", marginBottom: 8 }}>
@@ -3530,12 +4096,12 @@ export default function AdminDashboard({ myUid, onBack }) {
                 <button onClick={addWhitelistRule} style={{ padding: "9px 14px", borderRadius: 8, border: "none", background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>Add</button>
               </div>
 
-              {/* Rule list */}
-              <div>
+              {/* Rule list — own independently scrollable container */}
+              <div style={{ maxHeight: 190, overflowY: "auto", WebkitOverflowScrolling: "touch", border: `1px solid ${t.border}`, borderRadius: 10, padding: 8, background: t.surface, marginBottom: 8 }}>
                 {((appleWhitelist.rules || []).length === 0) && (
                   <div style={{ fontSize: 12, color: t.textMuted }}>No rules yet.</div>
                 )}
-                {(appleWhitelist.rules || []).map((r) => (
+                {[...((appleWhitelist.rules || []))].sort((a, b) => (a.value || "").toLowerCase().localeCompare((b.value || "").toLowerCase())).map((r) => (
                   <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: t.bg, border: `1px solid ${t.border}`, marginTop: 6 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: t.text, fontWeight: 600 }}>{r.type}</div>
@@ -3547,6 +4113,11 @@ export default function AdminDashboard({ myUid, onBack }) {
                     <Trash2 size={15} color="#FF3B30" onClick={() => deleteWhitelistRule(r.id)} style={{ cursor: "pointer", flexShrink: 0 }} />
                   </div>
                 ))}
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 600, fontSize: 12.5, color: t.text, marginBottom: 4 }}>Bulk add (comma, newline, or CSV)</div>
+                <textarea value={bulkWhitelist} onChange={(e) => setBulkWhitelist(e.target.value)} placeholder={"One per line, or comma/CSV separated:\nArtist A, Artist B\nsong title"} style={{ width: "100%", minHeight: 64, padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 12.5, background: t.bg, color: t.text, outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+                <button onClick={addBulkWhitelist} disabled={!bulkWhitelist.trim()} style={{ marginTop: 6, padding: "8px 14px", borderRadius: 8, border: "none", background: bulkWhitelist.trim() ? t.primary : t.border, color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: bulkWhitelist.trim() ? "pointer" : "not-allowed" }}>Add All Listed</button>
               </div>
             </div>
 
@@ -3568,6 +4139,43 @@ export default function AdminDashboard({ myUid, onBack }) {
           </div>
         </div>
       )}
+      </div>
+
+      {/* Device History modal (admin-only) */}
+      {deviceHistoryUid && (
+        <DeviceHistoryModal uid={deviceHistoryUid} onClose={() => setDeviceHistoryUid(null)} />
+      )}
+    </div>
+  );
+}
+
+// Admin-only view of a user's historical devices, newest activity first.
+function DeviceHistoryModal({ uid, onClose }) {
+  const { t } = useTheme();
+  const devices = useUserDevices(uid);
+  return (
+    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ width: "100%", maxWidth: 380, maxHeight: "80%", overflowY: "auto", background: t.surface, borderRadius: 14, padding: 16 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <span style={{ fontWeight: 700, fontSize: 16, color: t.text }}><Smartphone size={16} style={{ verticalAlign: "middle", marginRight: 6 }} />Device History</span>
+          <span onClick={onClose} style={{ cursor: "pointer", fontSize: 22, color: t.textMuted, lineHeight: 1 }}>×</span>
+        </div>
+        {devices.length === 0 && <div style={{ color: t.textMuted, fontSize: 13, textAlign: "center", padding: 24 }}>No device records yet.</div>}
+        {devices.map((d) => (
+          <div key={d.id} style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <Smartphone size={16} color={t.primary} />
+              <span style={{ fontWeight: 700, fontSize: 13.5, color: t.text }}>{d.platform}{d.os ? ` · ${d.os}` : ""}</span>
+            </div>
+            <div style={{ fontSize: 12, color: t.textMuted, lineHeight: 1.6 }}>
+              {d.webview ? <div>WebView: {d.webview}</div> : null}
+              {d.appVersion ? <div>App: v{d.appVersion}{d.appVersionCode ? ` (${d.appVersionCode})` : ""}</div> : null}
+              <div>First seen: {formatDeviceTime(d.firstSeen)}</div>
+              <div>Last seen: {formatDeviceTime(d.lastSeen)}</div>
+              {d.userAgent ? <div style={{ wordBreak: "break-all", opacity: 0.7, marginTop: 4 }}>{d.userAgent}</div> : null}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

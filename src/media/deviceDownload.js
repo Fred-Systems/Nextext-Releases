@@ -82,21 +82,55 @@ async function saveBlobToDevice(blob, filename) {
   return { ok: true, location: "Downloads folder" };
 }
 
-export async function downloadMediaToDevice(url, filename) {
+export async function downloadMediaToDevice(url, filename, onProgress) {
   if (!url) throw new Error("Media is unavailable.");
+  // Indeterminate-first: callers show "Downloading…" until real byte info
+  // arrives. We never fabricate a percentage (§19).
+  try { onProgress?.({ indeterminate: true }); } catch { /* noop */ }
   let res;
   try {
     res = await fetch(url, { mode: "cors" });
-  } catch {
-    throw new Error("Couldn't reach the source (offline or expired link).");
+  } catch (e) {
+    // CORS/network refusal: the LAST resort is a plain browser download of the
+    // original URL (Content-Disposition or browser save) — we do NOT open a
+    // viewing tab and call it a download.
+    const dl = document.createElement("a");
+    dl.href = url;
+    dl.download = filename || "";
+    dl.rel = "noopener noreferrer";
+    dl.style.display = "none";
+    document.body.appendChild(dl);
+    dl.click();
+    setTimeout(() => { try { dl.remove(); } catch { /* noop */ } }, 1000);
+    throw new Error(
+      "The source blocked an in-app copy (cross-origin restriction). A direct download was triggered instead — check your browser's Downloads. If nothing appeared, the provider is blocking downloads from this device."
+    );
   }
-  if (!res.ok) throw new Error("Media is unavailable (expired or removed).");
+  if (!res.ok) throw new Error(`Media is unavailable (HTTP ${res.status}).`);
+  const total = Number(res.headers.get("content-length")) || 0;
+  if (res.body && res.body.getReader && total > 0) {
+    const reader = res.body.getReader();
+    const parts = [];
+    let loaded = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      loaded += value.length;
+      try { onProgress?.({ loaded, total }); } catch { /* noop */ }
+    }
+    const blob = new Blob(parts, { type: res.headers.get("content-type") || "application/octet-stream" });
+    if (!blob.size) throw new Error("The file came back empty.");
+    return saveBlobToDevice(blob, filename);
+  }
   let blob;
   try {
     blob = await res.blob();
   } catch {
     throw new Error("Download was interrupted.");
   }
+  if (!blob.size) throw new Error("The file came back empty.");
+  try { onProgress?.({ loaded: blob.size, total: blob.size }); } catch { /* noop */ }
   return saveBlobToDevice(blob, filename);
 }
 

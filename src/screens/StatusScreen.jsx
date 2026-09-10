@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, Plus, Camera, X, Video, Type, Palette, Eye, Trash2, Play, Pause, RefreshCw, Mic, MessageCircle, Download, Globe, Search, Music } from "lucide-react";
 import { useTheme, FONTS } from "../theme/ThemeContext";
-import { postStatus, useStatuses, usePublicStatuses, viewStatus, useStatusViewers, deleteStatus, updateStatusVisibility } from "../firebase/status";
+import { postStatus, useStatuses, usePublicStatuses, viewStatus, useStatusViewers, deleteStatus, updateStatusVisibility, getAllowedContactUids } from "../firebase/status";
 import { useSystemConfigHook } from "../firebase/ai";
 import { checkStatusAllowed, recordStatusUsage } from "../firebase/limits";
 import { useContacts, getContactDisplayName } from "../firebase/contacts";
@@ -15,8 +15,7 @@ import { db } from "../firebase/config";
 import { Capacitor } from "@capacitor/core";
 import Avatar from "../components/Avatar";
 import StatusStoryViewer from "./StatusStoryViewer";
-import StatusBuilderNew from "./StatusBuilderNew";
-import { getStatusBuilderVersion } from "../firebase/config-settings";
+import { getStatusBuilderVersion, resolveUpdatesJewishMode, resolveHideCameraButtons } from "../firebase/config-settings";
 import { MusicPickerModal } from "../components/MusicPickerModal";
 import { getMicrophoneStream } from "../media/microphone";
 import { base64ToBlob } from "../media/base64";
@@ -254,11 +253,57 @@ function StatusViewerModal({ statusId, contacts, onClose, t }) {
   );
 }
 
-export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryViewerChange, initialViewStatuses, statusOrigin, onConsumeInitialView }) {
+// Map a list of statuses into the creator/posts shape that the Jewish-style
+// renderer (JewishStatusesTab) + StoryViewer consume. This is the single
+// authoritative adapter for "Updates/Public in Jewish-style mode" so the viewer
+// receives a correct data contract (every creator MUST carry `sources` and `posts`;
+// every post MUST carry the media fields StoryViewer reads: id, mediaUrl,
+// thumbnailUrl, kind, text, caption). Grouping is by status.ownerId (statuses have
+// no `senderId` — that was the original crash root cause: every status fell under a
+// single `undefined` key). Each creator gets `sources: [key]` so the header's
+// `creator.sources.length` check never throws.
+function statusesToCreators(statuses, contactsById, { myUid, myName, myPhoto } = {}) {
+  const byUid = new Map();
+  (statuses || []).forEach((s) => {
+    const uid = s.ownerId;
+    if (!uid) return;
+    if (!byUid.has(uid)) {
+      const c = contactsById?.[uid];
+      const isMe = uid === myUid;
+      byUid.set(uid, {
+        key: uid,
+        ownerId: uid,
+        name: isMe ? (myName || "You") : (c?.profile?.displayName || c?.displayName || "Unknown"),
+        avatarUrl: isMe ? (myPhoto || null) : (c?.profile?.photoURL || c?.photoURL || null),
+        category: "",
+        sources: [uid],
+        posts: [],
+      });
+    }
+    const post = byUid.get(uid).posts;
+    post.push({
+      id: s.id,
+      thumbnailUrl: s.thumbnailURL || s.posterURL || s.mediaURL || null,
+      mediaUrl: s.mediaURL || null,
+      kind: s.mediaType || (s.text ? "text" : "image"),
+      text: s.text || "",
+      caption: s.text || s.caption || "",
+      createdAt: s.createdAt || null,
+    });
+  });
+  // Newest post first within each creator to mirror the native Jewish feed order.
+  [...byUid.values()].forEach((c) => {
+    c.posts.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+  });
+  return [...byUid.values()];
+}
+
+export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryViewerChange, initialViewStatuses, statusOrigin, onConsumeInitialView, openStatusBuilder, closeStatusBuilder, isActive = true }) {
   const { t } = useTheme();
   const { contacts } = useContacts(myUid);
   const sysConfig = useSystemConfigHook();
   const globalSettings = useGlobalSettings();
+  const hideCameras = resolveHideCameraButtons(globalSettings);
   const hideStatusCamera = globalSettings?.hideStatusCamera === true;
   const hideStatusVoiceNote = globalSettings?.hideStatusVoiceNote === true;
   // Admin-controlled preview mode: 'static_picture' (default) shows poster JPEGs;
@@ -279,6 +324,55 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const jsEnabled = jsSettings.enabled === true;
   const jsOverride = myUserDoc?.jewishStatusesOverride || "inherit";
   const jewishVisible = jsOverride === "enabled" || (jsOverride !== "disabled" && jsEnabled);
+  // Admin-controlled "Jewish-style" layout/type system for the Updates & Public
+  // feeds. When ON, those tabs reuse the Jewish-style stories/grid/list/cards
+  // renderer (with a per-user layout choice) instead of the classic feed.
+  const updatesJewishOn = resolveUpdatesJewishMode(globalSettings, myUserDoc) === true;
+  // User-selectable Story Style — a presentation choice INDEPENDENT of the admin
+  // global "Jewish-style" toggle. "jewish" switches the Updates/Public feeds to
+  // the Jewish-style layout for this user only; "default" returns to the normal
+  // layout. Persisted locally so it survives navigation and restart. Declared
+  // BEFORE effectiveJewishOn so it is initialized when that line reads it (avoids
+  // a temporal-dead-zone crash on opening the status page).
+  const [storyStyle, setStoryStyle] = useState(() => localStorage.getItem("nextext_story_style") || "default");
+  const changeStoryStyle = (v) => {
+    setStoryStyle(v);
+    try { localStorage.setItem("nextext_story_style", v); } catch {}
+    if (myUid) setDoc(doc(db, "users", myUid), { storyStyle: v }, { merge: true }).catch(() => {});
+  };
+
+  // ── Combined presentation selector ───────────────────────────────
+  // A SINGLE dropdown that covers both the layout (Cards/List/Rows) and the
+  // Jewish-style "Story" presentation. Previously these were two independent
+  // dropdowns; the task requires exactly one. Internal value persisted to
+  // localStorage + user doc so it survives navigation/restart. The visible
+  // "Story" option must NOT show "(Jewish)" — the internal id stays "jewish".
+  const [presentation, setPresentation] = useState(() => {
+    const ss = localStorage.getItem("nextext_story_style") || "default";
+    if (ss === "jewish") return "story";
+    const sl = localStorage.getItem("nextext_status_layout") || "cards";
+    const sz = localStorage.getItem("nextext_status_preview_size") || "compact";
+    if (sl === "list") return "list";
+    if (sl === "rows") return "rows";
+    return sz === "cozy" ? "cards-cozy" : "cards-compact";
+  });
+  const changePresentation = (v) => {
+    setPresentation(v);
+    try { localStorage.setItem("nextext_status_presentation", v); } catch {}
+    if (v === "story") {
+      setStoryStyle("jewish");
+    } else {
+      setStoryStyle("default");
+      if (v === "list") changeStatusLayout("list");
+      else if (v === "rows") changeStatusLayout("rows");
+      else if (v === "cards-cozy") { changeStatusLayout("cards"); changeStatusPreviewSize("cozy"); }
+      else { changeStatusLayout("cards"); changeStatusPreviewSize("compact"); }
+    }
+    if (myUid) setDoc(doc(db, "users", myUid), { statusPresentation: v }, { merge: true }).catch(() => {});
+  };
+  // A user may independently opt into the Jewish-style presentation via the
+  // combined Story option, regardless of the admin global toggle.
+  const effectiveJewishOn = presentation === "story" || updatesJewishOn;
   const [blockStatus, setBlockStatus] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [myDisplayName, setMyDisplayName] = useState(myName);
@@ -295,6 +389,22 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const [statusLayout, setStatusLayout] = useState(() => localStorage.getItem("nextext_status_layout") || "cards");
   const [statusPreviewSize, setStatusPreviewSize] = useState(() => localStorage.getItem("nextext_status_preview_size") || "compact");
   const [statusTab, setStatusTab] = useState("updates"); // "updates" | "public"
+  const statusTabRef = useRef(statusTab);
+  useEffect(() => { statusTabRef.current = statusTab; }, [statusTab]);
+  // When leaving Status while Jewish is selected, silently normalize to Updates before unmount/hide.
+  // No flash, no toast — next open shows Updates.
+  useEffect(() => {
+    if (!isActive && statusTabRef.current === "jewish") {
+      setStatusTab("updates");
+    }
+  }, [isActive]);
+  useEffect(() => {
+    const onLeave = () => {
+      if (statusTabRef.current === "jewish") setStatusTab("updates");
+    };
+    window.addEventListener("nextextLeaveStatus", onLeave);
+    return () => window.removeEventListener("nextextLeaveStatus", onLeave);
+  }, []);
   const [postPublic, setPostPublic] = useState(false);
   const [userStatusVisibility, setUserStatusVisibility] = useState("contacts");
   useEffect(() => {
@@ -322,21 +432,18 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
     if (myUid) setDoc(doc(db, "users", myUid), { statusPreviewSize: s }, { merge: true }).catch(() => {});
   };
   const [showPost, setShowPost] = useState(false);
-  // NEW (WhatsApp-style) builder router state. The OLD builder is the showPost
-  // sheet below; the NEW builder is a full-screen overlay. Single decision
-  // point: getStatusBuilderVersion(globalSettings) — no scattered checks.
-  const [nbOpen, setNbOpen] = useState(false);
-  const [nbInitial, setNbInitial] = useState({});
-  const openBuilderNew = (init) => { setNbInitial(init || {}); setNbOpen(true); };
+  // NEW (WhatsApp-style) builder router. The authoritative builder state lives in
+  // App (statusBuilder) and is rendered exactly once there; this screen just
+  // routes creation intents to that shared handler.
   // Entry wrapper used by all status-creation buttons.
   const openCreateStatus = (mode) => {
-    if (getStatusBuilderVersion(globalSettings) === "new") openBuilderNew({ mode: mode || "text" });
+    if (getStatusBuilderVersion(globalSettings) === "new") openStatusBuilder({ mode: mode || "text" });
     else openPostSheet(mode);
   };
   // Native-camera continuation wrapper (captured file → builder).
   const routeNativeFile = (file) => {
     if (getStatusBuilderVersion(globalSettings) === "new") {
-      openBuilderNew({ mode: "media", file: file || null, fileType: file?.type?.startsWith("video") ? "video" : "image" });
+      openStatusBuilder({ mode: "media", file: file || null, fileType: file?.type?.startsWith("video") ? "video" : "image" });
     } else nativeStatusBuilder(file);
   };
   const [postText, setPostText] = useState("");
@@ -352,7 +459,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       const p = window.__nextextStatusPrefill;
       if (p && p.text) {
         if (getStatusBuilderVersion(globalSettings) === "new") {
-          openBuilderNew({ mode: "text", text: p.text });
+          openStatusBuilder({ mode: "text", text: p.text });
         } else {
           setPostMode("text");
           setPostText(p.text);
@@ -468,8 +575,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   const acceptedContacts = contacts.filter((c) => c.status === "accepted");
   const contactUids = acceptedContacts.map((c) => c.uid);
   const allUids = [myUid, ...contactUids];
-  const statuses = useStatuses(allUids);
-  const publicStatuses = usePublicStatuses();
+  const statuses = useStatuses(allUids, myUid);
+  const publicStatuses = usePublicStatuses(myUid);
 
   useEffect(() => {
     if (showPost && postTextRef.current && document.activeElement !== postTextRef.current) {
@@ -492,6 +599,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
   }, [initialViewStatuses, statuses, viewStoryOwner, onStoryViewerChange, onConsumeInitialView]);
 
   const sourceStatuses = statusTab === "jewish" ? [] : (statusTab === "public" ? publicStatuses : statuses);
+  const contactsById = Object.fromEntries(acceptedContacts.map((c) => [c.uid, c]));
   const myStatuses = sourceStatuses.filter((s) => s.ownerId === myUid);
   const contactStatuses = sourceStatuses.filter((s) => s.ownerId !== myUid);
 
@@ -695,15 +803,23 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           vidVol = snapMuteOriginal ? 0 : snapVidVol;
         }
         if (isVideo && globalSettings?.statusVideoPipelineEnabled) {
-          // Private pipeline: keep original private, create queued status for worker
-          const { uploadPrivateFile } = await import("../supabase/media.js");
+          // Original video upload — NexText-owned media goes to Cloudinary ONLY
+          // (never Supabase Storage). The transcoding worker (unavailable on the
+          // Spark plan) would consume this later.
           const statusRef = doc(collection(db, "status"));
           const statusId = statusRef.id;
-          const originalPath = `status/${myUid}/${statusId}/original.mp4`;
-          await uploadPrivateFile(originalPath, file, mime);
+          const cloud = await uploadMediaFile(`status-${myUid}`, myUid, file);
+          const originalPath = `cloudinary:${cloud.path}`;
           let durationMs = await getVideoDuration(snapMedia);
+          // Denormalize allowedUids so the Firestore `array-contains` read rule
+          // can prove visibility (mirrors postStatus's canonical eligibility).
+          const pipelineContactUids = await getAllowedContactUids(myUid);
+          const pipelineExcluded = Array.isArray(snapExcluded) && snapExcluded.length ? snapExcluded : null;
           await setDoc(statusRef, {
             ownerId: myUid,
+            allowedUids: Array.from(new Set([myUid, ...pipelineContactUids])),
+            extended: false,
+            excludedUids: pipelineExcluded,
             text: snapText.trim() || null,
             mediaType: "video",
             backgroundColor: null,
@@ -1266,25 +1382,25 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
       <div style={{ display: "flex", alignItems: "center", padding: "calc(16px + var(--safe-top)) 16px 16px", gap: 12, background: t.surface, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
         <ChevronLeft size={22} color={t.text} onClick={onBack} style={{ cursor: "pointer" }} />
         <span style={{ color: t.text, fontWeight: 700, fontSize: 18 }}>Status</span>
+        {!hideCameras && (
         <div onClick={() => setShowNativeCamera(true)} title="Camera" style={{ marginLeft: "auto", width: 38, height: 38, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <Camera size={20} color={t.primary} />
         </div>
-        <select
-          value={statusLayout === "cards" ? `cards-${statusPreviewSize}` : statusLayout}
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "list") changeStatusLayout("list");
-            else if (v === "rows") changeStatusLayout("rows");
-            else if (v === "cards-cozy") { changeStatusLayout("cards"); changeStatusPreviewSize("cozy"); }
-            else { changeStatusLayout("cards"); changeStatusPreviewSize("compact"); }
-          }}
-          style={{ padding: "7px 8px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 12, fontWeight: 600, outline: "none", color: t.text, background: t.bg, flexShrink: 0 }}
-        >
-          <option value="cards-compact">Cards · Compact</option>
-          <option value="cards-cozy">Cards · Cozy</option>
-          <option value="list">List</option>
-          <option value="rows">Rows</option>
-        </select>
+        )}
+        {statusTab !== "jewish" && (
+          <select
+            value={presentation}
+            onChange={(e) => changePresentation(e.target.value)}
+            title="Status display style"
+            style={{ padding: "7px 8px", borderRadius: 10, border: `1px solid ${t.border}`, fontSize: 12, fontWeight: 600, outline: "none", color: t.text, background: t.bg, flexShrink: 0 }}
+          >
+            <option value="cards-compact">Standard · Cards</option>
+            <option value="cards-cozy">Standard · Cozy Cards</option>
+            <option value="list">Standard · List</option>
+            <option value="rows">Standard · Rows</option>
+            <option value="story">Story</option>
+          </select>
+        )}
       </div>
 
       {/* Tab bar: Updates (contacts) vs Public */}
@@ -1324,7 +1440,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           <div onClick={() => openCreateStatus("text")} style={{ padding: "10px 18px", borderRadius: 24, background: t.primary, color: t.bubbleMeText, fontWeight: 700, fontSize: 14, cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
             Post
           </div>
-          {!hideStatusCamera && (
+          {!hideCameras && !hideStatusCamera && (
             <div onClick={() => setShowNativeCamera(true)} title="Camera" style={{ width: 40, height: 40, borderRadius: "50%", background: t.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
               <Camera size={20} color={t.primary} />
             </div>
@@ -1358,8 +1474,14 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           </div>
         ))}</>)}
 
-        {Object.keys(grouped).length > 0 && <SectionHeader label={statusTab === "public" ? "Public Statuses" : "Recent Updates"} />}
-        {statusLayout === "list" ? (
+        {statusTab !== "jewish" && !effectiveJewishOn && Object.keys(grouped).length > 0 && <SectionHeader label={statusTab === "public" ? "Public Statuses" : "Recent Updates"} />}
+        {effectiveJewishOn && (statusTab === "updates" || statusTab === "public") && (
+          <JewishStatusesTab
+            externalItems={statusesToCreators(sourceStatuses, contactsById, { myUid, myName: myDisplayName, myPhoto })}
+            headerTitle={statusTab === "public" ? "Public Statuses" : "Updates"}
+          />
+        )}
+        {statusTab !== "jewish" && !effectiveJewishOn && (statusLayout === "list" ? (
            <div className="noPagerSwipe" style={{ display: "flex", overflowX: "auto", overflowY: "hidden", padding: "10px 16px 14px", WebkitOverflowScrolling: "touch", touchAction: "pan-x pan-y" }}>
             {Object.entries(grouped).map(([uid, items]) => {
               const contact = acceptedContacts.find((c) => c.uid === uid);
@@ -1394,7 +1516,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     </div>
                   </div>
                   <div style={{ padding: "7px 9px" }}>
-                    <div style={{ fontWeight: 700, fontSize: 13.5, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+                    <div style={{ fontWeight: 700, fontSize: 13.5, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.15 }}>{name}</div>
                     <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 1 }}>{items.length} update{items.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}</div>
                   </div>
                 </div>
@@ -1439,8 +1561,8 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
               const noThumb = previewItem?.mediaType === "video" && !previewItem.posterURL && !previewItem.thumbnailURL && !previewItem.previewURL;
               const viewed = isViewed(uid);
               return (
-                <div key={uid} onClick={() => openStory(items, uid)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.surface }}>
-                  <Avatar photoURL={contact?.profile?.photoURL} name={name} uid={uid} size={42} hasActiveStatus statusViewed={viewed} blockStatus={blockStatus} />
+                <div key={uid} onClick={() => openStory(items, uid)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: t.surface }}>
+                  <Avatar photoURL={contact?.profile?.photoURL} name={name} uid={uid} size={42} hasActiveStatus statusViewed={viewed} blockStatus={blockStatus} style={{ margin: 0, flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: 14.5, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
                     <div style={{ fontSize: 12, color: t.textMuted }}>{items.length} update{items.length > 1 ? "s" : ""} · {timeAgo(latest.createdAt)}</div>
@@ -1553,9 +1675,9 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
               );
             })}
           </div>
-        )}
+        ))}
 
-        {Object.keys(grouped).length === 0 && myStatuses.length === 0 && (
+        {statusTab !== "jewish" && !effectiveJewishOn && Object.keys(grouped).length === 0 && myStatuses.length === 0 && (
           <div style={{ padding: 40, textAlign: "center", color: t.textMuted, fontSize: 13.5, lineHeight: 1.6 }}>
             No status updates yet. Tap the + button to post yours!
           </div>
@@ -1822,7 +1944,7 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
                     <Video size={16} color={t.primary} />
                     <span style={{ fontSize: 13, fontWeight: 600, color: t.primary }}>Video</span>
                   </div>
-                  {!hideStatusCamera && (
+                  {!hideStatusCamera && !hideCameras && (
                     <div onClick={() => setShowNativeCamera(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
                       <Camera size={16} color={t.primary} />
                       <span style={{ fontSize: 13, fontWeight: 600, color: t.primary }}>Camera</span>
@@ -2226,23 +2348,6 @@ export default function StatusScreen({ myUid, myName, myPhoto, onBack, onStoryVi
           userDoc={myUserDoc}
           t={t}
         />
-      )}
-
-      {/* NEW WhatsApp-style builder (admin flag; OLD sheet above is the fallback) */}
-      {nbOpen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 2147483000 }}>
-          <StatusBuilderNew
-            myUid={myUid}
-            userDoc={myUserDoc}
-            globalSettings={globalSettings}
-            sysConfig={sysConfig}
-            initialFile={nbInitial.file || null}
-            initialFileType={nbInitial.fileType || null}
-            initialText={nbInitial.text || ""}
-            onClose={() => setNbOpen(false)}
-            onPosted={() => setNbOpen(false)}
-          />
-        </div>
       )}
     </div>
   );

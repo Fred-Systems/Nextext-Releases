@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  collection, query, where, orderBy, onSnapshot, doc, setDoc, addDoc,
+  collection, query, where, orderBy, limit, onSnapshot, doc, setDoc, addDoc,
   serverTimestamp, updateDoc, arrayUnion, arrayRemove, getDoc, getDocs, writeBatch, deleteField, deleteDoc, increment,
 } from "firebase/firestore";
 import { db } from "./config";
 import { AI_CONTACT_UID, getAIChatId } from "./ai";
 import { deleteChatFile } from "../supabase/media";
-import { uploadToCloudinary } from "../services/mediaUpload";
+import { uploadToCloudinary, assertRawUnderLimit } from "../services/mediaUpload";
 
 // ── Offline outbox ──────────────────────────────────────────────────────────
 // When a send fails because the device is offline or Firestore is blocked
@@ -93,7 +93,7 @@ async function sendTextMessageRaw(chatId, senderUid, text, otherParticipants, op
   if (!scheduledFor) {
     const chatRef = doc(db, "chats", chatId);
     await updateDoc(chatRef, {
-      lastMessage: { text, senderId: senderUid, sentAt: serverTimestamp(), type: "text" },
+      lastMessage: { text, senderId: senderUid, sentAt: serverTimestamp(), type: "text", status: "sent" },
       // A new message re-surfaces the chat for anyone who had deleted it for
       // themselves (per-user delete) — the other person's reply should bring it back.
       deletedForSelf: deleteField(),
@@ -304,6 +304,73 @@ export function useChats(myUid) {
   return { chats, loading };
 }
 
+// Background, app-wide delivery receipts. While the user is signed in we keep a
+// single subscription to their chats; for every chat that still has unread
+// messages for them we attach a bounded listener on the most recent messages and
+// mark those messages delivered. In a client-only Firestore app (no server push)
+// the genuine "the recipient's device received the message" signal is an active
+// listener pulling the chat's messages — so this fires as soon as the recipient's
+// app has the message in memory, NOT merely when they later open the chat. Marking
+// is idempotent (markMessagesDelivered filters already-delivered), so listeners
+// simply become no-ops once delivered. Read receipts stay tied to actually
+// opening/viewing the chat (ConversationScreen), so we never fake "read".
+export function useDeliveryReceipts(myUid) {
+  useEffect(() => {
+    if (!myUid) return;
+    const MAX_ACTIVE = 50; // safety cap on concurrent per-chat listeners
+    const listeners = new Map(); // chatId -> unsubscribe
+
+    const mainUnsub = onSnapshot(
+      query(collection(db, "chats"), where("participants", "array-contains", myUid)),
+      (snap) => {
+        const chats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const needed = new Set(
+          chats
+            .filter((c) => (c.unreadCount && c.unreadCount[myUid] > 0))
+            .map((c) => c.id)
+        );
+
+        // Tear down listeners for chats that no longer need delivery.
+        for (const [id, unsub] of listeners) {
+          if (!needed.has(id)) {
+            unsub();
+            listeners.delete(id);
+          }
+        }
+
+        // Attach a bounded listener for each chat that still needs delivery.
+        let added = 0;
+        for (const id of needed) {
+          if (listeners.has(id)) continue;
+          if (listeners.size + added >= MAX_ACTIVE) break;
+          added++;
+          const q = query(
+            collection(db, "chats", id, "messages"),
+            orderBy("sentAt", "desc"),
+            limit(25)
+          );
+          const unsub = onSnapshot(
+            q,
+            (msnap) => {
+              const msgs = msnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+              markMessagesDelivered(id, myUid, msgs);
+            },
+            () => {}
+          );
+          listeners.set(id, unsub);
+        }
+      },
+      () => {}
+    );
+
+    return () => {
+      mainUnsub();
+      listeners.forEach((u) => u());
+      listeners.clear();
+    };
+  }, [myUid]);
+}
+
 // Live message stream for one chat, oldest first (for natural chat scroll order).
 // Filters out messages scheduled for the future that haven't fired yet, and
 // messages this user has individually deleted-for-self.
@@ -429,7 +496,7 @@ export async function sendContactMessage(chatId, senderUid, contact, otherPartic
 
   const chatRef = doc(db, "chats", chatId);
   await updateDoc(chatRef, {
-    lastMessage: { text: `📇 ${preview}`, senderId: senderUid, sentAt: serverTimestamp(), type: "contact" },
+    lastMessage: { text: `📇 ${preview}`, senderId: senderUid, sentAt: serverTimestamp(), type: "contact", status: "sent" },
     deletedForSelf: deleteField(),
   });
   await incrementUnreadCounts(chatId, otherParticipants);
@@ -526,7 +593,7 @@ export async function sendForwardedMessage(targetChatId, senderUid, sourceMsg, o
   else preview = "Message";
 
   await updateDoc(doc(db, "chats", targetChatId), {
-    lastMessage: { text: preview, senderId: senderUid, sentAt: serverTimestamp(), type },
+    lastMessage: { text: preview, senderId: senderUid, sentAt: serverTimestamp(), type, status: "sent" },
   });
   await incrementUnreadCounts(targetChatId, otherParticipants);
   return true;
@@ -557,6 +624,10 @@ export async function markMessagesDelivered(chatId, myUid, messages) {
     batch.update(doc(db, "chats", chatId, "messages", m.id), { deliveredTo: arrayUnion(myUid) });
   });
   await batch.commit();
+  // Reflect delivery on the chat-list preview from the REAL deliveredTo state
+  // (the recipient's device marks delivery; the sender's list shows it). Derived
+  // from the actual message, not a stale flag — and never clobbered to "sent".
+  await updateLastMessageStatus(chatId);
 }
 
 // Marks all not-mine messages as read by me -- called when this chat is
@@ -571,6 +642,9 @@ export async function markMessagesRead(chatId, myUid, messages) {
     batch.update(doc(db, "chats", chatId, "messages", m.id), { readBy: arrayUnion(myUid) });
   });
   await batch.commit();
+  // Reflect read state on the chat-list preview from the REAL readBy state
+  // (derived from the message, not the recipient's own message).
+  await updateLastMessageStatus(chatId);
 }
 
 export async function setTypingHeartbeat(chatId, myUid) {
@@ -619,6 +693,10 @@ export async function reactToMessage(chatId, messageId, myUid, emoji) {
 // caller can fall back to the Supabase path.
 export async function sendCloudinaryVoiceNote(chatId, file, opts = {}) {
   try {
+    // Enforce the active provider's raw size limit BEFORE uploading (100MB
+    // Cloudinary / 50MB Supabase) — don't silently push an oversized file and
+    // hope the provider rejects it.
+    await assertRawUnderLimit(file);
     const cloud = await uploadToCloudinary(file, { resourceType: "video" });
     const ref = await addDoc(collection(db, "chats", chatId, "messages"), {
       type: "voice",
@@ -633,6 +711,28 @@ export async function sendCloudinaryVoiceNote(chatId, file, opts = {}) {
       sentAt: serverTimestamp(),
       status: "sent",
     });
+    // Keep the chat's denormalized `lastMessage` in sync so the chat list shows
+    // the voice note as the newest message (its own timestamp/type) rather than a
+    // stale previous text. Without this the row silently falls back to the message
+    // BEFORE the voice note. Mirrors sendMediaMessage/sendLocationMessage.
+    try {
+      const chatSnap = await getDoc(doc(db, "chats", chatId));
+      const participants = chatSnap.data()?.participants || [];
+      const others = participants.filter((p) => p !== opts.senderId);
+      await updateDoc(doc(db, "chats", chatId), {
+        lastMessage: {
+          text: "🎤 Voice note",
+          senderId: opts.senderId,
+          sentAt: serverTimestamp(),
+          type: "voice",
+          status: "sent",
+        },
+        deletedForSelf: deleteField(),
+      });
+      await incrementUnreadCounts(chatId, others);
+    } catch (e) {
+      console.warn("[sendCloudinaryVoiceNote] lastMessage sync failed:", e?.message);
+    }
     return ref.id;
   } catch (e) {
     console.error("[sendCloudinaryVoiceNote] upload/send failed:", e?.message || e);
@@ -723,7 +823,7 @@ export async function sendMediaMessage(chatId, senderUid, type, uploadResult, ot
     metadata: { blurData: uploadResult.blurData || null },
   });
   await updateDoc(doc(db, "chats", chatId), {
-    lastMessage: { text: text ? (text.length > 40 ? text.slice(0, 40) + "…" : text) : mediaLabel(type), senderId: senderUid, sentAt: serverTimestamp(), type },
+    lastMessage: { text: text ? (text.length > 40 ? text.slice(0, 40) + "…" : text) : mediaLabel(type), senderId: senderUid, sentAt: serverTimestamp(), type, status: "sent" },
     deletedForSelf: deleteField(),
   });
   await incrementUnreadCounts(chatId, otherParticipants);
@@ -775,7 +875,7 @@ export async function sendLocationMessage(chatId, senderUid, location, otherPart
     statusRef,
   });
   await updateDoc(doc(db, "chats", chatId), {
-    lastMessage: { text: textLabel, senderId: senderUid, sentAt: serverTimestamp(), type: "location" },
+    lastMessage: { text: textLabel, senderId: senderUid, sentAt: serverTimestamp(), type: "location", status: "sent" },
     deletedForSelf: deleteField(),
   });
   await incrementUnreadCounts(chatId, otherParticipants);
@@ -827,7 +927,7 @@ export async function sendPollMessage(chatId, senderUid, question, options) {
     statusRef: null,
   });
   await updateDoc(doc(db, "chats", chatId), {
-    lastMessage: { text: `📊 ${question}`, senderId: senderUid, sentAt: serverTimestamp(), type: "poll" },
+    lastMessage: { text: `📊 ${question}`, senderId: senderUid, sentAt: serverTimestamp(), type: "poll", status: "sent" },
   });
 }
 
@@ -840,18 +940,161 @@ export async function voteOnPoll(chatId, messageId, myUid, optionId) {
   await updateDoc(ref, { poll: { ...poll, votes } });
 }
 
-export async function editMessage(chatId, messageId, newText, previousText) {
-  await updateDoc(doc(db, "chats", chatId, "messages", messageId), {
-    text: newText,
-    editedAt: serverTimestamp(),
-    editHistory: arrayUnion(previousText),
-  });
-}
-
 export async function deleteMessageForSelf(chatId, messageId, myUid) {
   await updateDoc(doc(db, "chats", chatId, "messages", messageId), {
     deletedForSelf: arrayUnion(myUid),
   });
+}
+
+// Find the newest VISIBLE message (skipping deleted-for-everyone and, optionally,
+// messages a specific user deleted for themselves). Returns the merged doc or
+// null. `limit` bounds the read so a run of deleted messages doesn't force a
+// full-history scan.
+async function findNewestValidMessage(chatId, skipDeletedForSelfUid, cap = 30) {
+  const snap = await getDocs(
+    query(collection(db, "chats", chatId, "messages"), orderBy("sentAt", "desc"), limit(cap))
+  );
+  for (const d of snap.docs) {
+    const m = d.data();
+    if (m.deletedForEveryone) continue;
+    if (skipDeletedForSelfUid && m.deletedForSelf && m.deletedForSelf[skipDeletedForSelfUid]) continue;
+    return { id: d.id, ...m };
+  }
+  return null;
+}
+
+// Derive the correct delivery status for the chat-list preview from the actual
+// message's deliveredTo / readBy fields and the chat's participant list —
+// instead of trusting a possibly-stale denormalized status. Perspective is the
+// MESSAGE SENDER (the status shown is "how far did MY message get"), so we pass
+// the message's own senderId as the "me" for the comparison.
+//   - 1:1 : read if the other participant read it, else delivered if they
+//           received it, else sent.
+//   - group: only "read" when EVERY other member has read it; "delivered" only
+//           when every member received it. Otherwise "sent". This prevents one
+//           member's read/delivery from being shown as the whole group's state.
+// Canonical receipt interpreter — THE single source of truth for tick state.
+// Returns exactly one of: null (incoming / no tick), "sent", "delivered", "read".
+// By construction it can NEVER produce a single-check state.
+//   • viewerUid === senderId (OUTGOING): "read" = recipient opened it (read-color
+//     double check), "delivered" = recipient's device received it (delivered-color
+//     double check), "sent" = not yet delivered (pending-color double check). NOTE:
+//     an outgoing message ALWAYS shows a double check immediately (pending state) —
+//     it never shows "no check" while awaiting delivery.
+//   • viewerUid !== senderId (INCOMING): null (no tick ever shown on incoming).
+// Groups: a message is "read"/"delivered" only when ALL relevant other members
+// have read/received it (see deriveMessageStatus for the rationale).
+export function getReceiptState({ messageDoc, chatDoc, viewerUid }) {
+  if (!messageDoc) return null;
+  const senderId = messageDoc.senderId;
+  if (!senderId) return null;
+  const participants = chatDoc?.participants || [];
+  const others = participants.filter((p) => p !== senderId);
+  if (others.length === 0) return null; // self / no participants
+  // Incoming messages never get a tick.
+  if (senderId !== viewerUid) return null;
+  const readBy = messageDoc.readBy || [];
+  const deliveredTo = messageDoc.deliveredTo || [];
+  const isGroup = others.length > 1;
+  if (isGroup) {
+    if (others.every((u) => readBy.includes(u))) return "read";
+    if (others.every((u) => deliveredTo.includes(u))) return "delivered";
+    return "sent";
+  }
+  const other = others[0];
+  if (readBy.includes(other)) return "read";
+  if (deliveredTo.includes(other)) return "delivered";
+  return "sent";
+}
+
+function deriveMessageStatus(messageDoc, chatDoc, senderId) {
+  const participants = chatDoc?.participants || [];
+  const others = participants.filter((p) => p !== senderId);
+  if (others.length === 0) return "sent";
+  const readBy = messageDoc?.readBy || [];
+  const deliveredTo = messageDoc?.deliveredTo || [];
+  const isGroup = others.length > 1;
+  if (isGroup) {
+    const allRead = others.length > 0 && others.every((u) => readBy.includes(u));
+    if (allRead) return "read";
+    const allDelivered = others.length > 0 && others.every((u) => deliveredTo.includes(u));
+    if (allDelivered) return "delivered";
+    return "sent";
+  }
+  const other = others[0];
+  if (readBy.includes(other)) return "read";
+  if (deliveredTo.includes(other)) return "delivered";
+  return "sent";
+}
+
+// Recompute the chat's denormalized `lastMessage` from the newest VISIBLE
+// message. Called after delete-for-everyone / edit so the chat list stops
+// showing a stale (deleted/edited) preview and falls back to the newest
+// remaining message. `skipDeletedForSelfUid` lets a caller ignore messages a
+// specific user hid for themselves (delete-for-self).
+async function recomputeLastMessage(chatId, skipDeletedForSelfUid) {
+  try {
+    const msg = await findNewestValidMessage(chatId, skipDeletedForSelfUid, 30);
+    let lm = null;
+    if (msg) {
+      const chatSnap = await getDoc(doc(db, "chats", chatId));
+      const chat = chatSnap.data() || {};
+      const status = deriveMessageStatus(msg, chat, msg.senderId);
+      lm = {
+        text: msg.text ?? null,
+        senderId: msg.senderId,
+        sentAt: msg.sentAt,
+        type: msg.type,
+        status,
+        // Carry the receipt arrays so the CHATS LIST can derive the tick from the
+        // true delivered/read state (via getReceiptState) rather than only the
+        // denormalized status string.
+        deliveredTo: msg.deliveredTo || [],
+        readBy: msg.readBy || [],
+        participants: chat.participants || [],
+      };
+    }
+    await updateDoc(doc(db, "chats", chatId), { lastMessage: lm });
+  } catch (e) {
+    console.warn("[recomputeLastMessage] failed:", e?.message);
+  }
+}
+
+// Recompute ONLY the delivery status of the current last message (used after a
+// recipient marks messages delivered/read, so the sender's chat list updates
+// without re-deriving the whole preview). Reads the actual newest message and
+// derives its status from deliveredTo/readBy — never clobbers to "sent".
+async function updateLastMessageStatus(chatId) {
+  try {
+    const chatSnap = await getDoc(doc(db, "chats", chatId));
+    const chat = chatSnap.data();
+    if (!chat) return;
+    const msg = await findNewestValidMessage(chatId, null, 1);
+    if (!msg) return;
+    const status = deriveMessageStatus(msg, chat, msg.senderId);
+    // Keep the denormalized lastMessage in sync with the newest message's real
+    // delivery/read state, including the receipt arrays the chat list uses to
+    // derive ticks via getReceiptState. Checkmarks are only ever shown when
+    // lastMessage.senderId === the sender (the sender's own message), so deriving
+    // from the true newest message is safe.
+    if (chat.lastMessage) {
+      const updates = { "lastMessage.status": status };
+      if (JSON.stringify(chat.lastMessage.deliveredTo || []) !== JSON.stringify(msg.deliveredTo || [])) {
+        updates["lastMessage.deliveredTo"] = msg.deliveredTo || [];
+      }
+      if (JSON.stringify(chat.lastMessage.readBy || []) !== JSON.stringify(msg.readBy || [])) {
+        updates["lastMessage.readBy"] = msg.readBy || [];
+      }
+      if (JSON.stringify(chat.lastMessage.participants || []) !== JSON.stringify(chat.participants || [])) {
+        updates["lastMessage.participants"] = chat.participants || [];
+      }
+      if (Object.keys(updates).length > 1 || chat.lastMessage.status !== status) {
+        await updateDoc(doc(db, "chats", chatId), updates);
+      }
+    }
+  } catch (e) {
+    console.warn("[updateLastMessageStatus] failed:", e?.message);
+  }
 }
 
 export async function deleteMessageForEveryone(chatId, messageId) {
@@ -864,6 +1107,19 @@ export async function deleteMessageForEveryone(chatId, messageId) {
   await updateDoc(doc(db, "chats", chatId, "messages", messageId), {
     deletedForEveryone: true,
   });
+  // Keep the chat-list preview correct: the deleted message must not remain the
+  // latest preview. Recompute from the newest visible message.
+  await recomputeLastMessage(chatId);
+}
+
+export async function editMessage(chatId, messageId, newText, previousText) {
+  await updateDoc(doc(db, "chats", chatId, "messages", messageId), {
+    text: newText,
+    editedAt: serverTimestamp(),
+    editHistory: arrayUnion(previousText),
+  });
+  // Reflect the edit in the denormalized chat-list preview if this is the latest.
+  await recomputeLastMessage(chatId);
 }
 
 // ── Chat-level relationship actions: archive, mute, favorite ──────────────

@@ -2,14 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Search, Settings, Camera, Plus, Users, Star, Archive, BellOff, X, Smartphone, Lock, Trash2, Check, CheckCheck, MessageCircle, Info, Image as ImageIcon, Mic, ChevronLeft, ChevronRight, Megaphone, ArrowDownWideNarrow, Pin, FlipHorizontal2, GripVertical, Zap, Send } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
-import { useChats, toggleArchive, toggleFavorite, toggleLocked, togglePinned, deleteChatForUser } from "../firebase/chats";
+import { useChats, toggleArchive, toggleFavorite, toggleLocked, togglePinned, deleteChatForUser, getReceiptState } from "../firebase/chats";
 import { useContacts, searchUsersByUsername, sendContactRequest, acceptContactRequest, getContactDisplayName } from "../firebase/contacts";
 import { sendMediaMessage, getOrCreateDirectChat } from "../firebase/chats";
 import { usePresence, formatLastSeen } from "../firebase/presence";
 import { useStatuses, postStatus } from "../firebase/status";
 import { useSystemConfigHook, getAIContact, AI_CONTACT_UID } from "../firebase/ai";
 import { useBroadcastLists, createBroadcastList, deleteBroadcastList, sendBroadcastText } from "../firebase/broadcast";
-import { useGlobalSettings, useDismissedAnnouncement, dismissAnnouncement } from "../firebase/config-settings";
+import { useGlobalSettings, useDismissedAnnouncement, dismissAnnouncement, resolveHideCameraButtons, getReceiptColors } from "../firebase/config-settings";
 
 const VIEWED_KEY = "nextext_status_viewed";
 function getStoredViewed() {
@@ -19,8 +19,7 @@ import { uploadChatFile } from "../supabase/media";
 import { uploadMediaFile } from "../services/mediaUpload";
 import Avatar from "../components/Avatar";
 import AISidebarWidget from "../components/AISidebarWidget";
-import { NativeCameraSheet, setPendingCameraFile, setPendingStatusFile } from "../components/NativeCameraLauncher";
-import StatusBuilderNew from "./StatusBuilderNew";
+import { NativeCameraSheet, setPendingCameraFile } from "../components/NativeCameraLauncher";
 import NewGroupScreen from "./NewGroupScreen";
 import FindFriendsScreen from "./FindFriendsScreen";
 import { doc, onSnapshot, updateDoc, collection, getCountFromServer, setDoc, getDoc } from "firebase/firestore";
@@ -149,13 +148,16 @@ function ChatRowMeta({ myUid, otherUid, chatId, t, compact, isGroup }) {
   return <div style={{ fontSize: compact ? 11 : 12, color: t.textMuted, marginTop: compact ? 0 : 1 }}>{statusText}</div>;
 }
 
-export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroupInfo, onOpenSettings, onOpenAI, showAIWidget = false, hideNav, navTab, compactList, searchMode = "visible", topBarVisible = true, searchBarScale = 1, isActiveTab = true }) {
+export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroupInfo, onOpenSettings, onOpenAdmin, onOpenAI, showAIWidget = false, hideNav, navTab, compactList, searchMode = "visible", topBarVisible = true, searchBarScale = 1, isActiveTab = true, openStatusBuilder, closeStatusBuilder }) {
   const { t } = useTheme();
   const globalSettings = useGlobalSettings();
-  const dismissedAnnId = useDismissedAnnouncement(myUid);
+  const { id: dismissedAnnId, loaded: announcementLoaded } = useDismissedAnnouncement(myUid);
 
   const announcement = globalSettings?.announcement;
-  const showAnnouncement = announcement && announcement.id && announcement.id !== dismissedAnnId;
+  const hideCameras = resolveHideCameraButtons(globalSettings);
+  // Only decide once both the announcement config and the user's dismissal state
+  // have resolved — otherwise a dismissed announcement briefly flashes on launch.
+  const showAnnouncement = announcementLoaded && announcement && announcement.id && announcement.id !== dismissedAnnId;
   const { chats } = useChats(myUid);
   const { contacts } = useContacts(myUid);
   const [showAddContact, setShowAddContact] = useState(false);
@@ -253,7 +255,6 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const recordingTimerRef = useRef(null);
   // NEW Status Builder handoff for in-app + native captures. Holds the File
   // (in memory only — never saved anywhere first) until the builder mounts.
-  const [statusBuilderFile, setStatusBuilderFile] = useState(null); // { file, fileType } | null
   // Draggable + FAB position (bottom-right above nav)
   const [fabPos, setFabPos] = useState(() => {
     try { const v = JSON.parse(localStorage.getItem("nextext_fab_pos")); return (v?.bottom && v?.right) ? { bottom: v.bottom, right: v.right } : null; } catch { return null; }
@@ -342,7 +343,9 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const pendingContacts = contacts.filter((c) => c.status === "pending");
   const contactUids = acceptedContacts.map((c) => c.uid);
   const allStatusUids = [myUid, ...contactUids];
-  const allStatuses = useStatuses(allStatusUids);
+  // Belt-and-braces: drop statuses the current user is explicitly excluded from
+  // (the firestore.rules read rule already enforces this server-side).
+  const allStatuses = useStatuses(allStatusUids, myUid).filter((s) => !(s.excludedUids || []).includes(myUid));
   const activeStatusUids = new Set(allStatuses.map((s) => s.ownerId));
   const viewedMap = getStoredViewed();
 
@@ -1189,34 +1192,22 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
   const openNativeInStatusBuilder = (file) => {
     if (!file) return;
     setShowNativeCamera(false);
-    // Stash for the StatusScreen.routeNativeFile chain AND open the same NEW
-    // builder locally so the flow works without leaving this tab. The File
-    // stays in memory only — it is never saved anywhere first.
-    try { setPendingStatusFile(file); } catch {}
-    setStatusBuilderFile({ file, fileType: (file.type || "").startsWith("video") ? "video" : "image" });
+    // Route to the single authoritative Status Builder (App-level). The File lives
+    // only in memory — it is never saved anywhere first.
+    openStatusBuilder({ mode: "media", file, fileType: (file.type || "").startsWith("video") ? "video" : "image" });
   };
 
   const openCapturedInStatusBuilder = () => {
     if (!capturedMedia || !myUid) return;
     if (routeBusyRef.current) return;
-    routeBusyRef.current = true;
-    setCamPhase("posting");
-    // Stash the File in memory FIRST (module handoff + local builder props),
-    // THEN discard the preview — the builder owns the stashed copy.
+    routeBusyRef.current = false;
     const media = capturedMedia;
     const file = new File([media.blob], `camera-${Date.now()}.${media.ext}`, {
       type: media.mime || (media.type === "video" ? "video/webm" : "image/jpeg"),
     });
-    try { setPendingStatusFile(file); } catch {}
     discardCapturedMedia();
-    setStatusBuilderFile({ file, fileType: media.type === "video" ? "video" : "image" });
-  };
-
-  const closeStatusBuilder = () => {
-    routeBusyRef.current = false;
-    setCamPhase("idle");
-    setStatusBuilderFile(null);
-    try { setPendingStatusFile(null); } catch {}
+    // Route to the single authoritative Status Builder (App-level).
+    openStatusBuilder({ mode: "media", file, fileType: media.type === "video" ? "video" : "image" });
   };
 
   const formatTime = (ts) => {
@@ -1387,7 +1378,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           if (longPressFiredRef.current) { longPressFiredRef.current = false; return; }
           onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true });
         }}
-        style={{ display: "flex", alignItems: "center", gap: compactList ? 10 : 13, padding: compactList ? "8px 16px" : "13px 16px", cursor: aiDragging ? "grabbing" : "pointer", borderBottom: `1px solid ${t.border}`, background: aiDragging ? t.primaryLight : t.bg, opacity: aiDragging ? 0.92 : 1, boxShadow: aiDragging ? "0 4px 14px rgba(0,0,0,0.18)" : "none", transform: aiDragging ? "scale(1.02)" : "none", touchAction: aiDragging ? "none" : "pan-y" }}
+        style={{ display: "flex", alignItems: "center", gap: compactList ? 14 : 18, padding: compactList ? "8px 16px" : "13px 16px", cursor: aiDragging ? "grabbing" : "pointer", borderBottom: `1px solid ${t.border}`, background: aiDragging ? t.primaryLight : t.bg, opacity: aiDragging ? 0.92 : 1, boxShadow: aiDragging ? "0 4px 14px rgba(0,0,0,0.18)" : "none", transform: aiDragging ? "scale(1.02)" : "none", touchAction: aiDragging ? "none" : "pan-y" }}
       >
         <div style={{ position: "relative", flexShrink: 0 }}>
           <Avatar uid={AI_CONTACT_UID} size={compactList ? 40 : 52} style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }} />
@@ -1477,6 +1468,18 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         </div>
         {<ChatRowMeta myUid={myUid} otherUid={otherUid} chatId={c.id} t={t} compact={compactList} isGroup={c.type === "group"} />}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minWidth: 0 }}>
+          {(() => {
+            // Canonical receipt state for the chat list. Derives from the last
+            // message's real deliveredTo/readBy (carried on the denorm), so it
+            // matches the conversation view exactly. Never a single check:
+            // read = blue double, delivered = gray double, sent/none = no glyph.
+            const st = getReceiptState({ messageDoc: c.lastMessage, chatDoc: c, viewerUid: myUid });
+            const rc = getReceiptColors(userDoc);
+            if (st === "read") return <CheckCheck size={14} color={rc.read} style={{ flexShrink: 0 }} />;
+            if (st === "delivered") return <CheckCheck size={14} color={rc.delivered} style={{ flexShrink: 0 }} />;
+            if (st === "sent") return <CheckCheck size={14} color={rc.pending} style={{ flexShrink: 0 }} />;
+            return null;
+          })()}
           <span style={{ fontSize: msgSize, color: t.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
             {searchQuery.trim() ? highlightText(getChatRowPreview(c), searchQuery, t.accent) : getChatRowPreview(c)}
           </span>
@@ -1511,12 +1514,15 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       )}
       {topBarVisible && <div style={{ padding: "calc(12px + var(--safe-top)) 16px 6px", background: t.surface, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, position: "relative", zIndex: 1 }}>
         <span style={{ color: t.text, fontWeight: 800, fontSize: 20, flexShrink: 0 }}>NexText</span>
-        <div style={{ display: "flex", gap: 22, alignItems: "center", flexShrink: 0 }}>
-          <Camera size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={openInAppCamera} />
+        <div style={{ display: "flex", gap: 14, alignItems: "center", flexShrink: 0 }}>
+          {userDoc?.role === "admin" && (
+            <span onClick={(e)=>{ e.stopPropagation(); try{ onOpenAdmin?onOpenAdmin():onOpenSettings(); }catch{} }} style={{ padding:"6px 10px", borderRadius:9, background:t.primary, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>Admin</span>
+          )}
+          {!hideCameras && <Camera size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => setShowNativeCamera(true)} />}
           <div style={{ width: 1, height: 22, background: t.divider, flexShrink: 0 }} />
           {searchMode !== "visible" && <Search size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={() => setShowSearch(!showSearch)} />}
           <div style={{ width: 1, height: 22, background: t.divider, flexShrink: 0 }} />
-          <Settings size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={onOpenSettings} />
+          <Settings size={24} color={t.text} style={{ cursor: "pointer", display: "block" }} onClick={(e) => { e.stopPropagation(); try { onOpenSettings(); } catch {} }} onTouchStart={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()} />
         </div>
       </div>}
 
@@ -1531,7 +1537,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
-        <div style={{ display: "flex", gap: 8, flex: 1, overflowX: "auto", WebkitOverflowScrolling: "touch", onTouchMove: (e) => e.stopPropagation() }}>
+        <div className="noPagerSwipe" style={{ display: "flex", gap: 8, flex: 1, overflowX: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-x pan-y", onTouchStart: (e) => e.stopPropagation(), onTouchMove: (e) => e.stopPropagation() }}>
           {[["all", "All"], ["unread", "Unread"], ["favorites", "Favorites"], ["groups", "Groups"], ["broadcast", "Broadcast"], ...customLists.map((l) => [`custom_${l.id}`, l.name])].map(([key, label]) => (
             <div key={key} onClick={() => setActiveTab(key)} style={{ padding: "6px 14px", borderRadius: 16, background: activeTab === key ? t.primary : t.primaryLight, color: activeTab === key ? t.bubbleMeText : t.primary, fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
               {label}
@@ -1662,7 +1668,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
               <div style={{ fontSize: 12.5, fontWeight: 700, color: t.textMuted, marginBottom: 8 }}>PENDING REQUESTS</div>
               {acceptError && <div style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{acceptError}</div>}
               {pendingContacts.map((c) => (
-                <div key={c.uid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
+                <div key={c.uid} style={{ display: "flex", alignItems: "center", gap: 22, padding: "8px 0" }}>
                   <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={36} />
                   <span style={{ fontSize: 14, color: t.text, fontWeight: 600, flex: 1 }}>{c.profile?.displayName || "Unknown"}</span>
                   <button onClick={() => handleAccept(c.uid)} style={{ padding: "6px 14px", borderRadius: 16, border: "none", background: t.primary, color: t.bubbleMeText, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
@@ -1705,7 +1711,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           </div>
           {selfContact && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
-              <div onClick={() => onOpenChat(null, myUid, selfContact, { openProfile: true })} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}>
+              <div onClick={() => onOpenChat(null, myUid, selfContact, { openProfile: true })} style={{ display: "flex", alignItems: "center", gap: compactList ? 12 : 16, flex: 1, cursor: "pointer", minWidth: 0 }}>
                 <Avatar photoURL={selfContact.profile?.photoURL} name={selfContact.profile?.displayName} uid={myUid} size={36} onViewProfile={() => onOpenChat(null, myUid, selfContact, { openProfile: true })} />
                 <span style={{ fontSize: 14, color: t.text, fontWeight: 600 }}>{selfContact.profile?.displayName} <span style={{ fontSize: 12, color: t.textMuted, fontWeight: 500 }}>(You)</span></span>
               </div>
@@ -1717,14 +1723,14 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
           {acceptedContacts.length === 0 && !aiApproved && <div style={{ fontSize: 13, color: t.textMuted }}>No contacts yet.</div>}
           {acceptedContacts.length === 0 && aiApproved && <div style={{ fontSize: 13, color: t.textMuted }}>No contacts yet. Try NexText AI below!</div>}
           {aiApproved && !userDoc?.aiDisabledByUser && !notArchived.some((c) => c.id?.startsWith("ai_")) && (
-            <div onClick={() => onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true })} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", cursor: "pointer" }}>
+            <div onClick={() => onOpenChat({ id: `ai_${myUid}`, type: "direct", participants: [myUid, AI_CONTACT_UID] }, AI_CONTACT_UID, getAIContact(), { isAI: true })} style={{ display: "flex", alignItems: "center", gap: compactList ? 12 : 16, padding: "8px 0", cursor: "pointer" }}>
               <div style={{ width: 36, height: 36, borderRadius: "50%", background: "linear-gradient(135deg, #7C5CFF, #53BDEB)", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 18 }}>🤖</span></div>
               <span style={{ fontSize: 14, color: t.text, fontWeight: 600 }}>NexText AI</span>
             </div>
           )}
           {sortedContacts.map((c) => (
             <div key={c.uid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
-              <div onClick={() => onOpenChat(null, c.uid, c, { openProfile: true })} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}>
+              <div onClick={() => onOpenChat(null, c.uid, c, { openProfile: true })} style={{ display: "flex", alignItems: "center", gap: compactList ? 12 : 16, flex: 1, cursor: "pointer", minWidth: 0 }}>
                 <Avatar photoURL={c.profile?.photoURL} name={c.profile?.displayName} uid={c.uid} size={36} onViewProfile={() => onOpenChat(null, c.uid, c, { openProfile: true })} />
                 <span style={{ fontSize: 14, color: t.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.profile?.displayName}</span>
               </div>
@@ -1807,7 +1813,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
         />
       )}
 
-      {showGlobalCamera && (
+      {showGlobalCamera && createPortal(
         <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147481000, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
             <span onClick={cancelGlobalCameraFlow} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Cancel</span>
@@ -1872,9 +1878,9 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             )}
           </div>
         </div>
-      )}
+      , document.body)}
 
-      {capturedMedia && !cameraPreviewStep && (
+      {capturedMedia && !cameraPreviewStep && createPortal(
         <div style={{ position: "fixed", inset: 0, background: t.bg, zIndex: 2147481000, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", background: t.surface, flexShrink: 0, borderBottom: `1px solid ${t.border}` }}>
             <span onClick={discardCapturedMedia} style={{ color: t.text, fontSize: 15, cursor: "pointer" }}>Cancel</span>
@@ -1932,9 +1938,9 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             </div>
           )}
         </div>
-      )}
+      , document.body)}
 
-      {capturedMedia && cameraPreviewStep && (
+      {capturedMedia && cameraPreviewStep && createPortal(
         <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2147481000, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", flexShrink: 0 }}>
             <span onClick={discardCapturedMedia} style={{ color: "#fff", fontSize: 15, cursor: "pointer" }}>Discard</span>
@@ -1966,23 +1972,7 @@ export default function ChatListScreen({ myUid, userDoc, onOpenChat, onOpenGroup
             </div>
           </div>
         </div>
-      )}
-
-      {statusBuilderFile && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 2147483000 }}>
-          <StatusBuilderNew
-            myUid={myUid}
-            userDoc={userDoc}
-            globalSettings={globalSettings}
-            sysConfig={sysConfig}
-            initialFile={statusBuilderFile.file}
-            initialFileType={statusBuilderFile.fileType}
-            initialText=""
-            onClose={closeStatusBuilder}
-            onPosted={closeStatusBuilder}
-          />
-        </div>
-      )}
+      , document.body)}
 
       {contextMenuChat && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setContextMenuChat(null)} onTouchStart={() => setContextMenuChat(null)} onMouseDown={() => setContextMenuChat(null)}>

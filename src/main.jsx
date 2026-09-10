@@ -1,6 +1,12 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+// Register the Capacitor Camera plugin at boot. Without this static import the
+// JS bridge object window.Capacitor.Plugins.Camera is never created, so the
+// native camera intent never fires and the launcher falls back to a hidden
+// <input capture> that is a no-op in this WebView. Importing here guarantees
+// Camera.getPhoto is available on native builds (photo capture).
+import "@capacitor/camera";
 import App from './App.jsx'
 import ErrorReporter from './utils/errorReporter.jsx'
 import { version as APP_VERSION } from '../package.json'

@@ -1,13 +1,12 @@
 import { CLOUDINARY_CLOUD_NAME } from "../supabase/config";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cloudinary Fetch API media proxy.
-//
-// Media is always stored in Supabase (never permanently in Cloudinary). When the
-// "Cloudinary Media Optimization Proxy" feature flag is ON, display URLs are
-// rewritten on the fly through Cloudinary's fetch endpoint so images/videos are
-// optimized (f_auto, q_auto) and served from Cloudinary's CDN without us ever
-// saving the asset there. When OFF, the raw Supabase URL is used.
+// Cloudinary Fetch API media proxy (display-side only — no NexText-owned media is
+// ever stored in Supabase; NexText media lives in Cloudinary). When the
+// "Cloudinary Media Optimization Proxy" feature flag is ON, external (non-Cloudinary
+// and non-Supabase) source URLs are rewritten on the fly through Cloudinary's fetch
+// endpoint so they are optimized (f_auto, q_auto) and served from Cloudinary's CDN.
+// Supabase URLs are legacy media references and are returned as-is.
 // ─────────────────────────────────────────────────────────────────────────────
 
 let proxyEnabled = false;

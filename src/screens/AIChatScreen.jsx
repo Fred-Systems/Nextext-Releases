@@ -15,6 +15,7 @@ import { uploadChatFile } from "../supabase/media";
 import { AI_CONTACT_UID, AI_CHAT_PREFIX, sendAIMessage, sendAIContextMessageWithActiveChat, analyzeImageWithGroq, generateGeminiImage, detectImageIntent, GEMINI_MODELS, DEFAULT_GEMINI_MODEL, PERSONALITIES, AI_PERSONA_TRAY, getVisiblePersonaTray, getPersonaMeta, setAIPersonality, setGeminiModel, useSystemConfigHook, describeAIError } from "../firebase/ai";
 import { useAIIconStyle, getAIIconStyle, setUserAIIconStyle } from "../services/aiIcon";
 import Avatar from "../components/Avatar";
+import Toast from "../components/Toast";
 import { downloadMedia, downloadImage } from "../utils/download";
 
 function ThinkingDots({ color = "#000" }) {
@@ -80,7 +81,7 @@ function cleanAIText(text) {
 // Renders AI message text with *single* and **double** asterisks converted to
 // bold (asterisks stripped), so model-emitted emphasis actually shows up bold
 // instead of as raw characters.
-function renderAIBold(text, onOpenImage) {
+function renderAIBold(text, onOpenImage, notify) {
   if (!text) return text;
   const str = String(text);
   // Extract embedded ![AI Image](url) markdown and render it as a real <img>
@@ -93,9 +94,9 @@ function renderAIBold(text, onOpenImage) {
     const after = str.slice(m.index + m[0].length);
     return (
       <div key={url}>
-        {before ? <div>{renderAIBold(before, onOpenImage)}</div> : null}
-        <AIImage src={url} onOpen={onOpenImage} />
-        {after ? <div style={{ marginTop: 6 }}>{renderAIBold(after, onOpenImage)}</div> : null}
+        {before ? <div>{renderAIBold(before, onOpenImage, notify)}</div> : null}
+        <AIImage src={url} onOpen={onOpenImage} notify={notify} />
+        {after ? <div style={{ marginTop: 6 }}>{renderAIBold(after, onOpenImage, notify)}</div> : null}
       </div>
     );
   }
@@ -109,17 +110,23 @@ function renderAIBold(text, onOpenImage) {
 
 // Renders an AI image with a skeleton spinner while the (often slow) Pollinations
 // endpoint finishes generating the raw image binary.
-function AIImage({ src, onOpen, style = {} }) {
+function AIImage({ src, onOpen, notify, style = {} }) {
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
   const [saving, setSaving] = useState(false);
   const { t } = useTheme();
-  const download = async () => {
-    if (!src || saving) return;
-    setSaving(true);
-    await downloadImage(src, `nextext-ai-image-${Date.now()}.png`);
-    setSaving(false);
-  };
+    const download = async () => {
+      if (!src || saving) return;
+      setSaving(true);
+      try {
+        const res = await downloadImage(src, `nextext-ai-image-${Date.now()}.png`);
+        if (notify) notify(res && res.location ? `Saved to ${res.location}` : "Image saved to your device.");
+      } catch (e) {
+        if (notify) notify(e?.message || "Couldn't save the image.");
+      } finally {
+        setSaving(false);
+      }
+    };
   // Safety: if the image never fires onLoad/onError (e.g. the generator stalls),
   // stop spinning after a while and surface a fallback.
   useEffect(() => {
@@ -266,6 +273,7 @@ export default function AIChatScreen({ myUid, onBack }) {
   const aiIcon = useAIIconStyle();
   const [showProfile, setShowProfile] = useState(false);
   const [userDoc, setUserDoc] = useState(null);
+  const [toast, setToast] = useState("");
   // Declared early (before the voice-reply effect that lists it in its deps) so
   // React can read it from the dependency array during render without hitting a
   // temporal-dead-zone ReferenceError.
@@ -352,28 +360,54 @@ export default function AIChatScreen({ myUid, onBack }) {
   // from the first '[' to the last ']', and JSON.parse that. Returns null (not a
   // single-blob fallback) when the response can't be turned into a non-empty
   // array of segments — callers treat that as a failed/refused attempt.
+  const coerceSegments = (arr) => {
+    if (!Array.isArray(arr)) return null;
+    const segments = arr
+      .filter((l) => l && typeof l === "object" && (l.text || l.line || l.dialogue))
+      .map((l) => ({
+        voiceId: l.voiceId != null ? l.voiceId : (l.speaker != null ? l.speaker : (l.id != null ? l.id : null)),
+        text: (l.text || l.line || l.dialogue || "").toString(),
+      }));
+    return segments.length ? segments : null;
+  };
   const parsePodcastScript = (raw) => {
     if (!raw || typeof raw !== "string") return null;
     let s = raw;
     // Strip ```json … ``` (or plain ``` … ```) fences if present.
-    s = s.replace(/```(?:json)?\s*([\s\S]*?)\s*```/gi, "$1");
+    s = s.replace(/```(?:json)?\s*([\s\S]*?)\s*```/gi, "$1").trim();
+    const tryParse = (str) => { try { return JSON.parse(str); } catch { return undefined; } };
+    // 1) Whole-body object wrappers: {"script":[…]}, {"segments":[…]}, etc.
+    const obj = tryParse(s);
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+      for (const k of ["script", "segments", "podcast", "lines", "dialogue", "conversation"]) {
+        if (Array.isArray(obj[k])) { const got = coerceSegments(obj[k]); if (got) return got; }
+      }
+      if (Array.isArray(obj)) return coerceSegments(obj);
+    }
+    // 2) Outermost [ … ] array (handles prose around the JSON).
     const start = s.indexOf("[");
     const end = s.lastIndexOf("]");
-    if (start === -1 || end === -1 || end <= start) return null;
-    const candidate = s.slice(start, end + 1);
-    try {
-      const arr = JSON.parse(candidate);
-      if (!Array.isArray(arr)) return null;
-      const segments = arr
-        .filter((l) => l && typeof l === "object" && (l.text || l.line))
-        .map((l) => ({
-          voiceId: l.voiceId != null ? l.voiceId : (l.speaker != null ? l.speaker : (l.id != null ? l.id : null)),
-          text: (l.text || l.line || "").toString(),
-        }));
-      return segments.length ? segments : null;
-    } catch {
-      return null;
+    if (start !== -1 && end > start) {
+      const got = coerceSegments(tryParse(s.slice(start, end + 1)));
+      if (got) return got;
+      // 2b) Truncated tail (response cut mid-object): trim back to the last
+      // complete object and close the array. A partial script beats no script.
+      let candidate = s.slice(start + 1, end);
+      const lastObj = candidate.lastIndexOf("}");
+      if (lastObj > 0) {
+        const got2 = coerceSegments(tryParse("[" + candidate.slice(0, lastObj + 1) + "]"));
+        if (got2 && got2.length >= 2) return got2;
+      }
     }
+    // 3) Dialogue-prose fallback: "Speaker N:" / "Name:" lines → segments.
+    const lineRe = /^\s*(?:[-•*]\s*)?(?:\*\*)?([A-Za-z0-9 '._-]{2,24})(?:\*\*)?\s*:\s*(.+)$/;
+    const rows = [];
+    for (const line of s.split("\n")) {
+      const m = line.match(lineRe);
+      if (m) rows.push({ voiceId: m[1].trim(), text: m[2].replace(/\*\*/g, "").trim() });
+    }
+    if (rows.length >= 3) return rows;
+    return null;
   };
   // ── Podcast failure classification ──
   // Every podcast failure is bucketed so the UI shows a stage-specific,
@@ -550,15 +584,25 @@ export default function AIChatScreen({ myUid, onBack }) {
       let lastScriptErr = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const r = await sendAIMessage(myUid, "Generate the podcast script now.", [], instruction, null, null, true);
+          const r = await sendAIMessage(myUid, "Generate the podcast script now.", [], instruction, null, null, true, { bare: true });
           if (r && r.trim()) {
             const parsed = parsePodcastScript(r);
             if (parsed && parsed.length > 0) { segments = parsed; break; }
+            // Diagnostic (no secrets): log a snippet of what the model actually
+            // returned so a parse regression is debuggable from the console.
+            console.error("[podcast] stage=script class=malformed-response raw-snippet:", r.slice(0, 400));
             lastScriptErr = new Error("AI returned prose/invalid JSON instead of the podcast script array.");
           } else {
+            console.error("[podcast] stage=script class=empty-response (attempt " + (attempt + 1) + ")");
             lastScriptErr = new Error("AI returned an empty response.");
           }
-        } catch (e) { lastScriptErr = e; }
+        } catch (e) {
+          // Non-retryable (auth/quota/network/provider) error — surface it
+          // immediately instead of burning 3 attempts on a failure that won't
+          // change. Only empty/malformed *responses* are retried.
+          lastScriptErr = e;
+          break;
+        }
       }
       if (!segments) {
         // Preserve the real cause (e.g. missing/invalid key, quota) so the
@@ -605,27 +649,22 @@ export default function AIChatScreen({ myUid, onBack }) {
       const file = new File([merged], "podcast.mp3", { type: "audio/mpeg" });
       stage = "upload";
       setPodcastStatus("Uploading podcast…");
-      // Upload the conversation recording — Cloudinary first (audio is the
-      // "video" resource type), falling back to Supabase so a broken
-      // Cloudinary preset alone can't fail the whole podcast. The result is
-      // kept in the builder area with a download button — it is NOT posted
-      // back into the chat.
+      // Upload the conversation recording to Cloudinary ONLY. NexText-owned media
+      // (this podcast audio) must never be routed to Supabase Storage. On failure
+      // we surface a clear, retryable error instead of silently falling back to a
+      // Supabase bucket. A single local retry covers transient network blips.
       let cloud = null;
       let uploadErr = null;
-      try {
-        cloud = await uploadToCloudinary(file, { resourceType: "video" });
-      } catch (e) {
-        uploadErr = e;
-        console.warn("[podcast] cloudinary upload failed, trying Supabase:", e?.message);
+      for (let attempt = 0; attempt < 2 && !cloud?.url; attempt++) {
         try {
-          const sb = await uploadChatFile(`podcast-${myUid}`, myUid, file);
-          cloud = { url: sb.url, path: sb.path };
-        } catch (e2) {
-          uploadErr = e2;
+          cloud = await uploadToCloudinary(file, { resourceType: "video" });
+        } catch (e) {
+          uploadErr = e;
+          console.warn("[podcast] cloudinary upload attempt failed:", e?.message);
         }
       }
       if (!cloud?.url) {
-        const err = new Error(`Podcast upload failed: ${uploadErr?.message || "no URL returned"}.`);
+        const err = new Error(`Podcast upload failed: ${uploadErr?.message || "no URL returned"}. Please try again.`);
         err.stage = "upload";
         throw err;
       }
@@ -1513,10 +1552,10 @@ export default function AIChatScreen({ myUid, onBack }) {
                          ) : (
                            <div style={{ padding: "18px 22px", borderRadius: 10, background: t.bubbleThem, color: t.bubbleThemText, fontSize: 13, opacity: 0.8 }}>📷 Media expired</div>
                          )}
-                         {!expired && m.mediaURL && (
-                           <div
-                              onClick={() => downloadImage(m.mediaURL, `nextext-ai-image-${Date.now()}.png`)}
-                             title="Download image"
+                          {!expired && m.mediaURL && (
+                            <div
+                               onClick={async () => { try { const res = await downloadImage(m.mediaURL, `nextext-ai-image-${Date.now()}.png`); setToast(res && res.location ? `Saved to ${res.location}` : "Image saved to your device."); } catch (e) { setToast(e?.message || "Couldn't save the image."); } }}
+                              title="Download image"
                              style={{ position: "absolute", top: 4, left: 4, width: 26, height: 26, borderRadius: "50%", background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2 }}
                            >
                              <Download size={14} color="#fff" />
@@ -1550,7 +1589,7 @@ export default function AIChatScreen({ myUid, onBack }) {
                           <div style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200 }}>{m.replyTo.previewText}</div>
                         </div>
                       )}
-                      {renderAIBold(m.text, (url) => setFullscreenImage(url))}
+                      {renderAIBold(m.text, (url) => setFullscreenImage(url), setToast)}
                       {voiceAudios[m.id] && (
                         <AutoAudio src={voiceAudios[m.id]} canDownload={canDownloadVoice} />
                       )}
@@ -1826,7 +1865,7 @@ export default function AIChatScreen({ myUid, onBack }) {
             onClick={(e) => e.stopPropagation()}
             title="Download image"
             style={{ position: "absolute", top: 16, right: 56, width: 34, height: 34, borderRadius: "50%", background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2 }}
-            onClickCapture={async () => { await downloadImage(fullscreenImage, `nextext-image-${Date.now()}.png`); }}
+            onClickCapture={async () => { try { await downloadImage(fullscreenImage, `nextext-image-${Date.now()}.png`); } catch (e) { setToast(e?.message || "Couldn't save the image."); } }}
           >
             <Download size={18} color="#fff" />
           </div>
@@ -1970,6 +2009,7 @@ export default function AIChatScreen({ myUid, onBack }) {
           </div>
         </div>
       )}
+      <Toast message={toast} onDismiss={() => setToast("")} />
     </div>
   );
 }

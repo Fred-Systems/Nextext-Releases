@@ -120,9 +120,18 @@ export async function ensureGlobalSettingsExist() {
       mediaAutoDeleteFallback: "expiry",
       statusVideoPipelineEnabled: false,
       show_video_thumbnails: true,
+      statusNotifications: { enabled: true },
+      allowAdminStatusAccess: false,
+      updatesJewishMode: { enabled: false },
+      notifyOnSignup: false,
+      jewishStatuses: { retentionDays: null },
+      calling: { enabled: true, replacesSettingsTab: false },
       updatedBy: null,
       updatedAt: null,
     });
+  } else if (!snap.data()?.calling) {
+    // Backfill calling defaults for existing installs so the feature is visible
+    await setDoc(ref, { calling: { enabled: true, replacesSettingsTab: false } }, { merge: true });
   }
 }
 
@@ -174,6 +183,15 @@ export function getActiveStorageProvider(globalSettings) {
   return globalSettings?.active_storage_provider === "supabase" ? "supabase" : "cloudinary";
 }
 
+// ── Hide all camera buttons (admin) ──
+// When ON, every user-facing camera entry point (status, chat attachment,
+// profile/avatar, group, native camera) is hidden app-wide. A single
+// authoritative value — callers must use this resolver, never re-check raw
+// settings in scattered places.
+export function resolveHideCameraButtons(globalSettings) {
+  return globalSettings?.hideCameraButtons === true;
+}
+
 // ── Jewish Status downloads (mirrors the music-download permission architecture) ──
 // globalSettings.jewishStatuses.downloads.enabled (default OFF) + per-user
 // `jewishStatusDownloadsOverride` ("inherit" | "enabled" | "disabled").
@@ -213,6 +231,47 @@ export function resolveGoogleSignInVisible(globalSettings) {
   return globalSettings?.auth?.googleSignIn === "show";
 }
 
+// ── Status notifications (global ON/OFF) ──
+// globalSettings.statusNotifications.enabled (default ON) + per-user override
+// users/{uid}.statusNotificationsOverride ("inherit" | "enabled" | "disabled").
+export function resolveStatusNotifications(globalSettings, userDoc) {
+  const globalEnabled = globalSettings?.statusNotifications?.enabled !== false; // default ON
+  const override = userDoc?.statusNotificationsOverride || "inherit";
+  if (override === "enabled") return true;
+  if (override === "disabled") return false;
+  return globalEnabled;
+}
+
+// ── Admin status access override (moderation only) ──
+// globalSettings.allowAdminStatusAccess (default OFF). When ON, authorized admins
+// may read any status regardless of visibility/exclusions.
+export function resolveAllowAdminStatusAccess(globalSettings) {
+  return globalSettings?.allowAdminStatusAccess === true;
+}
+
+// ── Updates/Public Status "Jewish-style" mode ──
+// globalSettings.updatesJewishMode.enabled (default OFF) + per-user override.
+// When ON, the Updates/Public feed uses the Jewish-style layout/type system.
+export function resolveUpdatesJewishMode(globalSettings, userDoc) {
+  const globalEnabled = globalSettings?.updatesJewishMode?.enabled === true;
+  const override = userDoc?.updatesJewishModeOverride || "inherit";
+  if (override === "enabled") return true;
+  if (override === "disabled") return false;
+  return globalEnabled;
+}
+
+// ── Jewish Status retention window (days). null = no limit (default). ──
+export function resolveJewishStatusRetentionDays(globalSettings) {
+  const d = globalSettings?.jewishStatuses?.retentionDays;
+  return typeof d === "number" && d > 0 ? d : null;
+}
+
+// ── Admin signup notification ──
+// globalSettings.notifyOnSignup (default OFF to preserve current expected behavior).
+export function resolveNotifyOnSignup(globalSettings) {
+  return globalSettings?.notifyOnSignup === true;
+}
+
 // ── Announcements ──
 // Admin posts a site-wide announcement; it shows at the top of every user's chat
 // list until the user dismisses it (dismissal is per-user, stored on their doc).
@@ -234,15 +293,23 @@ export async function dismissAnnouncement(myUid, id) {
 }
 
 // Reactive read of the current user's dismissed announcement id.
+// Returns { id, loaded }. `loaded` is false until the first snapshot arrives so
+// callers can avoid rendering a dismissed announcement that merely hasn't been
+// read yet (which causes a flicker on every app open).
 export function useDismissedAnnouncement(myUid) {
   const [id, setId] = useState(null);
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    if (!myUid) return undefined;
+    if (!myUid) { setLoaded(true); return undefined; }
     const ref = doc(db, "users", myUid);
-    const unsub = onSnapshot(ref, (s) => setId(s.data()?.dismissedAnnouncementId || null), () => {});
+    const unsub = onSnapshot(
+      ref,
+      (s) => { setId(s.data()?.dismissedAnnouncementId || null); setLoaded(true); },
+      () => setLoaded(true)
+    );
     return () => unsub();
   }, [myUid]);
-  return id;
+  return { id, loaded };
 }
 
 // ── Custom AI personas (admin-added) ──
@@ -265,4 +332,69 @@ export async function deletePersona(key) {
   const snap = await getDoc(ref);
   const arr = snap.exists() ? (snap.data()?.personas || []) : [];
   await setDoc(ref, { personas: arr.filter((x) => x.key !== key) }, { merge: true });
+}
+
+// ── Chat receipt color customization (Hyper Customization) ──
+// Per-user setting persisted on users/{uid}.customization.receiptColors.
+// The receipt STATE machine lives in chats.js (getReceiptState); these are only
+// the colors used to render the double-check glyph for each state. The READ color
+// defaults to blue and is fully customizable. Never hardcode a color in the
+// renderer — always read through getReceiptColors().
+export const DEFAULT_RECEIPT_COLORS = {
+  pending: "#8a8f94", // outgoing, sent but not yet delivered — uncolored/neutral
+  delivered: "#8a8f94", // delivered but unread
+  read: "#34B7F1", // read — default blue, configurable
+};
+
+export function getReceiptColors(userDoc) {
+  const c = userDoc?.customization?.receiptColors || {};
+  return {
+    pending: c.pending || DEFAULT_RECEIPT_COLORS.pending,
+    delivered: c.delivered || DEFAULT_RECEIPT_COLORS.delivered,
+    read: c.read || DEFAULT_RECEIPT_COLORS.read,
+  };
+}
+
+export async function saveReceiptColors(myUid, colors) {
+  if (!myUid) return;
+  // Merge so other customization fields are preserved.
+  const ref = doc(db, "users", myUid);
+  const snap = await getDoc(ref);
+  const current = (snap.exists() && snap.data()?.customization) || {};
+  await setDoc(ref, { customization: { ...current, receiptColors: colors } }, { merge: true });
+}
+
+// ── Calling feature flags ──
+export function resolveCallingEnabled(globalSettings) {
+  // Default VISIBLE if not explicitly disabled (so new installs see calling without admin action)
+  // Admin can hide by setting enabled === false
+  if (globalSettings == null) return true; // loading/null → show to avoid flash of hidden
+  return globalSettings?.calling?.enabled !== false;
+}
+export function resolveCallingReplacesSettingsTab(globalSettings) {
+  if (globalSettings == null) return false;
+  return globalSettings?.calling?.enabled !== false && globalSettings?.calling?.replacesSettingsTab === true;
+}
+
+// ── Storage backend resolver (Cloudinary vs Supabase) ──
+// NexText-owned MEDIA always goes to Cloudinary. Supabase is permitted ONLY for an
+// explicit allowlist of non-media file types that Cloudinary cannot/should not
+// accept (e.g. APKs / arbitrary binaries treated as file attachments). There is
+// intentionally NO "Cloudinary failed → Supabase" fallback.
+const SUPABASE_ALLOWED_MEDIA_TYPES = [
+  "application/vnd.android.package-archive", // .apk
+  "application/octet-stream", // generic binary attachments
+];
+const SUPABASE_ALLOWED_EXT = [".apk", ".bin", ".exe", ".zip", ".tar", ".gz", ".pdf"];
+
+export function resolveUploadBackend(file, { globalSettings } = {}) {
+  const name = (file?.name || "").toLowerCase();
+  const type = (file?.type || "").toLowerCase();
+  // Explicit non-media allowlist → Supabase file attachment.
+  const allowedByType = SUPABASE_ALLOWED_MEDIA_TYPES.includes(type);
+  const allowedByExt = SUPABASE_ALLOWED_EXT.some((e) => name.endsWith(e));
+  if (allowedByType || allowedByExt) return "supabase-file";
+  // Everything else that looks like media or ordinary content → Cloudinary.
+  // (Cloudinary accepts image/video/audio/raw; we never silently fall back.)
+  return "cloudinary";
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import {   ChevronLeft, Copy, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Bot, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff, Forward, Languages } from "lucide-react";
+import {   ChevronLeft, Copy, Send, Smile, Check, CheckCheck, CornerUpLeft, X, BarChart2, Plus, MoreVertical, Bell, BellOff, Bot, Star, ArrowDown, ArrowUp, Search, Image as ImageIcon, Paperclip, Mic, Play, Pause, FileText, Camera, Lock, Archive, Trash2, MessageSquare, UserPlus, Users, ImageOff, VideoOff, MicOff, FileX, RefreshCw, RotateCcw, MapPin, Square, Headphones, EyeOff, Forward, Languages, Phone, Video } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import {
   useMessages, sendTextMessage, markChatRead, setTypingHeartbeat, reactToMessage,
@@ -12,7 +12,7 @@ import {
   sendLocationMessage, updateLiveLocation, sendContactMessage,
   sendForwardedMessage, incrementForwardedCount,
   sendCloudinaryVoiceNote, checkAndIncrementDailyLimit, incrementUnreadCounts,
-  useChats,
+  useChats, getReceiptState,
 } from "../firebase/chats";
 import { Download } from "lucide-react";
 import { getWallpaperForChat, setWallpaperForChat, fileToWallpaperDataUrl } from "../theme/wallpaper";
@@ -28,10 +28,12 @@ import { db } from "../firebase/config";
 import NextextNative from "../native/nextextNative";
 import { Capacitor } from "@capacitor/core";
 import Avatar, { getLocalPhotoOverride } from "../components/Avatar";
+import Toast from "../components/Toast";
 import ZoomableMedia from "../components/ZoomableMedia";
 import { extractFirstUrl, fetchLinkPreview, isLinkPreviewEnabled } from "../utils/linkPreview";
 import { playVoicePing, playVoiceEndChime } from "../utils/pingSounds";
-import { useGlobalSettings } from "../firebase/config-settings";
+import { useGlobalSettings, resolveHideCameraButtons, getReceiptColors, resolveCallingEnabled } from "../firebase/config-settings";
+import { useCall } from "../calling/CallContext";
 import { getSystemInsets } from "../utils/systemInsets";
 import { getAudioDuration } from "../utils/audio";
 import { downloadBlobToDevice } from "../media/deviceDownload";
@@ -144,7 +146,7 @@ import { useContacts, getContactDisplayName, getContactRealName, sendContactRequ
 import ContactSharePicker from "../components/ContactSharePicker";
 import ForwardPicker from "../components/ForwardPicker";
 import VoiceToTextButton from "../components/VoiceToTextButton";
-import { NativeCameraSheet, pendingCameraFile, setPendingCameraFile } from "../components/NativeCameraLauncher";
+import { pendingCameraFile, setPendingCameraFile, NativeCameraSheet } from "../components/NativeCameraLauncher";
 
 
 const VIEWED_KEY = "nextext_status_viewed";
@@ -317,11 +319,18 @@ function LinkPreviewCard({ text, mine, t, textScale }) {
   );
 }
 
-function StatusTicks({ mine, deliveredTo = [], readBy = [], otherParticipants = [] }) {
+function StatusTicks({ mine, message, chatDoc, viewerUid, t, receiptColors }) {
+  // Canonical receipt state — identical logic to the Chats list. Outgoing messages
+  // ALWAYS render a double check immediately (sent_pending = uncolored, delivered =
+  // normal color, read = read color). Incoming (mine === false) never renders a
+  // tick. Never a single check — only CheckCheck (double) or nothing.
   if (!mine) return null;
-  const allRead = otherParticipants.length > 0 && otherParticipants.every((uid) => readBy.includes(uid));
-  if (allRead) return <CheckCheck size={15} style={{ color: "#4FC3E8" }} />;
-  return <CheckCheck size={15} style={{ opacity: 0.7 }} />;
+  const st = getReceiptState({ messageDoc: message, chatDoc, viewerUid });
+  const c = receiptColors || { pending: t.textMuted, delivered: t.textMuted, read: t.primary };
+  if (st === "read") return <CheckCheck size={15} style={{ color: c.read }} />;
+  if (st === "delivered") return <CheckCheck size={15} style={{ color: c.delivered }} />;
+  // sent_pending (outgoing, not yet delivered): two uncolored checks immediately.
+  return <CheckCheck size={15} style={{ color: c.pending }} />;
 }
 
 function TypingDots({ color }) {
@@ -638,6 +647,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const { t, chatTextScale, setChatTextScale, composerHeight, messageWidth, composerButtonOrder, voiceSpacing } = useTheme();
   const rs = recordingBarScale || 1;
   const globalSettings = useGlobalSettings();
+  const hideCameras = resolveHideCameraButtons(globalSettings);
+  const callingEnabled = resolveCallingEnabled(globalSettings);
+  const { startCall } = (() => { try { return useCall(); } catch { return { startCall: async () => {} }; } })();
   const sysConfig = useSystemConfigHook();
   const availableVoices = getAvailableVoices(sysConfig);
   const aiApproved = userDoc?.aiApproved && !sysConfig?.aiGloballyDisabled && !sysConfig?.hideAiEverywhere && userDoc?.restrictions?.blockAI !== true;
@@ -927,6 +939,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
   const [contactRequestSent, setContactRequestSent] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [chatMeta, setChatMeta] = useState(null);
+  const [sendErrorToast, setSendErrorToast] = useState("");
   const [memberNames, setMemberNames] = useState({});
   // Chat list for the native camera "Pick a chat" routing sheet.
   const { chats: allChats } = useChats(myUid);
@@ -1154,7 +1167,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       ? (chatMeta?.participants || []).filter((p) => p !== myUid)
       : [otherUid]
   ), [isGroup, chatMeta?.participants, myUid, otherUid]);
-  const otherStatuses = useStatuses(isGroup ? [] : [otherUid]);
+  const otherStatuses = useStatuses(isGroup ? [] : [otherUid], myUid);
   const hasOtherActiveStatus = otherStatuses.length > 0;
   const otherViewedMap = getStoredViewed();
   const otherStatusViewed = !!otherViewedMap[otherUid];
@@ -2589,6 +2602,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     try {
       await sendCloudinaryVoiceNote(chatId, file, opts);
     } catch (cloudErr) {
+      // Cloudinary unavailable — fall back to the legacy Supabase path.
       const result = await uploadChatFile(chatId, myUid, file);
       await sendMediaMessage(chatId, myUid, "voice", result, otherParticipants, {
         durationSeconds: Math.max(1, Math.round(duration || 0)),
@@ -2597,13 +2611,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       });
       return;
     }
-    try {
-      await updateDoc(doc(db, "chats", chatId), {
-        lastMessage: { text: "🎤 Voice note", senderId: myUid, sentAt: serverTimestamp(), type: "voice" },
-        deletedForSelf: deleteField(),
-      });
-      await incrementUnreadCounts(chatId, otherParticipants);
-    } catch { /* best-effort */ }
+    // NOTE: sendCloudinaryVoiceNote (and the sendMediaMessage fallback above)
+    // already update the denormalized `lastMessage` with status:"sent" and the
+    // correct type:"voice", AND increment unread counts. A second write here would
+    // clobber lastMessage.status to undefined and double-count unread — which is
+    // exactly why voice notes sometimes failed to show as the latest message.
   };
 
   const stopVoiceRecording = async (send) => {
@@ -2767,8 +2779,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     setVcSending(true); setVcError("");
     try {
       const voice = availableVoices.find((v) => v.id === vcVoiceId) || availableVoices[0];
-      // Groq Whisper transcription → text, then Fish Audio TTS in the chosen voice.
-      const text = (await transcribeVoiceNote(myUid, vcBlob)).trim();
+      // Reuse the (possibly edited) transcript if we already have one, otherwise
+      // transcribe the recorded audio. This is what makes REDO/EDIT re-generate
+      // with a different voice or edited text WITHOUT forcing a re-record.
+      let text = (vcTranscript || "").trim();
+      if (!text) text = (await transcribeVoiceNote(myUid, vcBlob)).trim();
       if (!text) throw new Error("Couldn't transcribe the recording.");
       const blob = await synthesizeSpeechBytes(text, voice?.referenceId || Y_MIZRACHI_VOICE_ID);
       const dur = await getAudioDuration(blob);
@@ -2782,7 +2797,10 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
       setGenCurrent(0);
       setGenPlaying(false);
       setVcTranscript(text);
-      vcDiscard();
+      // IMPORTANT: do NOT call vcDiscard() here. Keeping vcBlob/vcUrl/vcTranscript
+      // means the REDO/EDIT button can return the user to the real editor with their
+      // recording + text + voice choice intact, instead of dropping them into a
+      // fresh "tap to record" screen (the old broken secondary interface).
     } catch (err) {
       setVcError(err?.message || "Voice conversion failed.");
     }
@@ -3759,7 +3777,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     translations, hiddenTranslations, selectedMessages, selectionMode,
     isGroup, memberNames, globalSettings, forwardOutside,
     theyRecordingVoice, theyTyping, showScrollDownSetting, showScrollDown,
-    scrollDownPos, newMsgBadge, scrollDownSize, otherParticipants, t, myUid, messageWidth,
+    scrollDownPos, newMsgBadge, scrollDownSize,     otherParticipants, chatMeta, t, myUid, messageWidth, userDoc,
     renderBubble, renderOutsideActions, canForward, replyToSenderName,
     msgDisplayDate, formatDayLabel, onRowPointerDown, onRowPointerUp, onRowPointerMove,
     cancelMessageLongPress, enterSelectionMode, toggleSelectMessage,
@@ -3770,7 +3788,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
     displayMessages, visibleMessages, visibleCount, translations, hiddenTranslations,
     selectedMessages, selectionMode, isGroup, memberNames, globalSettings, forwardOutside,
     theyRecordingVoice, theyTyping, showScrollDownSetting, showScrollDown,
-    scrollDownPos, newMsgBadge, scrollDownSize, otherParticipants, t, myUid, messageWidth, replySnapMs, messageLimitPref, scrollRef,
+    scrollDownPos, newMsgBadge, scrollDownSize, otherParticipants, chatMeta, t, myUid, messageWidth, userDoc, replySnapMs, messageLimitPref, scrollRef,
     localMediaUrls, handleDownloadMedia,
   ]);
 
@@ -3843,6 +3861,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
 
   return (
     <div className="nx-screen" style={{ position: "absolute", inset: 0, background: t.bg, zIndex: 20 }}>
+      {sendErrorToast && <Toast message={sendErrorToast} onDismiss={() => setSendErrorToast("")} />}
       {selectionMode && (
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 45, display: "flex", alignItems: "center", gap: 14, padding: "calc(14px + var(--safe-top)) 14px 14px", background: t.primary, color: t.bubbleMeText, flexShrink: 0 }}>
           <X size={22} color={t.bubbleMeText} onClick={exitSelectionMode} style={{ cursor: "pointer", flexShrink: 0 }} />
@@ -3908,6 +3927,16 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             <UserPlus size={14} color="#fff" />
             Requested
           </div>
+        )}
+        {callingEnabled && !isGroup && !isSelfChat && !isBlockedByMe && otherUid && otherUid !== myUid && (
+          <>
+            <button onClick={async () => { try { await startCall({ calleeUid: otherUid, calleeName: contact?.profile?.displayName || contact?.profile?.username || otherUid.slice(0,6), calleePhoto: contact?.profile?.photoURL || otherUserPhoto || null, type: "voice" }); } catch (e) { setSendError(e.message); } }} aria-label="Voice call" title="Voice call" style={{ width: 36, height: 36, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+              <Phone size={16} color="#fff" />
+            </button>
+            <button onClick={async () => { try { await startCall({ calleeUid: otherUid, calleeName: contact?.profile?.displayName || contact?.profile?.username || otherUid.slice(0,6), calleePhoto: contact?.profile?.photoURL || otherUserPhoto || null, type: "video" }); } catch (e) { setSendError(e.message); } }} aria-label="Video call" title="Video call" style={{ width: 36, height: 36, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+              <Video size={16} color="#fff" />
+            </button>
+          </>
         )}
         <Search size={19} color="#fff" style={{ cursor: "pointer", marginRight: 4 }} onClick={() => setShowSearch(!showSearch)} />
         <MoreVertical size={19} color="#fff" style={{ cursor: "pointer" }} onClick={() => setShowOverflow(!showOverflow)} />
@@ -4131,11 +4160,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                 <div onClick={() => { closeAttach(); setShowContactShare(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <UserPlus size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Contact</span>
                 </div>
-                {!parentalBlockedType("image") && (
-                  <div onClick={() => { closeAttach(); setShowNativeCamera(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
-                    <Camera size={17} color={t.primary} /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Camera</span>
-                  </div>
-                )}
                 <div onClick={() => { setDisappearingViews(1); closeAttach(); photoInputRef.current?.click(); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", cursor: "pointer", borderTop: `1px solid ${t.border}` }}>
                   <EyeOff size={17} color="#FF3B30" /><span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>Disappearing media (view once)</span>
                 </div>
@@ -4143,17 +4167,6 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
               </>,
               document.body
             )}
-            <NativeCameraSheet
-              open={showNativeCamera}
-              onClose={() => setShowNativeCamera(false)}
-              onSendChat={async (file) => { await sendFileDirectly(file); }}
-              onSendChatTo={(file, targetChatId) => {
-                if (!file) return;
-                setPendingCameraFile(file);
-                if (onOpenChat) onOpenChat(targetChatId);
-              }}
-              chats={nativeCameraChats}
-            />
             {showYNote && createPortal(
               <>
               <div onClick={() => { if (!yNoteSending) setShowYNote(false); }} style={{ position: "fixed", inset: 0, zIndex: 2147481300, background: "rgba(0,0,0,0.45)" }} />
@@ -4204,11 +4217,11 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
             )}
             {showClone && createPortal(
               <>
-              <div onClick={() => { if (!vcSending) setShowClone(false); }} style={{ position: "fixed", inset: 0, zIndex: 2147481302, background: "rgba(0,0,0,0.45)" }} />
-              <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(340px, 92vw)", background: t.surface, borderRadius: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", zIndex: 2147481303, padding: 18 }}>
+              <div onClick={() => { if (!vcSending) vcCloseClone(); }} style={{ position: "fixed", inset: 0, zIndex: 2147481302, background: "rgba(0,0,0,0.45)" }} />
+              <div style={{ position: "fixed", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: "min(340px, 92vw)", maxHeight: "86vh", overflowY: "auto", background: t.surface, borderRadius: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", zIndex: 2147481303, padding: 18 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                   <span style={{ fontWeight: 700, fontSize: 15, color: t.text }}>🎙️ Send Cloned Voice Note</span>
-                  <X size={18} color={t.textMuted} onClick={() => { if (!vcSending) setShowClone(false); }} style={{ cursor: "pointer" }} />
+                  <X size={18} color={t.textMuted} onClick={() => { if (!vcSending) vcCloseClone(); }} style={{ cursor: "pointer" }} />
                 </div>
                 <div style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.5, marginBottom: 12 }}>
                   Tap the mic and speak — your words are re-voiced into the selected Fish Audio voice. Listen in the preview below, then send, download, or discard it — nothing is posted automatically.
@@ -4243,7 +4256,27 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     <div onClick={vcDiscard} style={{ fontSize: 12.5, color: t.textMuted, cursor: "pointer", textDecoration: "underline", flexShrink: 0 }}>Discard</div>
                   </div>
                 )}
-                {vcTranscript && <div style={{ fontSize: 12.5, color: t.textMuted, marginBottom: 6 }}>Transcribed: {vcTranscript}</div>}
+                {vcTranscript && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 4 }}>Text (editable — used when you regenerate):</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <VoiceToTextButton
+                        myUid={myUid}
+                        onResult={(text) => { if (text && text.trim()) setVcTranscript((prev) => (prev ? prev + " " : "") + text.trim()); }}
+                        size={34}
+                        useRealtime
+                      />
+                      <span style={{ fontSize: 11.5, color: t.textMuted }}>Tap the mic to dictate into the text above.</span>
+                    </div>
+                    <textarea
+                      value={vcTranscript}
+                      onChange={(e) => setVcTranscript(e.target.value)}
+                      rows={2}
+                      readOnly={vcSending}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1px solid ${t.border}`, fontSize: 13, color: t.text, background: t.bg, resize: "vertical", outline: "none" }}
+                    />
+                  </div>
+                )}
                 {genBlob && genUrl && (
                   <div style={{ padding: "12px 12px", borderRadius: 12, background: t.surface, border: `1px solid ${t.border}`, marginBottom: 10 }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -4279,6 +4312,9 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                           <span>{fmtGenTime(genTotal || genDuration || 0)}</span>
                         </div>
                       </div>
+                    </div>
+                    <div onClick={() => { if (vcSending || genSaving) return; vcDiscardGenerated(); }} style={{ width: "100%", textAlign: "center", padding: "10px 0", borderRadius: 10, border: `1px solid ${t.primary}`, fontWeight: 700, fontSize: 13.5, color: t.primary, cursor: (vcSending || genSaving) ? "wait" : "pointer", opacity: (vcSending || genSaving) ? 0.6 : 1, marginTop: 10 }}>
+                      REDO / EDIT
                     </div>
                     <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
                       <div onClick={vcSaveToDevice} style={{ flex: 1, textAlign: "center", padding: "10px 0", borderRadius: 10, border: `1px solid ${t.border}`, fontWeight: 700, fontSize: 13.5, color: t.primary, cursor: genSaving ? "wait" : "pointer", opacity: genSaving ? 0.6 : 1 }}>
@@ -4398,10 +4434,12 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                     </div>
                   )}
                   <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+                    {!hideCameras && (
                     <div onClick={() => galleryCamRef.current?.click()} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
                       <Camera size={18} color={t.primary} />
                       <span style={{ fontWeight: 700, fontSize: 13.5, color: t.primary }}>Camera</span>
                     </div>
+                    )}
                     <div onClick={() => galleryPhotoRef.current?.click()} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", borderRadius: 10, background: t.primaryLight, cursor: "pointer" }}>
                       <ImageIcon size={18} color={t.primary} />
                       <span style={{ fontWeight: 700, fontSize: 13.5, color: t.primary }}>Photos</span>
@@ -4467,7 +4505,7 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
                   <ImageIcon size={Math.max(22, Math.round(25 * composerHeight))} color={galleryActive ? t.primary : t.textMuted} />
                 </div>
               )}
-              {!(parentalBlockedType("image") && parentalBlockedType("video")) && (typeof localStorage === "undefined" || localStorage.getItem("nextext_hide_composer_camera") !== "on") && !sysConfig?.nativeGallery && (
+              {!(parentalBlockedType("image") && parentalBlockedType("video")) && (typeof localStorage === "undefined" || localStorage.getItem("nextext_hide_composer_camera") !== "on") && !sysConfig?.nativeGallery && !hideCameras && (
                 <div
                   onClick={() => { setShowEmojiPicker(false); closeAttach(); setShowNativeCamera(true); }}
                   style={{ width: Math.max(30, Math.round(32 * composerHeight)), height: Math.max(30, Math.round(32 * composerHeight)), borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: showCamera ? t.primaryLight : "transparent" }}
@@ -4767,6 +4805,15 @@ export default function ConversationScreen({ myUid, chatId: initialChatId, other
         </div>
       )}
 
+      <NativeCameraSheet
+        open={showNativeCamera}
+        onClose={() => setShowNativeCamera(false)}
+        onSendChat={async (file) => {
+          setShowNativeCamera(false);
+          try { await sendFileDirectly(file); } catch (e) { setSendErrorToast(e?.message || "Couldn't send photo."); }
+        }}
+      />
+
       {showCamera && createPortal(
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "#000", zIndex: 2147482000, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", minHeight: 48 }}>
@@ -4960,7 +5007,7 @@ const MessageList = React.memo(function MessageList({ ctx }) {
   const {
     displayMessages, visibleMessages, visibleCount, setVisibleCount,
     selectedMessages, selectionMode, isGroup, memberNames, globalSettings, forwardOutside,
-    theyRecordingVoice, theyTyping, t, myUid, messageWidth, replySnapMs,
+    theyRecordingVoice, theyTyping, t, myUid, messageWidth, chatMeta, replySnapMs, userDoc,
     renderOutsideActions, canForward, replyToSenderName, msgDisplayDate, formatDayLabel,
     onRowPointerDown, onRowPointerUp, onRowPointerMove, cancelMessageLongPress,
     enterSelectionMode, toggleSelectMessage, setForwardMsg, setActiveMsg, setContactCardMember,
@@ -5037,7 +5084,7 @@ const MessageList = React.memo(function MessageList({ ctx }) {
               <span style={{ fontSize: 10.5, opacity: 0.65 }}>
                 {msgDisplayDate(m) ? msgDisplayDate(m).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "sending…"}
               </span>
-              <StatusTicks mine={m.senderId === myUid} deliveredTo={m.deliveredTo} readBy={m.readBy} otherParticipants={otherParticipants} />
+              <StatusTicks mine={m.senderId === myUid} message={m} chatDoc={{ participants: chatMeta?.participants || [] }} viewerUid={myUid} t={t} receiptColors={getReceiptColors(userDoc)} />
             </div>
             {m.reactions && Object.keys(m.reactions).length > 0 && (
               <div style={{ display: "flex", gap: 3, marginTop: 3, justifyContent: isMine ? "flex-end" : "flex-start" }}>

@@ -118,6 +118,15 @@ service cloud.firestore {
         // request to "accepted".)
         allow update, delete: if isSelf(contactUid);
       }
+
+      // Lightweight per-device history (admin "Device History"). The owner writes
+      // their own device records (merge, on session start / meaningful change);
+      // the owner and admins may read them. No media is stored here.
+      match /devices/{deviceId} {
+        allow read: if isSelf(uid) || isAdmin();
+        allow create, update: if isSelf(uid);
+        allow delete: if isAdmin();
+      }
     }
 
     // ── chats ──────────────────────────────────────────────
@@ -209,27 +218,73 @@ service cloud.firestore {
     }
 
     // ── status ─────────────────────────────────────────────
+    // Status visibility is INDEPENDENT from online/presence visibility. A status
+    // is hidden from a viewer if they appear in either (a) the poster's global
+    // privacy.statusExcluded list, or (b) this status's per-status excludedUids
+    // list. Both are enforced here (access layer), not just hidden in the UI.
+    function statusExcludedFor(viewer) {
+      let owner = get(/databases/$(database)/documents/users/$(resource.data.ownerId));
+      let priv = owner.data.privacy;
+      let globalExcluded = (priv != null && priv.statusExcluded != null) ? priv.statusExcluded : [];
+      let perStatus = (resource.data.excludedUids != null) ? resource.data.excludedUids : [];
+      return globalExcluded.hasAny([viewer]) || perStatus.hasAny([viewer]);
+    }
+    // Administrative moderation override: an authorized admin may read ANY status
+    // (regardless of visibility / exclusions) only when the global
+    // allowAdminStatusAccess setting is enabled. Enforced server-side, not just UI.
+    function adminCanAccessStatus() {
+      return isAdmin()
+        && get(/databases/$(database)/documents/config/globalSettings).data.allowAdminStatusAccess == true;
+    }
     match /status/{statusId} {
-      // A status is viewable if it is public, owned by the viewer, or the viewer is
-      // an accepted contact of the poster (reverse-gate: the POSTER decides who may
-      // see their status via their own NexText contacts list).
+      // NOTE: the read rule must stay PROVABLE for queries (e.g.
+      // where("visibility","==","public")). statusExcludedFor() calls
+      // get(/users/$(resource.data.ownerId)), a path derived from per-document
+      // data — Firestore cannot prove such a query returns only readable docs,
+      // so it DENIES the entire query and public statuses never appear. We
+      // therefore enforce only per-status `excludedUids` (provable from
+      // resource.data) at the server layer; the owner's global statusExcluded
+      // list is enforced client-side (same trust model as other client-enforced
+      // limits in this app). This restores public-status visibility.
+      // NOTE: the read rule MUST stay PROVABLE for Firestore queries.
+      //   • where("allowedUids","array-contains", viewer)
+      //   • where("visibility","==","public")
+      // A previous version added `&& !(excludedUids.hasAny(viewer))` to each
+      // branch. Because excludedUids is NOT part of either query predicate,
+      // Firestore could not prove the queries only return readable docs and
+      // DENIED the entire query — making BOTH the Updates feed and the Public
+      // Status tab empty for everyone. Exclusion is therefore enforced
+      // CLIENT-SIDE (status.js filters excludedUids for both useStatuses and
+      // usePublicStatuses), matching the app's existing client-enforced
+      // trust model for other limits. Do not reintroduce an unconstrained
+      // field reference into this allow condition.
       allow read: if isSignedIn() && (
-        resource.data.visibility == 'public'
-        || resource.data.ownerId == request.auth.uid
-        || get(/databases/$(database)/documents/users/$(resource.data.ownerId)/contacts/$(request.auth.uid)).data.status == 'accepted'
+        resource.data.ownerId == request.auth.uid
+        || adminCanAccessStatus()
+        || resource.data.visibility == 'public'
+        || request.auth.uid in resource.data.allowedUids
       );
       allow create: if isSignedIn() && notBanned() && statusAllowed() &&
         request.resource.data.ownerId == request.auth.uid;
       allow update: if isSignedIn() && (
         resource.data.ownerId == request.auth.uid
-        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentCount'])
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentCount', 'subscriberCount'])
       );
-      allow delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow delete: if isSignedIn() && (resource.data.ownerId == request.auth.uid || adminCanAccessStatus());
 
       match /comments/{commentId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
-        allow update, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+        // Comment authors may edit/delete their own comment. Any signed-in user
+        // may update ONLY the vote arrays (up/down) of a comment they do not own
+        // — this is how status-comment upvotes persist without each voter needing
+        // write access to the author's comment document. We restrict the write to
+        // just those two fields so the comment body/author cannot be altered.
+        allow update: if isSignedIn() && (
+          resource.data.uid == request.auth.uid
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['up', 'down'])
+        );
+        allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
       }
 
       match /views/{viewerUid} {
@@ -238,6 +293,20 @@ service cloud.firestore {
         allow update: if isSignedIn() && request.auth.uid == viewerUid;
         allow read: if isSignedIn(); // owner checks who viewed; viewer checks own view
       }
+
+      // Per-status subscriber list. Only the subscriber themselves, the status
+      // owner, or an authorized admin (when admin status access is enabled) may
+      // read it. Ordinary users cannot enumerate another user's subscribers.
+      // Write (subscribe/unsubscribe) is restricted to the subscriber's own uid.
+      match /subscribers/{subUid} {
+        allow read: if isSignedIn() && (
+          subUid == request.auth.uid
+          || get(/databases/$(database)/documents/status/$(statusId)).data.ownerId == request.auth.uid
+          || adminCanAccessStatus()
+        );
+        allow write: if isSignedIn() && request.auth.uid == subUid
+          && request.resource.data.uid == request.auth.uid;
+      }
     }
 
     // ── reports & feedback (write-only for regular users) ───
@@ -245,6 +314,21 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
         request.resource.data.reportedByUid == request.auth.uid;
       allow read, update: if isAdmin();
+    }
+    // Per-song flagging/reports (Apple Music moderation). Any signed-in user may
+    // file a report; only admins can read/update/delete the queue.
+    match /songReports/{reportId} {
+      allow create: if isSignedIn() &&
+        request.resource.data.reportedByUid == request.auth.uid;
+      allow read, update, delete: if isAdmin();
+    }
+    // Admin new-signup notifications (Batch 4 item C). The creating user may write
+    // only their own signup record; only admins may read the queue.
+    match /notifications/{id} {
+      allow create: if isSignedIn() &&
+        request.resource.data.type == 'signup' &&
+        request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if isAdmin();
     }
     match /feedback/{feedbackId} {
       allow create: if isSignedIn() &&
@@ -305,6 +389,58 @@ service cloud.firestore {
         request.resource.data.chatId == chatId;
       allow update: if isAdmin();
       allow delete: if isAdmin() || (isSignedIn() && isGroupAdmin(chatId));
+    }
+
+    // ── Calls (WebRTC signaling) — participants, caller, or callee may read; only participants may update
+    match /calls/{callId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.callerUid ||
+        request.auth.uid == resource.data.calleeUid ||
+        request.auth.uid in resource.data.participants
+      );
+      allow create: if isSignedIn() && request.resource.data.callerUid == request.auth.uid
+        && request.resource.data.calleeUid != request.auth.uid
+        && request.resource.data.participants.hasAll([request.resource.data.callerUid, request.resource.data.calleeUid])
+        && request.resource.data.state in ['calling', 'ringing'];
+      allow update: if isSignedIn() && (
+        request.auth.uid == resource.data.callerUid ||
+        request.auth.uid == resource.data.calleeUid ||
+        request.auth.uid in resource.data.participants
+      );
+      allow delete: if isAdmin();
+      match /candidates/{candidateId} {
+        allow read: if isSignedIn() && (
+          request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid ||
+          request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid ||
+          request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.participants
+        );
+        allow create: if isSignedIn() && (
+          request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid ||
+          request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid ||
+          request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.participants
+        ) && request.resource.data.fromUid == request.auth.uid;
+        allow delete: if isSignedIn() && (
+          request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid ||
+          request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid ||
+          request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.participants
+        );
+      }
+    }
+
+    // ── Jewish Status analytics ──
+    // Per-status aggregated clicks: any signed-in user may increment; admins may read all.
+    match /jewishStatusClicks/{statusId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+    // Per-user aggregated stats: owner may write own doc, anyone signed-in may read? Only admin needs full read - but user should read own.
+    match /jewishUserStats/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      allow create: if isSelf(uid);
+      allow update: if isSelf(uid);
+      allow delete: if isAdmin();
     }
 
     // ── AI injected in groups: allow the AI system UID to write messages

@@ -1,5 +1,5 @@
 import { Capacitor } from "@capacitor/core";
-import { version as APP_VERSION } from "../../package.json";
+import { APP_VERSION } from "../version.js";
 import NextextNative from "../native/nextextNative";
 
 const GITHUB_REPO = "Fred-Systems/Nextext-Releases";
@@ -223,7 +223,18 @@ function triggerBrowserDownload(blob, fileName) {
 export async function downloadUpdate(url, onProgress) {
   if (!url) return false;
   if (Capacitor.isNativePlatform()) {
+    let handle = null;
     try {
+      if (NextextNative.addListener) {
+        // The native plugin streams real byte progress via the
+        // "apkDownloadProgress" event (total is 0 when Content-Length is
+        // absent and the UI falls back to an indeterminate display).
+        handle = await NextextNative.addListener("apkDownloadProgress", (d) => {
+          try {
+            onProgress?.({ loaded: d?.loaded || 0, total: (d?.total && d.total > 0) ? d.total : 0 });
+          } catch { /* noop */ }
+        });
+      }
       await NextextNative.downloadAndInstallApk({ url });
       return true;
     } catch (e) {
@@ -235,6 +246,8 @@ export async function downloadUpdate(url, onProgress) {
         throw err;
       }
       console.error("[updater] native APK download failed, falling back to browser:", e);
+    } finally {
+      if (handle && handle.remove) { try { await handle.remove(); } catch { /* noop */ } }
     }
   }
   // Web / fallback: download with real byte progress, then trigger the

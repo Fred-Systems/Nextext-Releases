@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, ChevronLeft, ChevronRight, Play, Pause, SkipForward, Download, RefreshCw } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Play, Pause, SkipForward, Download, RefreshCw, Eye, EyeOff } from "lucide-react";
 import { useGlobalSettings, resolveJewishStatusDownloadAllowed } from "../../firebase/config-settings";
 import { useAuth } from "../../firebase/useAuth";
 import { downloadBlobToDevice, extFromType } from "../../media/deviceDownload";
 import { useTheme } from "../../theme/ThemeContext";
+import { canExtendStatus, extendStatus } from "../../firebase/status";
+import { useRemoteConfig, getFeatureFlag } from "../../firebase/remoteConfig";
 
 const DEFAULT_DURATION_MS = 5000;
 const HOLD_MS = 180;
@@ -219,13 +221,36 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
   const { t } = useTheme();
   const globalSettings = useGlobalSettings();
   const { userDoc } = useAuth();
+  const myUid = userDoc?.uid;
+  const { config: remoteConfig } = useRemoteConfig();
   // Admin-controlled download permission (global OFF by default + per-user override).
   const canDownload = resolveJewishStatusDownloadAllowed(globalSettings, userDoc);
 
+  const [extending, setExtending] = useState(false);
+  const [extendedAt, setExtendedAt] = useState(0);
+  const extendEnabled = getFeatureFlag(remoteConfig, "statusExtend", { uid: myUid });
+  // `player` MUST be declared before `canExtend` below, otherwise `canExtend`
+  // references `player` while it is still in the temporal dead zone (it throws
+  // "Cannot access 'player' before initialization"). `creators` /
+  // `initialCreatorIndex` are props and are available here.
   const player = useStoryPlayer(creators, initialCreatorIndex, {
     onFinish: onClose,
     onAdvanceCreator: (key) => onViewCreator?.(key),
   });
+  const canExtend =
+    extendEnabled && player.creator?.ownerId === myUid && canExtendStatus(player.post) && Date.now() - extendedAt > 1500;
+  const handleExtend = async () => {
+    if (!post?.id || extending) return;
+    setExtending(true);
+    try {
+      await extendStatus(post.id);
+      setExtendedAt(Date.now());
+    } catch (e) {
+      console.error("[StoryViewer] extend failed:", e);
+    } finally {
+      setExtending(false);
+    }
+  };
 
   // Mark the starting creator as viewed.
   useEffect(() => {
@@ -247,6 +272,9 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [rate, setRate] = useState(1);
   const SPEEDS = [0.5, 1, 1.5, 2];
+  // When true, the bottom viewer control bar is hidden (e.g. for an unobstructed
+  // view). Tapping the screen restores it (see root pointer handlers below).
+  const [hideControls, setHideControls] = useState(false);
 
   // Refs that always point at the latest player/gesture state so the
   // async helper functions below operate on current values.
@@ -384,8 +412,8 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
         flexDirection: "column",
         userSelect: "none",
       }}
-      onPointerDown={player.onPointerDown}
-      onPointerUp={player.onPointerUp}
+      onPointerDown={(e) => { if (hideControls) setHideControls(false); else player.onPointerDown(e); }}
+      onPointerUp={(e) => { if (hideControls) setHideControls(false); else player.onPointerUp(e); }}
     >
       {/* Progress bars (one per post of the current creator) */}
       <div
@@ -469,8 +497,39 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
           </div>
           <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11.5 }}>
             {creator.category}
-            {creator.sources.length > 1 ? " · multi-source" : ""}
+            {(creator.sources?.length || 0) > 1 ? " · multi-source" : ""}
           </div>
+        </div>
+        {canExtend && (
+          <button
+            onClick={(e) => { e.stopPropagation(); handleExtend(); }}
+            disabled={extending}
+            style={{
+              border: "none",
+              borderRadius: 14,
+              padding: "6px 12px",
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#fff",
+              background: "rgba(255,255,255,0.18)",
+              cursor: extending ? "default" : "pointer",
+              flexShrink: 0,
+            }}
+          >
+            {extending ? "Extending…" : "+10h Extend"}
+          </button>
+        )}
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            setHideControls((v) => !v);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          title={hideControls ? "Show controls" : "Hide controls"}
+          style={{ width: 34, height: 34, borderRadius: "50%", background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+        >
+          {hideControls ? <Eye size={18} color="#fff" /> : <EyeOff size={18} color="#fff" />}
         </div>
         <X
           size={22}
@@ -692,8 +751,9 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
         </div>
       )}
 
-      {/* Viewer control bar (bottom-center, above the caption) */}
-      {(() => {
+      {/* Viewer control bar (bottom-center, above the caption). Hidden when the
+          user toggles "hide controls" — restored by tapping the screen. */}
+      {!hideControls && (() => {
         const ctrlBtn = {
           width: 38,
           height: 38,
