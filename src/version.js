@@ -1,12 +1,12 @@
 // Single source of truth for the installed APK version. Kept in sync with
 // android/app/build.gradle (versionName / versionCode) at release time.
-export const APP_VERSION = "1.8.15";
-export const APP_VERSION_CODE = 215;
+export const APP_VERSION = "1.8.16";
+export const APP_VERSION_CODE = 216;
 
 // A monotonically increasing web/build counter. Bumped on every web-side deploy
 // so the client can detect a newer web build without an APK change. Format is
 // intentionally human-readable (YYYY.MM.DD.N). Not the APK version.
-export const WEB_BUILD = "2026.09.11.01";
+export const WEB_BUILD = "2026.09.11.02";
 
 // Compare two "x.y.z" / "x.y.z.n" version strings. Returns <0, 0, or >0.
 export function compareVersions(a, b) {

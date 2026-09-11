@@ -7,6 +7,7 @@ import { downloadBlobToDevice, extFromType } from "../../media/deviceDownload";
 import { useTheme } from "../../theme/ThemeContext";
 import { canExtendStatus, extendStatus } from "../../firebase/status";
 import { useRemoteConfig, getFeatureFlag } from "../../firebase/remoteConfig";
+import { getSignedUrl } from "../../supabase/media";
 
 const DEFAULT_DURATION_MS = 5000;
 const HOLD_MS = 180;
@@ -38,6 +39,8 @@ function useStoryPlayer(creators, initialIndex, { onFinish, onAdvanceCreator } =
   const [paused, setPaused] = useState(false);
   const [progress, setProgress] = useState(0);
   const [mediaError, setMediaError] = useState(false);
+  // Resolved signed URL for pipeline video statuses where mediaUrl is null
+  const [resolvedVideoUrl, setResolvedVideoUrl] = useState(null);
 
   const rafRef = useRef(0);
   const startRef = useRef(null);
@@ -59,8 +62,27 @@ function useStoryPlayer(creators, initialIndex, { onFinish, onAdvanceCreator } =
     setProgress(0);
     setMediaError(false);
     setPaused(false);
+    setResolvedVideoUrl(null);
     startRef.current = null;
   }, [ci, pi]);
+
+  // Resolve signed URLs for pipeline video statuses where mediaUrl is null
+  useEffect(() => {
+    if (!post || post.mediaUrl || post.kind !== "video") { setResolvedVideoUrl(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        if (post.fallbackPath) {
+          const u = await getSignedUrl(post.fallbackPath, post.expiresAt);
+          if (!cancelled) setResolvedVideoUrl(u);
+        } else if (post.hlsMasterPath) {
+          const u = await getSignedUrl(post.hlsMasterPath, post.expiresAt);
+          if (!cancelled) setResolvedVideoUrl(u);
+        }
+      } catch { if (!cancelled) setResolvedVideoUrl(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [post?.id, post?.mediaUrl, post?.kind, post?.fallbackPath, post?.hlsMasterPath, post?.expiresAt]);
 
   const advance = useCallback(() => {
     if (!creators.length) return;
@@ -395,6 +417,8 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
 
   const { post, creator, progress, mediaError } = player;
   const kind = renderKind(post);
+  // Use resolved signed URL for pipeline videos, fallback to direct mediaUrl
+  const effectiveVideoSrc = post?.mediaUrl || resolvedVideoUrl || null;
   const bg = kind === "image" || kind === "video" ? "#000" : t.primary || "#111B21";
   const caption = post.caption || post.text;
 
@@ -557,7 +581,7 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
       >
         {mediaError ? (
           <div style={{ color: "#fff", textAlign: "center", fontSize: 14 }}>
-            Media unavailable
+            {post?.state === "queued" || post?.state === "processing" ? "Video is still processing — try again shortly." : "Media unavailable"}
           </div>
         ) : kind === "video" ? (
           // NOTE: key/src intentionally depend ONLY on post.id/post.mediaUrl.
@@ -566,8 +590,8 @@ export default function StoryViewer({ creators, initialCreatorIndex = 0, onClose
           <video
             key={post.id}
             ref={videoRef}
-            src={post.mediaUrl}
-            poster={post.thumbnailUrl || undefined}
+            src={effectiveVideoSrc}
+            poster={post.thumbnailUrl || post.posterURL || undefined}
             autoPlay
             playsInline
             style={withZoom({ width: "100%", height: "100%", objectFit: "contain" })}

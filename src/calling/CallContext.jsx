@@ -82,6 +82,7 @@ export function CallProvider({ children }) {
     setRemoteStream(null);
     remoteStreamRef.current = null;
     setActiveCallId(null);
+    activeCallIdRef.current = null; // sync ref immediately
     setCallData(null);
     setCallState("idle");
     setCallType("voice");
@@ -221,8 +222,8 @@ export function CallProvider({ children }) {
       setRemoteStream(stream);
     };
     pc.onicecandidate = (ev) => {
-      if (ev.candidate && activeCallId) {
-        CallService.addIceCandidate(activeCallId, ev.candidate.toJSON(), myUid).catch(() => {});
+      if (ev.candidate && activeCallIdRef.current) {
+        CallService.addIceCandidate(activeCallIdRef.current, ev.candidate.toJSON(), myUid).catch(() => {});
       }
     };
     pc.onconnectionstatechange = () => {
@@ -237,7 +238,7 @@ export function CallProvider({ children }) {
       if (s === "failed") { setError("Unable to establish a direct connection. Please try again."); }
     };
     return pc;
-  }, [activeCallId, myUid]);
+  }, [myUid]);
 
   const getMedia = useCallback(async (type) => {
     const constraints = type === "video" ? { audio: true, video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } } : { audio: true, video: false };
@@ -288,6 +289,7 @@ export function CallProvider({ children }) {
       throw e;
     }
     setActiveCallId(callId);
+    activeCallIdRef.current = callId; // sync ref immediately so createPeer's onicecandidate sees it
     setRingingStartedAt(Date.now());
     console.log("[calling] startCall: call created", callId, "-> getting media");
     // Get media and create peer
@@ -330,6 +332,7 @@ export function CallProvider({ children }) {
     const type = data?.type || "voice";
     setCallType(type);
     setActiveCallId(id);
+    activeCallIdRef.current = id; // sync ref immediately so createPeer's onicecandidate sees it
     setCallState("connecting");
     // Prime AudioContext in the user gesture (answer tap) for incoming ringtone.
     try {

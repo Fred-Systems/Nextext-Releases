@@ -115,7 +115,7 @@ function loadImageFromFile(file) {
 // draw strokes into a JPEG blob. `edits.cropRect` (when aspect === "freeform") is
 // normalized 0..1 relative to the rotated image frame, letting the user pick an
 // arbitrary crop region (not just a fixed aspect ratio).
-async function bakePhoto(file, edits, strokes) {
+async function bakePhoto(file, edits, strokes, textStickers) {
   const img = await loadImageFromFile(file);
   const rot = ((edits.rotate || 0) % 360 + 360) % 360;
   const swapped = rot === 90 || rot === 270;
@@ -158,6 +158,37 @@ async function bakePhoto(file, edits, strokes) {
     bctx.stroke();
   }
   bctx.globalCompositeOperation = "source-over";
+  // Draw text stickers (normalized 0..1 coords relative to the rotated frame).
+  for (const s of textStickers || []) {
+    if (!s.text) continue;
+    const fontSize = Math.max(8, (s.size || 22) * (bw / 400));
+    bctx.save();
+    bctx.translate(s.x * bw, s.y * bh);
+    bctx.rotate(((s.rotation || 0) * Math.PI) / 180);
+    bctx.font = `800 ${fontSize}px sans-serif`;
+    bctx.fillStyle = s.color || "#fff";
+    bctx.textAlign = s.align || "center";
+    bctx.textBaseline = "middle";
+    bctx.globalAlpha = s.opacity ?? 1;
+    // Background highlight
+    if (s.background && s.background !== "none") {
+      const metrics = bctx.measureText(s.text);
+      const tw = metrics.width;
+      const th = fontSize * 1.3;
+      bctx.fillStyle = s.background;
+      bctx.globalAlpha = s.opacity ?? 1;
+      bctx.fillRect(-tw / 2 - 6, -th / 2, tw + 12, th);
+      bctx.fillStyle = s.color || "#fff";
+      bctx.globalAlpha = s.opacity ?? 1;
+    } else {
+      bctx.shadowColor = "rgba(0,0,0,0.85)";
+      bctx.shadowBlur = Math.max(2, fontSize * 0.15);
+      bctx.shadowOffsetX = 0;
+      bctx.shadowOffsetY = 1;
+    }
+    bctx.fillText(s.text, 0, 0);
+    bctx.restore();
+  }
 
   // Determine the crop region (normalized to the base canvas).
   let sx = 0, sy = 0, sw = bw, sh = bh;
@@ -272,6 +303,7 @@ export default function StatusBuilderNew(props) {
   const [splitParts, setSplitParts] = useState(1);
   const [videoVolume, setVideoVolume] = useState(100);
   const [muteOriginal, setMuteOriginal] = useState(false);
+  const [muteVoiceover, setMuteVoiceover] = useState(false);
   const [videoFilter, setVideoFilter] = useState("none");
   const [voiceBlob, setVoiceBlob] = useState(null);
   const [voiceURL, setVoiceURL] = useState(null);
@@ -368,7 +400,7 @@ export default function StatusBuilderNew(props) {
         for (const p of photos) {
           const ed = imgEdits[p.id] || defaultImgEdits();
           try {
-            const blob = await bakePhoto(p.file, ed, ed.strokes || []);
+            const blob = await bakePhoto(p.file, ed, ed.strokes || [], textStickers);
             if (blob) out[p.id] = { url: URL.createObjectURL(blob), blob };
           } catch { /* keep original as fallback */ }
         }
@@ -872,7 +904,7 @@ export default function StatusBuilderNew(props) {
     const snapAllow = allowDownload;
     const snapHide = commentsHidden;
     const snapWait = waitForVideo;
-    const snapBgVol = bgAudioVolume;
+    const snapBgVol = muteVoiceover ? 0 : bgAudioVolume;
     const snapVidVol = muteOriginal ? 0 : videoVolume;
     const snapBgAudio = bgAudioFile;
     const chatScope = `status-${myUid}`;
@@ -933,7 +965,7 @@ export default function StatusBuilderNew(props) {
           const ed = imgEdits[p.id] || defaultImgEdits();
           let fileToUpload = p.file;
           try {
-            const baked = await bakePhoto(p.file, ed, ed.strokes || []);
+            const baked = await bakePhoto(p.file, ed, ed.strokes || [], textStickers);
             if (baked) fileToUpload = new File([baked], `status-${Date.now()}-${i}.jpg`, { type: "image/jpeg" });
           } catch { fileToUpload = p.file; }
           const result = await uploadMediaFile(chatScope, myUid, fileToUpload);
@@ -1160,10 +1192,11 @@ export default function StatusBuilderNew(props) {
   // ══════════ ENTRY ══════════
   if (step === "entry") {
     const cards = [
-      { id: "photo", label: "Photo", icon: <Camera size={30} color="#fff" />, bg: "linear-gradient(135deg,#00A884,#007AFF)" },
-      { id: "takePicture", label: "Take Picture", icon: <Camera size={30} color="#fff" />, bg: "linear-gradient(135deg,#FF9500,#FF3B30)" },
-      { id: "video", label: "Video", icon: <Video size={30} color="#fff" />, bg: "linear-gradient(135deg,#7C5CFF,#B784E0)" },
-      { id: "text", label: "Text", icon: <Type size={30} color="#fff" />, bg: "linear-gradient(135deg,#FF9500,#FF3B30)" },
+      { id: "photo", label: "Gallery", icon: <Camera size={30} color="#fff" />, bg: "linear-gradient(135deg,#00A884,#007AFF)" },
+      { id: "takePicture", label: "Take Picture", icon: <Camera size={30} color="#fff" />, bg: "linear-gradient(135deg,#E8A33D,#FF9500)" },
+      { id: "takeVideo", label: "Take Video", icon: <Video size={30} color="#fff" />, bg: "linear-gradient(135deg,#7C5CFF,#53BDEB)" },
+      { id: "video", label: "Gallery Video", icon: <Video size={30} color="#fff" />, bg: "linear-gradient(135deg,#B784E0,#7C5CFF)" },
+      { id: "text", label: "Text", icon: <Type size={30} color="#fff" />, bg: "linear-gradient(135deg,#FF6B5B,#FF3B30)" },
       { id: "voice", label: "Voice", icon: <Mic size={30} color="#fff" />, bg: "linear-gradient(135deg,#34C759,#30B0C7)" },
     ];
     return (
@@ -1191,7 +1224,16 @@ export default function StatusBuilderNew(props) {
                           const file = photo instanceof File ? photo : (photo.file || photo);
                           if (file) addPhotoFiles([file]);
                         }
-                      } catch (e) { console.warn("[StatusBuilder] camera failed:", e?.message); }
+                      } catch (e) { console.warn("[StatusBuilder] camera photo failed:", e?.message); }
+                    }
+                    else if (c.id === "takeVideo") {
+                      try {
+                        const video = await openNativeCamera("video");
+                        if (video) {
+                          const file = video instanceof File ? video : (video.file || video);
+                          if (file) addVideoFile(file);
+                        }
+                      } catch (e) { console.warn("[StatusBuilder] camera video failed:", e?.message); }
                     }
                     else if (c.id === "video") videoInputRef.current?.click();
                     else if (c.id === "text") { setMode("text"); setTextMode(initialText || ""); setStep("edit"); }
@@ -1885,7 +1927,10 @@ export default function StatusBuilderNew(props) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
             <button onClick={() => setMuteOriginal((v) => !v)} aria-label={muteOriginal ? "Unmute video" : "Mute video"} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 9, border: `1.5px solid ${muteOriginal ? t.primary : t.border}`, background: muteOriginal ? t.primaryLight : "transparent", color: muteOriginal ? t.primary : t.text, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
-              {muteOriginal ? <VolumeX size={15} /> : <Volume2 size={15} />} {muteOriginal ? "Muted" : "Sound on"}
+              {muteOriginal ? <VolumeX size={15} /> : <Volume2 size={15} />} {muteOriginal ? "Video muted" : "Mute Video"}
+            </button>
+            <button onClick={() => setMuteVoiceover((v) => !v)} aria-label={muteVoiceover ? "Unmute voiceover" : "Mute voiceover"} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 9, border: `1.5px solid ${muteVoiceover ? t.primary : t.border}`, background: muteVoiceover ? t.primaryLight : "transparent", color: muteVoiceover ? t.primary : t.text, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+              {muteVoiceover ? <VolumeX size={15} /> : <Mic size={15} />} {muteVoiceover ? "VO muted" : "Mute VO"}
             </button>
             {!muteOriginal && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>

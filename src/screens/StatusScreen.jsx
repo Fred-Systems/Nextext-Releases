@@ -289,6 +289,16 @@ function statusesToCreators(statuses, contactsById, { myUid, myName, myPhoto } =
       text: s.text || "",
       caption: s.text || s.caption || "",
       createdAt: s.createdAt || null,
+      // Pipeline fields so StoryViewer can resolve signed URLs for video statuses
+      state: s.state || null,
+      hlsMasterPath: s.hlsMasterPath || null,
+      fallbackPath: s.fallbackPath || null,
+      posterPath: s.posterPath || null,
+      expiresAt: s.expiresAt || null,
+      previewURL: s.previewURL || null,
+      posterURL: s.posterURL || null,
+      bgAudioURL: s.bgAudioURL || null,
+      mediaType: s.mediaType || null,
     });
   });
   // Newest post first within each creator to mirror the native Jewish feed order.

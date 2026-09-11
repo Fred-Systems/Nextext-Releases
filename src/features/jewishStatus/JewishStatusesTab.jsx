@@ -760,7 +760,7 @@ export default function JewishStatusesTab({ onStoryViewerChange, externalItems =
             fontSize: 12, fontWeight: 700, cursor: "pointer",
           }}
         >
-          Current
+          LOAD
         </button>
         <button
           onClick={() => { if (!showAll) toggleShowAll(); }}
