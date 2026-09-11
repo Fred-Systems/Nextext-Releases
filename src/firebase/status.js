@@ -517,6 +517,62 @@ export async function getSubscriberCount(statusId) {
   return snap.exists() ? (snap.data().subscriberCount || 0) : 0;
 }
 
+// ── Creator-level subscriptions ──────────────────────────────
+// Subscription is to the CREATOR, not to an individual status.
+// Stored in statusSubscriptions/{creatorUid}/subscribers/{uid}.
+// This ensures: subscribing on ANY of A's statuses subscribes you to A,
+// and you stay subscribed across all future statuses A posts.
+const CREATOR_SUB_COL = "statusSubscriptions";
+
+export async function subscribeToCreator(creatorUid, uid) {
+  if (!creatorUid || !uid) return;
+  if (creatorUid === uid) return; // can't subscribe to yourself
+  const ref = doc(db, CREATOR_SUB_COL, creatorUid, "subscribers", uid);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return; // already subscribed
+  await setDoc(ref, { uid, subscribedAt: serverTimestamp() }, { merge: true });
+}
+
+export async function unsubscribeFromCreator(creatorUid, uid) {
+  if (!creatorUid || !uid) return;
+  const ref = doc(db, CREATOR_SUB_COL, creatorUid, "subscribers", uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return; // already unsubscribed
+  await deleteDoc(ref);
+}
+
+export async function isSubscribedToCreator(creatorUid, uid) {
+  if (!creatorUid || !uid) return false;
+  const snap = await getDoc(doc(db, CREATOR_SUB_COL, creatorUid, "subscribers", uid));
+  return snap.exists();
+}
+
+// Live subscription state for a creator (replaces per-status useStatusSubscription).
+export function useCreatorSubscription(creatorUid, uid) {
+  const [subscribed, setSubscribed] = useState(false);
+  useEffect(() => {
+    if (!creatorUid || !uid) { setSubscribed(false); return; }
+    const ref = doc(db, CREATOR_SUB_COL, creatorUid, "subscribers", uid);
+    const unsub = onSnapshot(ref, (s) => {
+      setSubscribed(s.exists());
+    }, () => setSubscribed(false));
+    return unsub;
+  }, [creatorUid, uid]);
+  return subscribed;
+}
+
+export async function getCreatorSubscriberUids(creatorUid) {
+  if (!creatorUid) return [];
+  const snap = await getDocs(collection(db, CREATOR_SUB_COL, creatorUid, "subscribers"));
+  return snap.docs.map((d) => d.id);
+}
+
+export async function getCreatorSubscriberCount(creatorUid) {
+  if (!creatorUid) return 0;
+  const snap = await getDocs(collection(db, CREATOR_SUB_COL, creatorUid, "subscribers"));
+  return snap.size;
+}
+
 // ── View Tracking ─────────────────────────────────────────────
 
 // Record that a viewer has seen a status (idempotent — overwrites timestamp).

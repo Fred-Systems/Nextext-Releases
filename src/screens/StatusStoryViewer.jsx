@@ -4,7 +4,7 @@ import { X, ChevronLeft, ChevronRight, Eye, Send, Download, Volume2, VolumeX, Me
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useTheme } from "../theme/ThemeContext";
-import { useStatusViewers, subscribeStatusComments, addStatusComment, voteStatusComment, deleteStatusComment, setStatusCommentsHidden, retryStatus, useStatusSubscription, subscribeStatus, unsubscribeStatus, getSubscriberCount, canExtendStatus, extendStatus } from "../firebase/status";
+import { useStatusViewers, subscribeStatusComments, addStatusComment, voteStatusComment, deleteStatusComment, setStatusCommentsHidden, retryStatus, useCreatorSubscription, subscribeToCreator, unsubscribeFromCreator, getCreatorSubscriberCount, canExtendStatus, extendStatus } from "../firebase/status";
 import { useRemoteConfig, getFeatureFlag } from "../firebase/remoteConfig";
 import { getOrCreateDirectChat, sendTextMessage } from "../firebase/chats";
 import Avatar from "../components/Avatar";
@@ -219,19 +219,20 @@ export default function StatusStoryViewer({ statuses, initialIndex = 0, myUid, o
   // Viewing a status MUST NOT auto-subscribe the viewer. Subscription is an
   // explicit action: the button shows the real backend state (false until the
   // user taps Subscribe) and only writes a doc when the user explicitly opts in.
-  const subscribed = useStatusSubscription(statusId, myUid, false);
+  // Subscription is to the CREATOR, not the individual status.
+  const subscribed = useCreatorSubscription(ownerUid, myUid);
   const [subCount, setSubCount] = useState(0);
   useEffect(() => {
-    if (!isOwner || !statusId) { setSubCount(0); return; }
+    if (!isOwner || !ownerUid) { setSubCount(0); return; }
     let alive = true;
-    getSubscriberCount(statusId).then((c) => { if (alive) setSubCount(c); }).catch(() => {});
+    getCreatorSubscriberCount(ownerUid).then((c) => { if (alive) setSubCount(c); }).catch(() => {});
     return () => { alive = false; };
-  }, [isOwner, statusId]);
+  }, [isOwner, ownerUid]);
   const toggleSubscribe = async () => {
-    if (!statusId || isOwner) return;
+    if (!ownerUid || isOwner) return;
     try {
-      if (subscribed) await unsubscribeStatus(statusId, myUid);
-      else await subscribeStatus(statusId, myUid);
+      if (subscribed) await unsubscribeFromCreator(ownerUid, myUid);
+      else await subscribeToCreator(ownerUid, myUid);
     } catch { /* non-fatal */ }
   };
   // Track locally-viewed status IDs so re-opening resumes at the first unseen one.

@@ -19,9 +19,14 @@ export default function CallOverlay() {
   const startRingtone = (incoming) => {
     try {
       if (ringCtxRef.current) return;
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      const ctx = new Ctx();
+      // Use the shared AudioContext primed during the user gesture (startCall/acceptCall)
+      // so we don't hit the mobile autoplay policy. Fall back to creating a new one.
+      let ctx = sharedAudioCtxRef?.current || null;
+      if (!ctx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        ctx = new Ctx();
+      }
       ringCtxRef.current = ctx;
       if (ctx.state === "suspended") ctx.resume().catch(() => {});
       const osc = ctx.createOscillator();
@@ -65,7 +70,11 @@ export default function CallOverlay() {
       }
       setTimeout(() => {
         try { if (ringOscRef.current) { ringOscRef.current.stop(); ringOscRef.current.disconnect(); } } catch {}
-        try { if (ringCtxRef.current) { ringCtxRef.current.close(); } } catch {}
+        // Don't close the shared AudioContext — it's reused across calls.
+        // Only close it if we created our own (not the shared one).
+        if (ringCtxRef.current && ringCtxRef.current !== sharedAudioCtxRef?.current) {
+          try { ringCtxRef.current.close(); } catch {}
+        }
         ringOscRef.current = null;
         ringGainRef.current = null;
         ringCtxRef.current = null;
@@ -79,6 +88,7 @@ export default function CallOverlay() {
     localStream, remoteStream, callState, callType, isMuted, isCameraOff, error, connectedAt,
     otherName, otherPhoto, otherUid,
     acceptCall, declineCall, cancelCall, endCall, toggleMute, toggleCamera, switchCamera,
+    sharedAudioCtxRef,
   } = useCall();
 
   useEffect(() => {

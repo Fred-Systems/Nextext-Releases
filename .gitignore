@@ -55,3 +55,5 @@ ios/App/DerivedData/
 *.idsig
 # Design assets (not source)
 new-icons/
+# Local release signing (DO NOT COMMIT)
+android/keystore.properties

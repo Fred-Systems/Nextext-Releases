@@ -19,6 +19,7 @@ import {
   getProviderCapabilities, getPreviewUrl,
 } from "../media/musicService";
 import { getMicrophoneStream } from "../media/microphone";
+import { openNativeCamera } from "../components/NativeCameraLauncher";
 
 // ── WhatsApp-style Status Builder (new) ──────────────────────────────────────
 // Single-file builder: entry cards → full-screen editor → review → publish.
@@ -1160,6 +1161,7 @@ export default function StatusBuilderNew(props) {
   if (step === "entry") {
     const cards = [
       { id: "photo", label: "Photo", icon: <Camera size={30} color="#fff" />, bg: "linear-gradient(135deg,#00A884,#007AFF)" },
+      { id: "takePicture", label: "Take Picture", icon: <Camera size={30} color="#fff" />, bg: "linear-gradient(135deg,#FF9500,#FF3B30)" },
       { id: "video", label: "Video", icon: <Video size={30} color="#fff" />, bg: "linear-gradient(135deg,#7C5CFF,#B784E0)" },
       { id: "text", label: "Text", icon: <Type size={30} color="#fff" />, bg: "linear-gradient(135deg,#FF9500,#FF3B30)" },
       { id: "voice", label: "Voice", icon: <Mic size={30} color="#fff" />, bg: "linear-gradient(135deg,#34C759,#30B0C7)" },
@@ -1180,8 +1182,17 @@ export default function StatusBuilderNew(props) {
                 <button
                   key={c.id}
                   aria-label={`Create ${c.label} status`}
-                  onClick={() => {
+                  onClick={async () => {
                     if (c.id === "photo") photoInputRef.current?.click();
+                    else if (c.id === "takePicture") {
+                      try {
+                        const photo = await openNativeCamera("photo");
+                        if (photo) {
+                          const file = photo instanceof File ? photo : (photo.file || photo);
+                          if (file) addPhotoFiles([file]);
+                        }
+                      } catch (e) { console.warn("[StatusBuilder] camera failed:", e?.message); }
+                    }
                     else if (c.id === "video") videoInputRef.current?.click();
                     else if (c.id === "text") { setMode("text"); setTextMode(initialText || ""); setStep("edit"); }
                     else startVoiceRecording();

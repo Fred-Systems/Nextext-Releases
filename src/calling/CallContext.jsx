@@ -50,6 +50,7 @@ export function CallProvider({ children }) {
   const hasSetRemoteOfferRef = useRef(false);
   const pendingCandidatesRef = useRef([]);
   const activeCallIdRef = useRef(null);
+  const sharedAudioCtxRef = useRef(null); // primed on user gesture for ringtone
   useEffect(() => { activeCallIdRef.current = activeCallId; }, [activeCallId]);
 
   // Derived: current incoming call to show (first ringing where I am callee and not already in active call)
@@ -152,9 +153,11 @@ export function CallProvider({ children }) {
     // If I am callee and offer arrived, set remote description and create answer
     if (!isCallerRef.current && callData?.offer && !hasSetRemoteOfferRef.current) {
       hasSetRemoteOfferRef.current = true;
+      console.log("[calling] callee: offer received, setting remote description...");
       (async () => {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(callData.offer));
+          console.log("[calling] callee: remote description set, creating answer...");
           // Drain pending candidates
           for (const c of pendingCandidatesRef.current) {
             try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
@@ -163,6 +166,7 @@ export function CallProvider({ children }) {
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           await CallService.updateCallAnswer(activeCallId, { type: answer.type, sdp: answer.sdp });
+          console.log("[calling] callee: answer sent for", activeCallId);
           setCallState("connecting");
         } catch (e) {
           console.error("[calling] setRemoteOffer failed", e);
@@ -173,6 +177,7 @@ export function CallProvider({ children }) {
     }
     // If I am caller and answer arrived
     if (isCallerRef.current && callData?.answer && pc.signalingState === "have-local-offer") {
+      console.log("[calling] caller: answer received, setting remote description...");
       (async () => {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(callData.answer));
@@ -261,6 +266,16 @@ export function CallProvider({ children }) {
     isCallerRef.current = true;
     setCallType(type);
     setCallState("calling");
+    // Prime a shared AudioContext NOW while we're inside the user-gesture tap
+    // so the ringtone can start immediately without hitting mobile autoplay policy.
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx && !sharedAudioCtxRef.current) {
+        const ctx = new Ctx();
+        if (ctx.state === "suspended") ctx.resume().catch(() => {});
+        sharedAudioCtxRef.current = ctx;
+      }
+    } catch {}
     const callerName = userDoc?.displayName || userDoc?.username || "Unknown";
     const callerPhoto = userDoc?.photoURL || null;
     let callId;
@@ -274,6 +289,7 @@ export function CallProvider({ children }) {
     }
     setActiveCallId(callId);
     setRingingStartedAt(Date.now());
+    console.log("[calling] startCall: call created", callId, "-> getting media");
     // Get media and create peer
     let stream;
     try {
@@ -302,6 +318,7 @@ export function CallProvider({ children }) {
 
   const acceptCall = useCallback(async (callId) => {
     const id = callId || activeCallId || currentIncoming?.id;
+    console.log("[calling] acceptCall:", id, { activeCallId, currentIncoming: currentIncoming?.id });
     if (!id) return;
     if (activeCallId && activeCallId !== id) { // busy
       try { await CallService.markBusy(id); } catch {}
@@ -314,6 +331,15 @@ export function CallProvider({ children }) {
     setCallType(type);
     setActiveCallId(id);
     setCallState("connecting");
+    // Prime AudioContext in the user gesture (answer tap) for incoming ringtone.
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx && !sharedAudioCtxRef.current) {
+        const ctx = new Ctx();
+        if (ctx.state === "suspended") ctx.resume().catch(() => {});
+        sharedAudioCtxRef.current = ctx;
+      }
+    } catch {}
     let stream;
     try {
       stream = await getMedia(type);
@@ -432,6 +458,7 @@ export function CallProvider({ children }) {
     startCall, acceptCall, declineCall, cancelCall, endCall,
     toggleMute, toggleCamera, switchCamera,
     cleanupCall,
+    sharedAudioCtxRef,
   };
   return <CallContext.Provider value={value}>{children}</CallContext.Provider>;
 }

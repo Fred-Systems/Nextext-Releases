@@ -14,6 +14,7 @@ const VIEWED_KEY = "nextext_jewish_statuses_viewed_v1";
 const LAYOUT_KEY = "nextext_jewish_layout";
 const LIKED_KEY = "nextext_jewish_liked_creators_v1";
 const LAYOUTS = ["stories", "grid", "list", "cards"];
+const SHOW_ALL_KEY = "nextext_jewish_show_all";
 
 // Liked Creators — a user-curated list persisted locally (no server dependency).
 function loadLiked() {
@@ -147,6 +148,15 @@ export default function JewishStatusesTab({ onStoryViewerChange, externalItems =
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(false);
   const [disabledCategories, setDisabledCategories] = useState(() => new Set());
+  const [showAll, setShowAll] = useState(() => { try { return localStorage.getItem(SHOW_ALL_KEY) === "1"; } catch { return false; } });
+
+  const toggleShowAll = useCallback(() => {
+    setShowAll((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(SHOW_ALL_KEY, next ? "1" : "0"); } catch {}
+      return next;
+    });
+  }, []);
 
   const markViewed = useCallback((key) => {
     setViewed((prev) => {
@@ -402,7 +412,7 @@ export default function JewishStatusesTab({ onStoryViewerChange, externalItems =
     boxSizing: "border-box",
     color: t.text,
   };
-  const visibleItems = filteredItems.slice(0, visibleCount);
+  const visibleItems = showAll ? filteredItems : filteredItems.slice(0, visibleCount);
 
   const emptyState = (msg) => (
     <div style={{ textAlign: "center", color: t.textMuted, fontSize: 13, padding: "28px 12px" }}>
@@ -738,6 +748,34 @@ export default function JewishStatusesTab({ onStoryViewerChange, externalItems =
         )}
       </div>
 
+      {/* All / Current toggle */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        <button
+          onClick={() => { if (showAll) toggleShowAll(); }}
+          style={{
+            padding: "5px 14px", borderRadius: 999, border: "1px solid",
+            borderColor: !showAll ? t.primary : "rgba(255,255,255,0.18)",
+            background: !showAll ? t.primary : "transparent",
+            color: !showAll ? "#fff" : t.textMuted,
+            fontSize: 12, fontWeight: 700, cursor: "pointer",
+          }}
+        >
+          Current
+        </button>
+        <button
+          onClick={() => { if (!showAll) toggleShowAll(); }}
+          style={{
+            padding: "5px 14px", borderRadius: 999, border: "1px solid",
+            borderColor: showAll ? t.primary : "rgba(255,255,255,0.18)",
+            background: showAll ? t.primary : "transparent",
+            color: showAll ? "#fff" : t.textMuted,
+            fontSize: 12, fontWeight: 700, cursor: "pointer",
+          }}
+        >
+          All
+        </button>
+      </div>
+
       {/* Category filter chips - Popular is single-select active category */}
       {allCategories.length > 0 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
@@ -825,7 +863,7 @@ export default function JewishStatusesTab({ onStoryViewerChange, externalItems =
       ) : (
         <>
           {renderLayout()}
-          {visibleItems.length < filteredItems.length && (
+          {!showAll && visibleItems.length < filteredItems.length && (
             <div style={{ display:"flex", justifyContent:"center", marginTop:12 }}>
               <button onClick={()=>setVisibleCount(v=>v+18)} style={{ padding:"8px 16px", borderRadius:9, border:`1px solid ${t.border}`, background:"transparent", color:t.primary, fontWeight:700, fontSize:13, cursor:"pointer" }}>Load more</button>
             </div>

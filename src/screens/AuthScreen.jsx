@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { MessageSquare, Eye, EyeOff, Lock } from "lucide-react";
 import { useTheme } from "../theme/ThemeContext";
 import { collection, query, where, getDocs, limit as fbLimit } from "firebase/firestore";
-import { db } from "../firebase/config";
+import { sendPasswordResetEmail } from "firebase/auth";
+import { db, auth as firebaseAuth } from "../firebase/config";
 import DownloadApkButton from "../components/DownloadApkButton";
 import ApkDownloadCount from "../components/ApkDownloadCount";
 import { useGlobalSettings } from "../firebase/config-settings";
@@ -27,6 +28,8 @@ export default function AuthScreen({ auth }) {
   const [checkingUsername, setCheckingUsername] = useState(false);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [resetMsg, setResetMsg] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
   const debounceRef = useRef(null);
 
   useEffect(() => {
@@ -169,6 +172,31 @@ export default function AuthScreen({ auth }) {
           </div>
         </div>
 
+        {mode === "signin" && (
+          <div style={{ marginBottom: 12, textAlign: "right" }}>
+            <span
+              onClick={async () => {
+                setResetMsg("");
+                if (!email.trim()) { setResetMsg("Enter your email above first, then tap Forgot password?"); return; }
+                setResetBusy(true);
+                try {
+                  await sendPasswordResetEmail(firebaseAuth, email.trim());
+                  setResetMsg("Password reset email sent! Check your inbox.");
+                } catch (e) {
+                  const code = e?.code;
+                  if (code === "auth/user-not-found") setResetMsg("No account found with that email.");
+                  else if (code === "auth/invalid-email") setResetMsg("That doesn't look like a valid email.");
+                  else setResetMsg(e?.message || "Could not send reset email. Try again.");
+                }
+                setResetBusy(false);
+              }}
+              style={{ fontSize: 13, color: t.primary, fontWeight: 600, cursor: resetBusy ? "wait" : "pointer" }}
+            >
+              {resetBusy ? "Sending…" : "Forgot password?"}
+            </span>
+          </div>
+        )}
+        {resetMsg && <div style={{ color: resetMsg.includes("sent") ? "#34C759" : "#FF9500", fontSize: 12.5, marginBottom: 12 }}>{resetMsg}</div>}
         {error && <div style={{ color: "#FF3B30", fontSize: 12.5, marginBottom: 12 }}>{error}</div>}
 
         <button disabled={busy} onClick={handleSubmit} style={btnStyle(t, true)}>

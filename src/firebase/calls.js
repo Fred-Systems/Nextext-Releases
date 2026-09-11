@@ -56,6 +56,7 @@ export async function createCall({ callerUid, calleeUid, type = "voice", callerN
   });
   // Immediately transition to ringing so callee's listener picks it up
   await updateDoc(ref, { state: CALL_STATES.RINGING, ringingAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  console.log("[calls] createCall ->", ref.id, { callerUid, calleeUid, type, participants });
   return ref.id;
 }
 
@@ -131,8 +132,9 @@ export function listenToIncomingCalls(myUid, cb) {
       const data = d.data();
       if (data.state === CALL_STATES.RINGING || data.state === CALL_STATES.CALLING) arr.push({ id: d.id, ...data });
     });
+    console.log("[calls] listenToIncomingCalls snapshot:", snap.size, "docs,", arr.length, "ringing/calling");
     cb(arr.slice(0, 5));
-  }, () => cb([]));
+  }, (err) => { console.error("[calls] listenToIncomingCalls error:", err?.code, err?.message); cb([]); });
 }
 export function listenToCallCandidates(callId, cb) {
   const q = query(collection(db, CALLS_COL, callId, "candidates"), orderBy("createdAt", "asc"));
