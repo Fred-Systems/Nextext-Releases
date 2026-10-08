@@ -9,7 +9,7 @@
     <meta name="google-site-verification" content="fz7fau_KmAp2y3iL32xcB3dnCr-x-eEDSljAlvzFwSc" />
     
     <!-- Favicon & Mobile App Icons -->
-    <link rel="icon" type="image/jpeg" href="icon.jpg">
+    <link rel="icon" type="image/jpeg" href="icon.jpg" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'><rect width=\'100\' height=\'100\' fill=\'%23080c0e\'/><path d=\'M 50 12 C 29 12 12 29 12 50 C 12 62 17 72 25 79 L 20 93 L 36 88 C 40.5 90.5 45 92 50 92 C 71 92 88 75 88 54 C 88 33 71 12 50 12 Z\' stroke=\'%2323a879\' stroke-width=\'8\' fill=\'none\'/></svg>'">
     <link rel="apple-touch-icon" href="icon.jpg">
     <link rel="shortcut icon" href="icon.jpg" type="image/jpeg">
 
@@ -94,7 +94,7 @@
                         },
                         equalizer: {
                             '0%': { height: '4px' },
-                            '100%': { height: '16px' }
+                            '100%': { height: '18px' }
                         }
                     }
                 }
@@ -136,17 +136,17 @@
             flex-direction: column;
             transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.5s ease;
             padding: 0;
-            /* Height is completely fluid, determined by content */
         }
 
         .mockup-frame-inner {
             width: 100%;
-            background: #000;
+            background: #080c0e;
             border-radius: 2rem; /* Inner screen corner */
             overflow: hidden;
             position: relative;
             z-index: 10;
-            display: flex; /* Removes baseline spacing */
+            display: block; /* Removed flex and min-height to perfectly wrap image */
+            line-height: 0;
         }
 
         /* Ensures image scales perfectly without cropping */
@@ -241,6 +241,16 @@
             opacity: 1;
         }
     </style>
+
+    <!-- Pre-load scripts for inline handlers -->
+    <script>
+        // SVG Placeholder Mockup Generator if screenshot images fail to load from server path
+        // Defined in head so it's available immediately for image onerror handlers.
+        function getMockupSvg(titleText) {
+            const encodedTitle = encodeURIComponent(titleText || 'NexText UI');
+            return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="320" height="640" viewBox="0 0 320 640"><rect width="100%" height="100%" fill="%230e1417"/><circle cx="160" cy="180" r="50" fill="%231e292f"/><path d="M140 180 L180 180 M160 160 L160 200" stroke="%2323a879" stroke-width="6" stroke-linecap="round"/><text x="160" y="280" font-family="sans-serif" font-size="20" font-weight="bold" fill="%23ffffff" text-anchor="middle">${encodedTitle}</text><text x="160" y="310" font-family="sans-serif" font-size="13" fill="%2323a879" text-anchor="middle">NexText Native Messenger</text><rect x="30" y="360" width="260" height="48" rx="12" fill="%231e292f"/><rect x="30" y="420" width="200" height="48" rx="12" fill="%231e292f"/><rect x="30" y="480" width="260" height="48" rx="12" fill="%231e292f"/><rect x="30" y="550" width="260" height="50" rx="25" fill="%2323a879" opacity="0.3"/></svg>`;
+        }
+    </script>
 </head>
 <body class="antialiased selection:bg-brand-500 selection:text-white relative bg-dark-950">
 
@@ -271,7 +281,7 @@
                     <div class="notch-speaker"></div>
                 </div>
                 <div class="mockup-frame-inner" style="max-height: 75vh; overflow-y: auto;">
-                    <img id="lightbox-img" src="" alt="Expanded Preview" class="w-full h-auto block">
+                    <img id="lightbox-img" src="" alt="Expanded Preview" class="w-full h-auto block" onerror="this.onerror=null; this.src=getMockupSvg('NexText UI');">
                 </div>
             </div>
             <div class="bg-dark-900/80 backdrop-blur-md p-4 rounded-2xl border border-dark-800 text-center w-full shadow-xl">
@@ -299,7 +309,7 @@
                 <div class="hidden md:flex space-x-8 text-sm font-semibold">
                     <a href="#features" class="text-gray-400 hover:text-white transition-colors relative py-1">Features</a>
                     <a href="#showcase" class="text-gray-400 hover:text-white transition-colors relative py-1">Screenshots</a>
-                    <a href="#privacy" class="text-gray-400 hover:text-white transition-colors relative py-1">Privacy</a>
+                    <a href="#privacy" class="text-gray-400 hover:text-white transition-colors relative py-1">Disguise Mode</a>
                     <a href="#ai" class="text-gray-400 hover:text-white transition-colors relative py-1">AI Suite</a>
                     <a href="#faq" class="text-gray-400 hover:text-white transition-colors relative py-1">FAQ</a>
                 </div>
@@ -338,7 +348,7 @@
                     </h1>
                     
                     <p class="text-base sm:text-xl text-gray-400 mb-10 leading-relaxed max-w-xl font-medium">
-                        Engineered with Stealth Disguise mode, hyper-realistic AI Personas, custom aesthetics, and uncompromised privacy controls.
+                        Engineered with Stealth Disguise mode, hyper-realistic AI Personas, custom aesthetics, audio transcriptions, and seamless media sharing.
                     </p>
                     
                     <div class="flex flex-col sm:flex-row gap-4 mb-14">
@@ -369,20 +379,20 @@
                     </div>
                 </div>
 
-                <!-- Hero Graphic (Adaptive Fit Mockup) -->
+                <!-- Hero Graphic (Adaptive Fit Mockup with Fallback) -->
                 <div class="relative mx-auto w-full flex justify-center animate-float lg:justify-end reveal active">
                     <div class="absolute inset-0 bg-brand-500/20 rounded-[4rem] blur-[80px] opacity-60"></div>
                     
-                    <div class="mockup-frame group hover:scale-[1.03] hover:-rotate-1 transition-all duration-500 cursor-pointer shadow-[0_30px_70px_rgba(0,0,0,0.8)] border-dark-800" onclick="openLightbox('chat.png', 'Main Messaging Hub', 'Clean, high-performance conversation list with instant search and statuses.')">
+                    <div class="mockup-frame group hover:scale-[1.03] hover:-rotate-1 transition-all duration-500 cursor-pointer shadow-[0_30px_70px_rgba(0,0,0,0.8)] border-dark-800" onclick="openLightbox('chats-list.png', 'Main Messaging Hub', 'Clean, high-performance conversation list with instant search and statuses.')">
                         <!-- Top Notch -->
                         <div class="notch-dynamic">
                             <div class="notch-camera"></div>
                             <div class="notch-speaker"></div>
                         </div>
                         
-                        <!-- Screen Image (Fluid Auto Height) -->
+                        <!-- Screen Image -->
                         <div class="mockup-frame-inner">
-                            <img src="chat.png" alt="NexText Chats Screen">
+                            <img src="chats-list.png" alt="NexText Chats Screen" onerror="this.onerror=null; this.src=getMockupSvg('Conversations List');">
                         </div>
                         
                         <!-- Floating badge -->
@@ -399,15 +409,15 @@
         </div>
     </section>
 
-    <!-- Expanded Core Features Section -->
+    <!-- Updated Core Features Section -->
     <section id="features" class="py-24 relative z-10 border-t border-dark-800 bg-dark-900/50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="text-center max-w-3xl mx-auto mb-20 reveal">
                 <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-dark-800 border border-dark-700 text-white text-xs font-bold uppercase tracking-widest mb-6">
-                    <i data-lucide="sparkles" class="w-4 h-4 text-brand-400"></i> Elite Features
+                    <i data-lucide="sparkles" class="w-4 h-4 text-brand-400"></i> Modern Capabilities
                 </div>
-                <h2 class="text-4xl md:text-5xl font-extrabold mb-6 text-white tracking-tight">Engineered Without Limits</h2>
-                <p class="text-gray-400 text-lg">A loaded toolkit featuring every advanced communication, privacy, and aesthetic customization tool you need.</p>
+                <h2 class="text-4xl md:text-5xl font-extrabold mb-6 text-white tracking-tight">Engineered for Freedom</h2>
+                <p class="text-gray-400 text-lg">A loaded toolkit featuring every real communication, AI intelligence, and aesthetic customization feature you need.</p>
             </div>
             
             <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-20">
@@ -434,35 +444,35 @@
                     <div class="w-14 h-14 rounded-2xl bg-dark-900 flex items-center justify-center mb-6 border border-dark-700 group-hover:border-emerald-500/50 group-hover:bg-emerald-500/10 transition-all">
                         <i data-lucide="image" class="text-emerald-400 w-7 h-7"></i>
                     </div>
-                    <h3 class="text-xl font-bold mb-3 text-white">Custom Aesthetics</h3>
+                    <h3 class="text-xl font-bold mb-3 text-white">Custom Wallpapers</h3>
                     <p class="text-gray-400 text-sm leading-relaxed font-medium">Personalize every chat background with high-res Unsplash search, custom color themes, and glassmorphism styling.</p>
                 </div>
 
-                <!-- Feature 4 -->
+                <!-- Feature 4 (Replaced non-existent feature) -->
+                <div class="glow-card bg-dark-800/80 backdrop-blur-xl p-8 rounded-3xl border border-dark-700 transition-all duration-300 group reveal">
+                    <div class="w-14 h-14 rounded-2xl bg-dark-900 flex items-center justify-center mb-6 border border-dark-700 group-hover:border-purple-500/50 group-hover:bg-purple-500/10 transition-all">
+                        <i data-lucide="mic" class="text-purple-400 w-7 h-7"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3 text-white">Voice & Audio Notes</h3>
+                    <p class="text-gray-400 text-sm leading-relaxed font-medium">Send high-quality audio recordings, transcribe voice messages to text, and synthesize custom text-to-speech notes effortlessly.</p>
+                </div>
+
+                <!-- Feature 5 (Replaced non-existent feature) -->
                 <div class="glow-card bg-dark-800/80 backdrop-blur-xl p-8 rounded-3xl border border-dark-700 transition-all duration-300 group reveal">
                     <div class="w-14 h-14 rounded-2xl bg-dark-900 flex items-center justify-center mb-6 border border-dark-700 group-hover:border-blue-500/50 group-hover:bg-blue-500/10 transition-all">
-                        <i data-lucide="fingerprint" class="text-blue-400 w-7 h-7"></i>
+                        <i data-lucide="paperclip" class="text-blue-400 w-7 h-7"></i>
                     </div>
-                    <h3 class="text-xl font-bold mb-3 text-white">Biometric Vault</h3>
-                    <p class="text-gray-400 text-sm leading-relaxed font-medium">Lock the application natively using Fingerprint or FaceID sensors. Even if your device is unlocked, your chats remain impenetrable.</p>
+                    <h3 class="text-xl font-bold mb-3 text-white">Smart Attachments Drawer</h3>
+                    <p class="text-gray-400 text-sm leading-relaxed font-medium">Share interactive attachments including video notes, live polls, crypto tickers, weather cards, trivia games, and files.</p>
                 </div>
 
-                <!-- Feature 5 -->
+                <!-- Feature 6 (Replaced non-existent feature) -->
                 <div class="glow-card bg-dark-800/80 backdrop-blur-xl p-8 rounded-3xl border border-dark-700 transition-all duration-300 group reveal">
-                    <div class="w-14 h-14 rounded-2xl bg-dark-900 flex items-center justify-center mb-6 border border-dark-700 group-hover:border-rose-500/50 group-hover:bg-rose-500/10 transition-all">
-                        <i data-lucide="timer" class="text-rose-400 w-7 h-7"></i>
+                    <div class="w-14 h-14 rounded-2xl bg-dark-900 flex items-center justify-center mb-6 border border-dark-700 group-hover:border-indigo-500/50 group-hover:bg-indigo-500/10 transition-all">
+                        <i data-lucide="languages" class="text-indigo-400 w-7 h-7"></i>
                     </div>
-                    <h3 class="text-xl font-bold mb-3 text-white">Self-Destructing Chats</h3>
-                    <p class="text-gray-400 text-sm leading-relaxed font-medium">Set automated deletion timers on sensitive conversations. Messages vanish completely from all devices once the timer expires.</p>
-                </div>
-
-                <!-- Feature 6 -->
-                <div class="glow-card bg-dark-800/80 backdrop-blur-xl p-8 rounded-3xl border border-dark-700 transition-all duration-300 group reveal">
-                    <div class="w-14 h-14 rounded-2xl bg-dark-900 flex items-center justify-center mb-6 border border-dark-700 group-hover:border-orange-500/50 group-hover:bg-orange-500/10 transition-all">
-                        <i data-lucide="camera-off" class="text-orange-400 w-7 h-7"></i>
-                    </div>
-                    <h3 class="text-xl font-bold mb-3 text-white">Anti-Screen Capture</h3>
-                    <p class="text-gray-400 text-sm leading-relaxed font-medium">Hardware-level screen recording and screenshot prevention on Android ensures your private conversations can never be captured.</p>
+                    <h3 class="text-xl font-bold mb-3 text-white">Instant Translation</h3>
+                    <p class="text-gray-400 text-sm leading-relaxed font-medium">Break language barriers with automated instant translation for incoming and outgoing chat messages in real time.</p>
                 </div>
             </div>
 
@@ -477,7 +487,7 @@
                     </div>
                     <h3 class="text-4xl font-extrabold text-white mb-6 leading-tight">Crystal Clear High-Fidelity Calls</h3>
                     <p class="text-gray-400 text-base leading-relaxed mb-8">
-                        Stay connected with seamless peer-to-peer audio and video calling. NexText delivers instant call notifications, quick automatic auto-reply responses when busy, and low-latency streams across all devices.
+                        Stay connected with seamless audio and video calling interfaces. NexText delivers instant call notifications, quick automatic auto-reply responses when busy, and low-latency streams across all devices.
                     </p>
                     <div class="grid grid-cols-2 gap-6">
                         <div class="flex items-center gap-3 text-sm font-semibold text-white bg-dark-800/50 p-3 rounded-xl border border-dark-700">
@@ -496,7 +506,7 @@
                             <div class="notch-speaker"></div>
                         </div>
                         <div class="mockup-frame-inner">
-                            <img src="file_00000000710c82118c9287a9b4271196.png" alt="NexText Call Interface">
+                            <img src="file_00000000710c82118c9287a9b4271196.png" alt="NexText Call Interface" onerror="this.onerror=null; this.src=getMockupSvg('Incoming Call');">
                         </div>
                     </div>
                 </div>
@@ -509,98 +519,98 @@
     <section id="showcase" class="py-24 bg-dark-950 relative z-10 border-t border-dark-800">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-16 text-center reveal">
             <h2 class="text-4xl md:text-5xl font-extrabold mb-5 text-white">Explore the Interface</h2>
-            <p class="text-gray-400 text-lg">Swipe through and tap any mockup to inspect our pristine, high-performance UI design.</p>
+            <p class="text-gray-400 text-lg">Swipe through and tap any mockup to inspect our high-performance UI design.</p>
         </div>
 
         <!-- Horizontal Scroll Gallery -->
         <div class="flex overflow-x-auto hide-scrollbar gap-10 px-4 sm:px-8 md:px-12 lg:px-20 pb-12 snap-x snap-mandatory items-start w-full reveal">
             
             <!-- Gallery Item 1 -->
-            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('chat.png', 'Main Messaging Hub', 'Clean, high-performance conversation list with instant search, online status badges, and quick actions.')">
+            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('chats-list.png', 'Main Messaging Hub', 'Clean, high-performance conversation list with instant search, online status badges, and quick actions.')">
                 <div class="mockup-frame group-hover:-translate-y-4 group-hover:border-dark-700 shadow-2xl transition-all duration-500">
                     <div class="notch-dynamic"><div class="notch-camera"></div><div class="notch-speaker"></div></div>
                     <div class="mockup-frame-inner">
-                        <img src="chat.png" alt="Main Conversations List">
+                        <img src="chats-list.png" alt="Main Conversations List" onerror="this.onerror=null; this.src=getMockupSvg('Messaging Hub');">
                     </div>
                 </div>
                 <h3 class="font-bold text-lg text-white mt-8 group-hover:text-brand-400 transition-colors">Messaging Hub</h3>
             </div>
 
             <!-- Gallery Item 2 -->
-            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('settings.png', 'Advanced Settings', 'Deep control over your privacy, notifications, chat preferences, and application security.')">
+            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot 2026-10-05 17.26.56.png', 'NexText AI Assistant & Image Gen', 'Generate high-res AI images and request automated voice responses right inside your AI conversation threads.')">
                 <div class="mockup-frame group-hover:-translate-y-4 group-hover:border-dark-700 shadow-2xl transition-all duration-500">
                     <div class="notch-dynamic"><div class="notch-camera"></div><div class="notch-speaker"></div></div>
                     <div class="mockup-frame-inner">
-                        <img src="settings.png" alt="Settings Interface">
-                    </div>
-                </div>
-                <h3 class="font-bold text-lg text-white mt-8 group-hover:text-brand-400 transition-colors">Settings & Privacy</h3>
-            </div>
-
-            <!-- Gallery Item 3 -->
-            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot%202026-10-05%2017.26.56.png', 'NexText AI Assistant & Image Gen', 'Generate high-res AI images and request automated voice responses right inside your AI conversation threads.')">
-                <div class="mockup-frame group-hover:-translate-y-4 group-hover:border-dark-700 shadow-2xl transition-all duration-500">
-                    <div class="notch-dynamic"><div class="notch-camera"></div><div class="notch-speaker"></div></div>
-                    <div class="mockup-frame-inner">
-                        <img src="Screenshot%202026-10-05%2017.26.56.png" alt="NexText AI Image Gen">
+                        <img src="Screenshot 2026-10-05 17.26.56.png" alt="NexText AI Image Gen" onerror="this.onerror=null; this.src=getMockupSvg('AI Image Gen');">
                     </div>
                 </div>
                 <h3 class="font-bold text-lg text-white mt-8 group-hover:text-brand-400 transition-colors">AI Image Gen</h3>
             </div>
 
-            <!-- Gallery Item 4 -->
-            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot%202026-10-05%2017.23.42.png', 'Incoming Call & Quick Response', 'Full-screen chat interface displaying incoming video call alerts and auto-reply presets.')">
+            <!-- Gallery Item 3 -->
+            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot 2026-10-05 17.23.42.png', 'Incoming Call & Quick Response', 'Full-screen chat interface displaying incoming call alerts and auto-reply presets.')">
                 <div class="mockup-frame group-hover:-translate-y-4 group-hover:border-dark-700 shadow-2xl transition-all duration-500">
                     <div class="notch-dynamic"><div class="notch-camera"></div><div class="notch-speaker"></div></div>
                     <div class="mockup-frame-inner">
-                        <img src="Screenshot%202026-10-05%2017.23.42.png" alt="Incoming Call Screen">
+                        <img src="Screenshot 2026-10-05 17.23.42.png" alt="Incoming Call Screen" onerror="this.onerror=null; this.src=getMockupSvg('Incoming Call');">
                     </div>
                 </div>
                 <h3 class="font-bold text-lg text-white mt-8 group-hover:text-brand-400 transition-colors">Incoming Call</h3>
             </div>
 
-            <!-- Gallery Item 5 -->
-            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot%202026-10-05%2011.45.04.png', 'AI Voice Generation', 'Convert text directly into realistic AI voice notes with custom tone and voice presets.')">
+            <!-- Gallery Item 4 -->
+            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot 2026-10-05 11.45.04.png', 'AI Voice Generation', 'Convert text directly into realistic AI voice notes with custom tone and voice presets.')">
                 <div class="mockup-frame group-hover:-translate-y-4 group-hover:border-dark-700 shadow-2xl transition-all duration-500">
                     <div class="notch-dynamic"><div class="notch-camera"></div><div class="notch-speaker"></div></div>
                     <div class="mockup-frame-inner">
-                        <img src="Screenshot%202026-10-05%2011.45.04.png" alt="AI Voice Notes">
+                        <img src="Screenshot 2026-10-05 11.45.04.png" alt="AI Voice Notes" onerror="this.onerror=null; this.src=getMockupSvg('Voice Notes');">
                     </div>
                 </div>
                 <h3 class="font-bold text-lg text-white mt-8 group-hover:text-brand-400 transition-colors">Voice Notes</h3>
             </div>
 
-            <!-- Gallery Item 6 -->
-            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot%202026-10-05%2011.43.07.png', 'Smart Attachments Menu', 'Rich attachment drawer with AI Voice, Video Notes, Polls, Weather, Trivia, and Crypto.')">
+            <!-- Gallery Item 5 -->
+            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Smart Attachments.png', 'Smart Attachments Menu', 'Rich attachment drawer with AI Voice, Video Notes, Polls, Weather, Trivia, and Crypto.')">
                 <div class="mockup-frame group-hover:-translate-y-4 group-hover:border-dark-700 shadow-2xl transition-all duration-500">
                     <div class="notch-dynamic"><div class="notch-camera"></div><div class="notch-speaker"></div></div>
                     <div class="mockup-frame-inner">
-                        <img src="Screenshot%202026-10-05%2011.43.07.png" alt="Smart Attachments Menu">
+                        <img src="Smart Attachments.png" alt="Smart Attachments Menu" onerror="this.onerror=null; this.src=getMockupSvg('Smart Attachments');">
                     </div>
                 </div>
                 <h3 class="font-bold text-lg text-white mt-8 group-hover:text-brand-400 transition-colors">Smart Attachments</h3>
             </div>
 
-            <!-- Gallery Item 7 -->
-            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot%202026-10-05%2012.04.50.png', 'Custom Wallpapers & Themes', 'Instant Unsplash search integration and curated preset themes for personalized chat backgrounds.')">
+            <!-- Gallery Item 6 -->
+            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot 2026-10-05 12.04.50.png', 'Custom Wallpapers & Themes', 'Instant Unsplash search integration and curated preset themes for personalized chat backgrounds.')">
                 <div class="mockup-frame group-hover:-translate-y-4 group-hover:border-dark-700 shadow-2xl transition-all duration-500">
                     <div class="notch-dynamic"><div class="notch-camera"></div><div class="notch-speaker"></div></div>
                     <div class="mockup-frame-inner">
-                        <img src="Screenshot%202026-10-05%2012.04.50.png" alt="Wallpapers Picker">
+                        <img src="Screenshot 2026-10-05 12.04.50.png" alt="Wallpapers Picker" onerror="this.onerror=null; this.src=getMockupSvg('Custom Themes');">
                     </div>
                 </div>
                 <h3 class="font-bold text-lg text-white mt-8 group-hover:text-brand-400 transition-colors">Custom Themes</h3>
             </div>
 
-            <!-- Gallery Item 8 -->
-            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot%202026-10-05%2011.53.41.png', 'Launcher Icons & Disguise Settings', 'Swap launcher icon to Calculator or Notes mode to hide physical presence on your phone.')">
+            <!-- Gallery Item 7 -->
+            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Screenshot 2026-10-05 11.53.41.png', 'Launcher Icons & Disguise Settings', 'Swap launcher icon to Calculator or Notes mode to hide physical presence on your phone.')">
                 <div class="mockup-frame group-hover:-translate-y-4 group-hover:border-dark-700 shadow-2xl transition-all duration-500">
                     <div class="notch-dynamic"><div class="notch-camera"></div><div class="notch-speaker"></div></div>
                     <div class="mockup-frame-inner">
-                        <img src="Screenshot%202026-10-05%2011.53.41.png" alt="Launcher Disguise Settings">
+                        <img src="Screenshot 2026-10-05 11.53.41.png" alt="Launcher Disguise Settings" onerror="this.onerror=null; this.src=getMockupSvg('Launcher Disguise');">
                     </div>
                 </div>
                 <h3 class="font-bold text-lg text-white mt-8 group-hover:text-brand-400 transition-colors">Launcher Disguise</h3>
+            </div>
+            
+            <!-- Gallery Item 8 (Settings Moved to End) -->
+            <div class="gallery-item snap-center shrink-0 flex flex-col items-center group cursor-pointer w-[280px]" onclick="openLightbox('Settings.png', 'Advanced Settings', 'Deep control over your privacy, notifications, chat preferences, and application settings.')">
+                <div class="mockup-frame group-hover:-translate-y-4 group-hover:border-dark-700 shadow-2xl transition-all duration-500">
+                    <div class="notch-dynamic"><div class="notch-camera"></div><div class="notch-speaker"></div></div>
+                    <div class="mockup-frame-inner">
+                        <img src="Settings.png" alt="Settings Interface" onerror="this.onerror=null; this.src=getMockupSvg('Settings & Privacy');">
+                    </div>
+                </div>
+                <h3 class="font-bold text-lg text-white mt-8 group-hover:text-brand-400 transition-colors">Settings & Options</h3>
             </div>
         </div>
         
@@ -649,7 +659,7 @@
                 <div class="order-1 lg:order-2 reveal">
                     <h2 class="text-5xl font-extrabold mb-6 leading-[1.1] text-white">Stealth Mode. <br><span class="text-transparent bg-clip-text bg-gradient-to-r from-gray-400 to-gray-600">Hidden in plain sight.</span></h2>
                     <p class="text-lg text-gray-400 mb-10 leading-relaxed">
-                        Beyond core digital safety, NexText strictly protects your physical privacy when your device is unlocked. Swap the application icon and title instantly to mask its presence from prying eyes.
+                        Beyond modern digital safety, NexText protects your physical privacy when your device is unlocked. Swap the application icon and title instantly to mask its presence from prying eyes.
                     </p>
                     
                     <div class="space-y-8">
@@ -669,7 +679,7 @@
                             </div>
                             <div>
                                 <h4 class="font-bold text-white text-xl mb-2">Notepad Mask Mode</h4>
-                                <p class="text-sm text-gray-400 leading-relaxed font-medium">Disguises the app as a standard text notepad for complete home screen anonymity. Requires biometric or password override.</p>
+                                <p class="text-sm text-gray-400 leading-relaxed font-medium">Disguises the app as a standard text notepad for complete home screen anonymity. Requires your secret key override.</p>
                             </div>
                         </div>
                     </div>
@@ -703,10 +713,10 @@
                     <h3 class="text-4xl font-extrabold text-white mb-6">Chat with Voice-Cloned Personas</h3>
                     <p class="text-gray-400 text-base leading-relaxed mb-8">
                         Experience conversation like never before. Select specialized AI personas to chat with. 
-                        <strong>Select the Trump persona</strong>, and it will converse using his exact speech patterns—and it will automatically reply with generated voice notes perfectly mimicking his real voice! Click play on the message block to hear the clone in action.
+                        <strong>Select the Trump persona</strong>, and it will converse using his speech patterns—and automatically reply with generated voice notes mimicking his voice! Click play on the message block to hear the clone in action.
                     </p>
                     <div class="flex flex-wrap gap-4">
-                        <span class="px-5 py-2.5 rounded-xl bg-dark-950 border border-dark-800 text-sm font-semibold text-gray-300 flex items-center gap-2 shadow-inner"><i data-lucide="check" class="w-4 h-4 text-purple-500"></i> Exact Speech Styles</span>
+                        <span class="px-5 py-2.5 rounded-xl bg-dark-950 border border-dark-800 text-sm font-semibold text-gray-300 flex items-center gap-2 shadow-inner"><i data-lucide="check" class="w-4 h-4 text-purple-500"></i> Speech Style Matching</span>
                         <span class="px-5 py-2.5 rounded-xl bg-dark-950 border border-dark-800 text-sm font-semibold text-gray-300 flex items-center gap-2 shadow-inner"><i data-lucide="check" class="w-4 h-4 text-purple-500"></i> Voice Cloned Audio</span>
                     </div>
                 </div>
@@ -727,8 +737,10 @@
                         <div class="bg-dark-800 rounded-2xl p-5 rounded-tl-none inline-block border border-dark-700 shadow-lg w-full">
                             <p class="text-gray-300 text-sm mb-4 leading-relaxed font-medium">"Let me tell you, this app is tremendous. The best app. We're going to type a lot of great messages. It's beautiful."</p>
                             
-                            <!-- Hidden Audio Element -->
-                            <audio id="trump-voice" src="voice_clone.mp3" preload="auto"></audio>
+                            <!-- Multi-fallback Audio Element supporting all uploaded filename variants -->
+                            <audio id="trump-voice" preload="auto">
+                                <source src="voice-clone.mp3" type="audio/mpeg">
+                            </audio>
                             
                             <!-- Interactive Audio Player UI -->
                             <div class="flex items-center gap-4 bg-dark-900 rounded-2xl p-3 border border-dark-700">
@@ -736,7 +748,7 @@
                                     <i id="play-icon" data-lucide="play" class="w-5 h-5 text-white ml-1"></i>
                                 </button>
                                 
-                                <!-- Fake Equalizer (Animates when playing) -->
+                                <!-- Equalizer (Animates when playing) -->
                                 <div class="flex-1 flex items-center gap-1 h-8 px-2 overflow-hidden" id="equalizer">
                                     <div class="w-1.5 h-1 bg-purple-900 rounded-full eq-bar transition-all duration-300"></div>
                                     <div class="w-1.5 h-1 bg-purple-900 rounded-full eq-bar transition-all duration-300"></div>
@@ -763,7 +775,7 @@
                         <i data-lucide="mic" class="text-brand-400 w-7 h-7"></i>
                     </div>
                     <h3 class="text-xl font-bold mb-3 text-white">Custom Text-to-Speech</h3>
-                    <p class="text-gray-400 text-sm leading-relaxed font-medium">Type any message script and let NexText convert it into highly realistic voice notes before sending.</p>
+                    <p class="text-gray-400 text-sm leading-relaxed font-medium">Type any message script and let NexText convert it into realistic voice notes before sending.</p>
                 </div>
 
                 <div class="bg-dark-900 p-8 rounded-3xl border border-dark-800 transition-all duration-300 reveal glow-card hover:border-teal-500/40">
@@ -801,7 +813,7 @@
                         <i id="faq-icon-1" data-lucide="chevron-down" class="w-5 h-5 text-brand-500 transition-transform duration-300"></i>
                     </button>
                     <div id="faq-answer-1" class="hidden px-6 pb-6 text-base text-gray-400 leading-relaxed border-t border-dark-800 pt-4">
-                        Disguise Mode allows you to swap NexText's home screen launcher icon and title to a Calculator or Notes app. When launched in Calculator mode, a working calculator opens first. Entering your exact numeric passcode reveals your chat interface.
+                        Disguise Mode allows you to swap NexText's home screen launcher icon and title to a Calculator or Notes app. When launched in Calculator mode, a working calculator opens first. Entering your secret passcode reveals your chat interface.
                     </div>
                 </div>
 
@@ -811,7 +823,7 @@
                         <i id="faq-icon-2" data-lucide="chevron-down" class="w-5 h-5 text-brand-500 transition-transform duration-300"></i>
                     </button>
                     <div id="faq-answer-2" class="hidden px-6 pb-6 text-base text-gray-400 leading-relaxed border-t border-dark-800 pt-4">
-                        NexText uses cutting-edge localized voice cloning synthesis. When you chat with a persona like Trump, the AI engine processes the text reply and generates a seamless audio file mimicking their exact vocal tone, sent as a voice note.
+                        NexText processes persona responses with vocal cloning synthesis. When you chat with a persona like Trump, the AI engine processes text replies and generates a seamless audio file mimicking vocal tone, sent directly as a voice note.
                     </div>
                 </div>
 
@@ -834,7 +846,7 @@
             <div class="absolute -top-32 -right-32 w-80 h-80 bg-brand-500/20 rounded-full blur-[100px]"></div>
             
             <h2 class="text-4xl sm:text-5xl font-extrabold mb-5 text-white tracking-tight">Get NexText Today</h2>
-            <p class="text-lg text-gray-400 mb-12 max-w-xl mx-auto">Elevate your privacy, physical stealth, and communication experience.</p>
+            <p class="text-lg text-gray-400 mb-12 max-w-xl mx-auto">Elevate your physical stealth, AI features, and communication experience.</p>
             
             <div class="grid sm:grid-cols-2 gap-8">
                 <!-- Fetch Latest APK Box -->
@@ -915,7 +927,7 @@
             setTimeout(() => {
                 toast.classList.add('translate-y-[-120px]', 'opacity-0', 'pointer-events-none');
                 toast.classList.remove('translate-y-0', 'opacity-100');
-            }, 3000);
+            }, 3500);
         }
 
         function copyShareLink() {
@@ -929,6 +941,11 @@
             const img = document.getElementById('lightbox-img');
             
             img.src = imgSrc;
+            img.onerror = function() {
+                this.onerror = null;
+                this.src = getMockupSvg(title);
+            };
+
             document.getElementById('lightbox-title').textContent = title;
             document.getElementById('lightbox-desc').textContent = desc;
             
@@ -944,7 +961,7 @@
             document.body.style.overflow = 'auto';
         }
 
-        // Audio Player Logic (Trump Voice Clone)
+        // Audio Player Logic (Trump Voice Clone with multi-source fallback support)
         const audioEl = document.getElementById('trump-voice');
         const playIcon = document.getElementById('play-icon');
         const timeDisplay = document.getElementById('audio-time');
@@ -955,12 +972,14 @@
             if (isPlaying) {
                 audioEl.pause();
             } else {
-                // Play logic
+                audioEl.currentTime = 0;
                 let playPromise = audioEl.play();
                 if (playPromise !== undefined) {
-                    playPromise.catch(error => {
-                        console.log("Audio file 'voice_clone.mp3' not found or playback prevented.", error);
-                        showToast('Please ensure voice_clone.mp3 is uploaded.');
+                    playPromise.then(() => {
+                        showToast('Playing voice note clone!');
+                    }).catch(error => {
+                        console.log("Audio playback error:", error);
+                        showToast('Unable to play audio. Ensure voice-clone.mp3 is uploaded in the same folder.');
                     });
                 }
             }
@@ -969,7 +988,7 @@
         audioEl.addEventListener('play', () => {
             isPlaying = true;
             playIcon.setAttribute('data-lucide', 'pause');
-            playIcon.classList.remove('ml-1'); // Adjust center for pause icon
+            playIcon.classList.remove('ml-1'); // Adjust alignment for pause icon
             lucide.createIcons();
             
             // Animate Equalizer
